@@ -202,11 +202,11 @@ object Main extends ZIOAppDefault:
   /** Run migration with validated configuration */
   private def runMigrationWithConfig(config: MigrationConfig): ZIO[Any, Throwable, Unit] =
     migrationProgram(config).provide(
-      // Layer 3: Core Services
+      // Layer 3: Core Services & Config
       FileService.live,
-      GeminiConfig.default,
+      ZLayer.succeed(config),
 
-      // Layer 2: Service implementations (depend on Layer 3)
+      // Layer 2: Service implementations (depend on Layer 3 & Config)
       GeminiService.live,
       StateService.live(config.stateDir),
 
