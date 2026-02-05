@@ -21,6 +21,12 @@ object Codecs:
     instant => instant.toString,
   )
 
+  /** Codec for zio.Duration - serializes as milliseconds */
+  given JsonCodec[zio.Duration] = JsonCodec[Long].transform(
+    millis => zio.Duration.fromMillis(millis),
+    duration => duration.toMillis,
+  )
+
 // Import custom codecs into scope for all model derivations
 import Codecs.given
 
@@ -300,10 +306,53 @@ case class MigrationError(
   timestamp: Instant,
 ) derives JsonCodec
 
+/** Configuration for the migration tool with all necessary settings
+  *
+  * @param sourceDir
+  *   Path to the COBOL source directory
+  * @param outputDir
+  *   Path to the output directory for generated Java code
+  * @param stateDir
+  *   Path to the directory for storing migration state and checkpoints
+  * @param geminiModel
+  *   Gemini model name to use for AI operations
+  * @param geminiTimeout
+  *   Timeout duration for Gemini API calls
+  * @param geminiMaxRetries
+  *   Maximum number of retry attempts for failed Gemini API calls
+  * @param parallelism
+  *   Number of parallel processing workers
+  * @param batchSize
+  *   Number of files to process in each batch
+  * @param enableCheckpointing
+  *   Whether to enable automatic checkpointing
+  * @param resumeFromCheckpoint
+  *   Optional checkpoint run ID to resume from
+  * @param dryRun
+  *   If true, perform a dry run without writing output files
+  * @param verbose
+  *   Enable verbose logging output
+  */
 case class MigrationConfig(
-  sourceDirectory: Path,
-  outputDirectory: Path,
-  geminiModel: String,
+  // Directories
+  sourceDir: Path,
+  outputDir: Path,
+  stateDir: Path = Paths.get(".migration-state"),
+
+  // Gemini settings
+  geminiModel: String = "gemini-2.0-flash",
+  geminiTimeout: zio.Duration = zio.Duration.fromSeconds(60),
+  geminiMaxRetries: Int = 3,
+
+  // Processing
+  parallelism: Int = 4,
+  batchSize: Int = 10,
+
+  // Features
+  enableCheckpointing: Boolean = true,
+  resumeFromCheckpoint: Option[String] = None,
+  dryRun: Boolean = false,
+  verbose: Boolean = false,
 ) derives JsonCodec
 
 case class MigrationState(
@@ -333,9 +382,8 @@ object MigrationState:
         artifacts = Map.empty,
         errors = List.empty,
         config = MigrationConfig(
-          sourceDirectory = Paths.get("cobol-source"),
-          outputDirectory = Paths.get("java-output"),
-          geminiModel = "gemini-2.0-flash",
+          sourceDir = Paths.get("cobol-source"),
+          outputDir = Paths.get("java-output"),
         ),
         fileInventory = None,
         analyses = List.empty,
