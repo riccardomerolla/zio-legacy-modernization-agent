@@ -41,9 +41,8 @@ object StateServiceSpec extends ZIOSpecDefault:
       artifacts = Map.empty,
       errors = List.empty,
       config = MigrationConfig(
-        sourceDirectory = Paths.get("cobol-source"),
-        outputDirectory = Paths.get("java-output"),
-        geminiModel = "gemini-2.0-flash",
+        sourceDir = Paths.get("cobol-source"),
+        outputDir = Paths.get("java-output"),
       ),
       fileInventory = None,
       analyses = List.empty,

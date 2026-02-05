@@ -1,8 +1,11 @@
-import java.nio.file.Paths
+import java.nio.file.Path
 
 import zio.*
 import zio.Console.*
+import zio.cli.*
+import zio.cli.HelpDoc.Span.text
 
+import _root_.config.ConfigLoader
 import agents.*
 import core.*
 import models.*
@@ -15,6 +18,172 @@ import orchestration.*
   */
 object Main extends ZIOAppDefault:
 
+  // ============================================================================
+  // CLI Definition
+  // ============================================================================
+
+  /** CLI Options */
+  private val sourceDirOpt  = Options.directory("source").alias("s") ?? "Source directory containing COBOL files"
+  private val outputDirOpt  = Options.directory("output").alias("o") ?? "Output directory for generated Java code"
+  private val stateDirOpt   =
+    Options.directory("state-dir").optional ?? "Directory for migration state (default: .migration-state)"
+  private val configFileOpt = Options.file("config").alias("c").optional ?? "Configuration file (HOCON or JSON)"
+
+  private val geminiModelOpt   = Options.text("gemini-model").optional ?? "Gemini model name (default: gemini-2.0-flash)"
+  private val geminiTimeoutOpt =
+    Options.integer("gemini-timeout").optional ?? "Gemini API timeout in seconds (default: 60)"
+  private val geminiRetriesOpt = Options.integer("gemini-retries").optional ?? "Max Gemini API retries (default: 3)"
+
+  private val parallelismOpt =
+    Options.integer("parallelism").alias("p").optional ?? "Number of parallel workers (default: 4)"
+  private val batchSizeOpt   = Options.integer("batch-size").optional ?? "Batch size for file processing (default: 10)"
+
+  private val resumeOpt  = Options.text("resume").optional ?? "Resume from checkpoint (provide run ID)"
+  private val dryRunOpt  = Options.boolean("dry-run").optional ?? "Perform dry run without writing files"
+  private val verboseOpt = Options.boolean("verbose").alias("v").optional ?? "Enable verbose logging"
+
+  private val stepNameArg = Args.text("step-name") ?? "Migration step to run"
+
+  /** CLI Commands */
+  type MigrateOpts = (
+    Path,
+    Path,
+    Option[Path],
+    Option[Path],
+    Option[String],
+    Option[BigInt],
+    Option[BigInt],
+    Option[BigInt],
+    Option[BigInt],
+    Option[String],
+    Option[Boolean],
+    Option[Boolean],
+  )
+
+  type StepOpts = ((Path, Path, Option[Path], Option[Boolean]), String)
+
+  private val migrateCmd: Command[MigrateOpts] =
+    Command(
+      "migrate",
+      sourceDirOpt ++ outputDirOpt ++ stateDirOpt ++ configFileOpt ++
+        geminiModelOpt ++ geminiTimeoutOpt ++ geminiRetriesOpt ++ parallelismOpt ++
+        batchSizeOpt ++ resumeOpt ++ dryRunOpt ++ verboseOpt,
+    ).withHelp("Run the full migration pipeline")
+
+  private val stepCmd: Command[StepOpts] = Command(
+    "step",
+    sourceDirOpt ++ outputDirOpt ++ configFileOpt ++ verboseOpt,
+    stepNameArg,
+  ).withHelp("Run a specific migration step")
+
+  private val cliApp = CliApp.make(
+    name = "zio-legacy-modernization",
+    version = "1.0.0",
+    summary = text("COBOL to Spring Boot Migration Tool"),
+    command = migrateCmd | stepCmd,
+  ) {
+    case opts: MigrateOpts @unchecked =>
+      executeMigrate(
+        opts._1,
+        opts._2,
+        opts._3,
+        opts._4,
+        opts._5,
+        opts._6,
+        opts._7,
+        opts._8,
+        opts._9,
+        opts._10,
+        opts._11,
+        opts._12,
+      )
+
+    case opts: StepOpts @unchecked =>
+      executeStep(opts._1._1, opts._1._2, opts._1._3, opts._1._4, opts._2)
+
+    case _ =>
+      ZIO.fail(new IllegalArgumentException("Unknown command"))
+  }
+
+  // ============================================================================
+  // Execution Functions
+  // ============================================================================
+
+  /** Execute the full migration pipeline */
+  private def executeMigrate(
+    sourceDir: Path,
+    outputDir: Path,
+    stateDir: Option[Path],
+    configFile: Option[Path],
+    geminiModel: Option[String],
+    geminiTimeout: Option[BigInt],
+    geminiRetries: Option[BigInt],
+    parallelism: Option[BigInt],
+    batchSize: Option[BigInt],
+    resume: Option[String],
+    dryRun: Option[Boolean],
+    verbose: Option[Boolean],
+  ): ZIO[Any, Throwable, Unit] =
+    for
+      // Load base configuration from file or defaults
+      baseConfig <- configFile match
+                      case Some(path) =>
+                        ConfigLoader.loadFromFile(path).orElse(ZIO.succeed(MigrationConfig(sourceDir, outputDir)))
+                      case None       =>
+                        ConfigLoader.loadWithEnvOverrides.orElse(ZIO.succeed(MigrationConfig(sourceDir, outputDir)))
+
+      // Override with CLI arguments
+      migrationConfig = baseConfig.copy(
+                          sourceDir = sourceDir,
+                          outputDir = outputDir,
+                          stateDir = stateDir.getOrElse(baseConfig.stateDir),
+                          geminiModel = geminiModel.getOrElse(baseConfig.geminiModel),
+                          geminiTimeout = geminiTimeout.map(t => zio.Duration.fromSeconds(t.toLong)).getOrElse(
+                            baseConfig.geminiTimeout
+                          ),
+                          geminiMaxRetries = geminiRetries.map(_.toInt).getOrElse(baseConfig.geminiMaxRetries),
+                          parallelism = parallelism.map(_.toInt).getOrElse(baseConfig.parallelism),
+                          batchSize = batchSize.map(_.toInt).getOrElse(baseConfig.batchSize),
+                          resumeFromCheckpoint = resume,
+                          dryRun = dryRun.getOrElse(baseConfig.dryRun),
+                          verbose = verbose.getOrElse(baseConfig.verbose),
+                        )
+
+      // Validate configuration
+      validatedConfig <- ConfigLoader.validate(migrationConfig).mapError(msg => new IllegalArgumentException(msg))
+
+      // Run migration with validated config
+      _ <- runMigrationWithConfig(validatedConfig)
+    yield ()
+
+  /** Execute a specific migration step */
+  private def executeStep(
+    sourceDir: Path,
+    outputDir: Path,
+    configFile: Option[Path],
+    verbose: Option[Boolean],
+    stepName: String,
+  ): ZIO[Any, Throwable, Unit] =
+    for
+      step <- parseStepName(stepName)
+
+      baseConfig <- configFile match
+                      case Some(path) =>
+                        ConfigLoader.loadFromFile(path).orElse(ZIO.succeed(MigrationConfig(sourceDir, outputDir)))
+                      case None       =>
+                        ConfigLoader.loadWithEnvOverrides.orElse(ZIO.succeed(MigrationConfig(sourceDir, outputDir)))
+
+      migrationConfig = baseConfig.copy(
+                          sourceDir = sourceDir,
+                          outputDir = outputDir,
+                          verbose = verbose.getOrElse(baseConfig.verbose),
+                        )
+
+      validatedConfig <- ConfigLoader.validate(migrationConfig).mapError(msg => new IllegalArgumentException(msg))
+
+      _ <- runStepWithConfig(step, validatedConfig)
+    yield ()
+
   private val banner =
     """
       |╔═══════════════════════════════════════════════════════════════════╗
@@ -24,15 +193,22 @@ object Main extends ZIOAppDefault:
       |╚═══════════════════════════════════════════════════════════════════╝
       |""".stripMargin
 
-  def run: ZIO[Any, Any, Unit] =
-    program.provide(
+  override def run: ZIO[ZIOAppArgs & Scope, Any, Unit] =
+    for
+      args <- ZIO.serviceWith[ZIOAppArgs](_.getArgs)
+      _    <- cliApp.run(args.toList).catchAll(err => printLine(s"Error: $err")).ignore
+    yield ()
+
+  /** Run migration with validated configuration */
+  private def runMigrationWithConfig(config: MigrationConfig): ZIO[Any, Throwable, Unit] =
+    migrationProgram(config).provide(
       // Layer 3: Core Services
       FileService.live,
       GeminiConfig.default,
 
       // Layer 2: Service implementations (depend on Layer 3)
       GeminiService.live,
-      StateService.live(Paths.get("reports")),
+      StateService.live(config.stateDir),
 
       // Layer 1: Agent implementations (depend on Layer 2 & 3)
       CobolDiscoveryAgent.live,
@@ -46,60 +222,51 @@ object Main extends ZIOAppDefault:
       MigrationOrchestrator.live,
     )
 
-  private def program: ZIO[MigrationOrchestrator, Throwable, Unit] =
+  /** Run specific step with validated configuration */
+  private def runStepWithConfig(step: MigrationStep, config: MigrationConfig): ZIO[Any, Throwable, Unit] =
+    stepProgram(step, config)
+
+  private def migrationProgram(config: MigrationConfig): ZIO[MigrationOrchestrator, Throwable, Unit] =
     for
       _ <- printBanner
       _ <- Logger.info("Starting Legacy Modernization Agent System...")
-
-      // Parse command line arguments
-      args <- ZIO.succeed(List("--migrate")) // TODO: Get from actual args
-
-      result <- args.headOption match
-                  case Some("--migrate") =>
-                    runFullMigration()
-                  case Some("--step")    =>
-                    args.lift(1) match
-                      case Some(step) => runStep(step)
-                      case None       =>
-                        Logger.error("Missing step name. Usage: --step <step-name>") *>
-                          ZIO.fail(new IllegalArgumentException("Missing step name"))
-                  case Some("--help")    =>
-                    showHelp()
-                  case _                 =>
-                    Logger.error("Invalid arguments. Use --help for usage information.") *>
-                      showHelp()
-
-      _ <- Logger.info("Migration agent system completed successfully!")
-    yield ()
-
-  private def printBanner: ZIO[Any, Nothing, Unit] =
-    printLine(banner).orDie
-
-  private def runFullMigration(): ZIO[MigrationOrchestrator, Throwable, Unit] =
-    for
+      _ <- Logger.info(s"Configuration: ${config}")
       _ <- Logger.info("Running full migration pipeline...")
 
-      sourcePath = Paths.get("cobol-source")
-      outputPath = Paths.get("java-output")
+      _ <- Logger.info(s"Source directory: ${config.sourceDir}")
+      _ <- Logger.info(s"Output directory: ${config.outputDir}")
+      _ <- Logger.info(s"Parallelism: ${config.parallelism}")
 
-      _ <- Logger.info(s"Source path: $sourcePath")
-      _ <- Logger.info(s"Output path: $outputPath")
-
-      result <- MigrationOrchestrator.runFullMigration(sourcePath, outputPath)
+      result <-
+        if config.dryRun then
+          Logger.info("DRY RUN MODE - No files will be written") *>
+            ZIO.succeed(
+              MigrationResult(
+                success = true,
+                projects = List.empty,
+                documentation = MigrationDocumentation.empty,
+                validationReports = List.empty,
+              )
+            )
+        else MigrationOrchestrator.runFullMigration(config.sourceDir, config.outputDir)
 
       _ <- Logger.info(s"Migration completed: ${result.projects.length} projects generated")
       _ <- printMigrationSummary(result)
     yield ()
 
-  private def runStep(stepName: String): ZIO[Any, Throwable, Unit] =
+  private def stepProgram(step: MigrationStep, config: MigrationConfig): ZIO[Any, Throwable, Unit] =
     for
-      _    <- Logger.info(s"Running step: $stepName")
-      step <- parseStep(stepName)
+      _ <- printBanner
+      _ <- Logger.info(s"Running step: ${step}")
+      _ <- Logger.info(s"Configuration: ${config}")
       // TODO: Implement step execution via MigrationOrchestrator
-      _    <- Logger.info(s"Step $stepName completed")
+      _ <- Logger.info(s"Step ${step} completed")
     yield ()
 
-  private def parseStep(stepName: String): ZIO[Any, Throwable, MigrationStep] =
+  private def printBanner: ZIO[Any, Nothing, Unit] =
+    printLine(banner).orDie
+
+  private def parseStepName(stepName: String): ZIO[Any, Throwable, MigrationStep] =
     stepName.toLowerCase match
       case "discovery"      => ZIO.succeed(MigrationStep.Discovery)
       case "analysis"       => ZIO.succeed(MigrationStep.Analysis)
@@ -108,39 +275,6 @@ object Main extends ZIOAppDefault:
       case "validation"     => ZIO.succeed(MigrationStep.Validation)
       case "documentation"  => ZIO.succeed(MigrationStep.Documentation)
       case _                => ZIO.fail(new IllegalArgumentException(s"Unknown step: $stepName"))
-
-  private def showHelp(): ZIO[Any, Nothing, Unit] =
-    val helpText =
-      """
-        |Usage: sbt "run [options]"
-        |
-        |Options:
-        |  --migrate              Run the full migration pipeline
-        |  --step <step-name>     Run a specific migration step
-        |  --help                 Show this help message
-        |
-        |Available steps:
-        |  discovery              Scan and catalog COBOL source files
-        |  analysis               Deep analysis of COBOL programs
-        |  mapping                Map dependencies between programs
-        |  transformation         Transform COBOL to Spring Boot
-        |  validation             Validate and test generated code
-        |  documentation          Generate migration documentation
-        |
-        |Examples:
-        |  sbt "run --migrate"
-        |  sbt "run --step discovery"
-        |  sbt "run --step analysis"
-        |
-        |Configuration:
-        |  Place COBOL files in: cobol-source/
-        |  Generated code goes to: java-output/
-        |  Reports saved to: reports/
-        |
-        |For more information, see: README.md
-        |""".stripMargin
-
-    printLine(helpText).orDie
 
   private def printMigrationSummary(result: MigrationResult): ZIO[Any, Nothing, Unit] =
     val summary =

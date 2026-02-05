@@ -39,10 +39,16 @@ lazy val root = (project in file("."))
   .settings(
     name := "zio-legacy-modernization-agent",
     description := "A ZIO Legacy to Modernization Agent built with ZIO and Scala 3",
+    // Handle version conflicts - prefer newer versions
+    libraryDependencySchemes += "dev.zio" %% "zio-json" % VersionScheme.Always,
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio" % "2.1.24",
       "dev.zio" %% "zio-streams" % "2.1.24",
       "dev.zio" %% "zio-json" % "0.9.0",
+      "dev.zio" %% "zio-cli" % "0.7.5",
+      "dev.zio" %% "zio-config" % "4.0.6",
+      "dev.zio" %% "zio-config-typesafe" % "4.0.6",
+      "dev.zio" %% "zio-config-magnolia" % "4.0.6",
       "dev.zio" %% "zio-logging" % "2.4.0",
       "dev.zio" %% "zio-logging-slf4j2" % "2.4.0",
       "dev.zio" %% "zio-opentelemetry" % "3.0.0",
