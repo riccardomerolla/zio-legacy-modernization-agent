@@ -53,6 +53,26 @@ enum StateError(val message: String) derives JsonCodec:
   case ReadError(runId: String, cause: String)     extends StateError(s"Failed to read state for run $runId: $cause")
   case LockError(runId: String)                    extends StateError(s"Failed to acquire lock for run: $runId")
 
+/** Gemini CLI service errors with typed error handling */
+enum GeminiError(val message: String) derives JsonCodec:
+  case ProcessStartFailed(cause: String)      extends GeminiError(s"Failed to start Gemini process: $cause")
+  case OutputReadFailed(cause: String)        extends GeminiError(s"Failed to read Gemini output: $cause")
+  case Timeout(duration: zio.Duration)        extends GeminiError(s"Gemini process timed out after ${duration.toSeconds}s")
+  case NonZeroExit(code: Int, output: String) extends GeminiError(s"Gemini process exited with code $code: $output")
+  case ProcessFailed(cause: String)           extends GeminiError(s"Gemini process failed: $cause")
+  case NotInstalled                           extends GeminiError("Gemini CLI is not installed or not in PATH")
+  case InvalidResponse(output: String)        extends GeminiError(s"Invalid response from Gemini: $output")
+
+// ============================================================================
+// Gemini Service
+// ============================================================================
+
+/** Response from Gemini CLI execution */
+case class GeminiResponse(
+  output: String,
+  exitCode: Int,
+) derives JsonCodec
+
 // ============================================================================
 // Discovery Phase
 // ============================================================================
