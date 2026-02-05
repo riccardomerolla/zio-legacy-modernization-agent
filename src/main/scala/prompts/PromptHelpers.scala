@@ -65,22 +65,24 @@ object PromptHelpers:
     *   Division content or empty string if not found
     */
   private def extractDivision(code: String, divisionName: String): String =
-    val lines            = code.linesIterator.toList
-    val divisionPattern  = s"$divisionName\\.".r
+    val lines           = code.linesIterator.toList
+    val divisionPattern = s"$divisionName\\.".r
 
     // Find start index of this division
     val startIdx = lines.indexWhere(line => divisionPattern.findFirstIn(line.trim.toUpperCase).isDefined)
-    if startIdx == -1 then return ""
 
-    // Find end index (next division or end of file)
-    val nextDivisionIdx = lines.drop(startIdx + 1).indexWhere { line =>
-      val upper = line.trim.toUpperCase
-      upper.contains("DIVISION.") && !upper.startsWith("*")
-    }
+    if startIdx == -1 then
+      ""
+    else
+      // Find end index (next division or end of file)
+      val nextDivisionIdx = lines.drop(startIdx + 1).indexWhere { line =>
+        val upper = line.trim.toUpperCase
+        upper.contains("DIVISION.") && !upper.startsWith("*")
+      }
 
-    val endIdx = if nextDivisionIdx == -1 then lines.length else startIdx + 1 + nextDivisionIdx
+      val endIdx = if nextDivisionIdx == -1 then lines.length else startIdx + 1 + nextDivisionIdx
 
-    lines.slice(startIdx, endIdx).mkString("\n")
+      lines.slice(startIdx, endIdx).mkString("\n")
 
   /** Format strict validation requirements for required fields
     *

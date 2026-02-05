@@ -201,7 +201,9 @@ object JavaTransformerPrompts:
   private def formatVariables(variables: List[Variable]): String =
     variables
       .map { v =>
-        s"""{ "name": "${v.name}", "level": ${v.level}, "dataType": "${v.dataType}", "picture": "${v.picture.getOrElse("")}" }"""
+        s"""{ "name": "${v.name}", "level": ${v.level}, "dataType": "${v.dataType}", "picture": "${v.picture.getOrElse(
+            ""
+          )}" }"""
       }
       .mkString("[\n", ",\n", "\n]")
 

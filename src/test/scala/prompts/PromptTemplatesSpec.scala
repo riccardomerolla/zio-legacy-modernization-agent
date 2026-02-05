@@ -3,8 +3,10 @@ package prompts
 import java.nio.file.Paths
 import java.time.Instant
 
-import models.*
+import zio.Scope
 import zio.test.*
+
+import models.*
 
 /** Tests for prompt template generation
   *
@@ -17,7 +19,7 @@ import zio.test.*
   */
 object PromptTemplatesSpec extends ZIOSpecDefault:
 
-  val spec = suite("PromptTemplatesSpec")(
+  val spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("PromptTemplatesSpec")(
     suite("CobolAnalyzer")(
       test("analyzeStructure generates valid prompt with file metadata") {
         val cobolFile = CobolFile(
@@ -54,7 +56,7 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
           path = Paths.get("/cobol/LARGE.cbl"),
           name = "LARGE.cbl",
           size = 50000,
-          lastModified = Instant.now(),
+          lastModified = Instant.parse("2026-02-05T10:00:00Z"),
           encoding = "UTF-8",
           fileType = FileType.Program,
         )
@@ -84,7 +86,7 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
           prompt.contains("DependencyGraph"),
           prompt.contains("TEMPLATE_VERSION: 1.0.0"),
         )
-      },
+      }
     ),
     suite("JavaTransformer")(
       test("generateEntity generates valid prompt") {
@@ -147,9 +149,9 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
         )
       },
       test("validateTransformation generates valid prompt") {
-        val analysis   = createSampleAnalysis("CUSTPROG", List.empty)
-        val cobolCode  = "MOVE 100 TO WS-TOTAL."
-        val javaCode   = "total = 100;"
+        val analysis  = createSampleAnalysis("CUSTPROG", List.empty)
+        val cobolCode = "MOVE 100 TO WS-TOTAL."
+        val javaCode  = "total = 100;"
 
         val prompt = PromptTemplates.Validation.validateTransformation(cobolCode, javaCode, analysis)
 
@@ -182,7 +184,8 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
         val analysis  = createSampleAnalysis("CUSTPROG", List.empty)
         val report    = ValidationReport.empty
 
-        val prompt = PromptTemplates.Documentation.generateMigrationSummary(startTime, endTime, List(analysis), List(report))
+        val prompt =
+          PromptTemplates.Documentation.generateMigrationSummary(startTime, endTime, List(analysis), List(report))
 
         assertTrue(
           prompt.contains("MIGRATION METRICS:"),
@@ -334,7 +337,7 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
         path = Paths.get(s"/cobol/$programName.cbl"),
         name = s"$programName.cbl",
         size = 1024,
-        lastModified = Instant.now(),
+        lastModified = Instant.parse("2026-02-05T10:00:00Z"),
         encoding = "UTF-8",
         fileType = FileType.Program,
       ),

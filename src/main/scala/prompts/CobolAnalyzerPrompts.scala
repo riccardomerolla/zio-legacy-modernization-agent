@@ -123,8 +123,9 @@ object CobolAnalyzerPrompts:
     */
   private def analyzeChunked(cobolFile: CobolFile, chunks: Map[String, String]): String =
     val divisionsFormatted = chunks
-      .map { case (name, content) =>
-        s"""
+      .map {
+        case (name, content) =>
+          s"""
            |### $name DIVISION:
            |${PromptHelpers.formatCobolCode(content)}
            |""".stripMargin

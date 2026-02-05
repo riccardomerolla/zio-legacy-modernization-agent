@@ -110,11 +110,12 @@ object DependencyMapperPrompts:
     *   Comma-separated JSON array of CALL statement contents
     */
   private def extractCallStatements(analysis: CobolAnalysis): String =
-    val calls = for
-      proc <- analysis.procedures
-      stmt <- proc.statements
-      if stmt.statementType == "CALL"
-    yield s""""${stmt.content}""""
+    val calls =
+      for
+        proc <- analysis.procedures
+        stmt <- proc.statements
+        if stmt.statementType == "CALL"
+      yield s""""${stmt.content}""""
     calls.mkString(", ")
 
   private val fewShotExamples =

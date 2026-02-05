@@ -218,13 +218,13 @@ object OutputSchemas:
     * Allows lookup by class name for dynamic schema reference generation
     */
   val schemaMap: Map[String, String] = Map(
-    "CobolAnalysis"           -> cobolAnalysis,
-    "DependencyGraph"         -> dependencyGraph,
-    "JavaEntity"              -> javaEntity,
-    "JavaService"             -> javaService,
-    "JavaController"          -> javaController,
-    "ValidationReport"        -> validationReport,
-    "MigrationDocumentation"  -> migrationDocumentation,
+    "CobolAnalysis"          -> cobolAnalysis,
+    "DependencyGraph"        -> dependencyGraph,
+    "JavaEntity"             -> javaEntity,
+    "JavaService"            -> javaService,
+    "JavaController"         -> javaController,
+    "ValidationReport"       -> validationReport,
+    "MigrationDocumentation" -> migrationDocumentation,
   )
 
   /** Get schema by case class name with error handling
