@@ -235,6 +235,8 @@ object GeminiServiceSpec extends ZIOSpecDefault:
         for
           response <- GeminiService.execute("Test").provide(
                         GeminiService.live,
+                        RateLimiter.live,
+                        ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
                         ZLayer.succeed(config),
                       )
         yield assertTrue(response.exitCode >= 0) // Just verify it runs
@@ -244,6 +246,8 @@ object GeminiServiceSpec extends ZIOSpecDefault:
         for
           response <- GeminiService.execute("Test").provide(
                         GeminiService.live,
+                        RateLimiter.live,
+                        ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
                         ZLayer.succeed(config),
                       )
         yield assertTrue(response.exitCode >= 0)
@@ -253,6 +257,8 @@ object GeminiServiceSpec extends ZIOSpecDefault:
         for
           response <- GeminiService.execute("Test").provide(
                         GeminiService.live,
+                        RateLimiter.live,
+                        ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
                         ZLayer.succeed(config),
                       )
         yield assertTrue(response.exitCode >= 0)

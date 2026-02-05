@@ -205,8 +205,10 @@ object Main extends ZIOAppDefault:
       // Layer 3: Core Services & Config
       FileService.live,
       ZLayer.succeed(config),
+      ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
 
       // Layer 2: Service implementations (depend on Layer 3 & Config)
+      RateLimiter.live,
       GeminiService.live,
       StateService.live(config.stateDir),
 

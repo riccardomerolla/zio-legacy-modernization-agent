@@ -62,6 +62,10 @@ enum GeminiError(val message: String) derives JsonCodec:
   case ProcessFailed(cause: String)           extends GeminiError(s"Gemini process failed: $cause")
   case NotInstalled                           extends GeminiError("Gemini CLI is not installed or not in PATH")
   case InvalidResponse(output: String)        extends GeminiError(s"Invalid response from Gemini: $output")
+  case RateLimitExceeded(timeout: zio.Duration)
+    extends GeminiError(s"Gemini rate limit exceeded after ${timeout.toSeconds}s")
+  case RateLimitMisconfigured(details: String)
+    extends GeminiError(s"Rate limiter misconfigured: $details")
 
 /** Gemini response parsing errors with typed error handling */
 enum ParseError(val message: String) derives JsonCodec:
@@ -69,6 +73,12 @@ enum ParseError(val message: String) derives JsonCodec:
   case InvalidJson(json: String, error: String) extends ParseError(s"Invalid JSON: $error")
   case SchemaMismatch(expected: String, actual: String)
     extends ParseError(s"Schema mismatch. Expected: $expected. Error: $actual")
+
+/** Rate limiter errors with typed error handling */
+enum RateLimitError(val message: String) derives JsonCodec:
+  case AcquireTimeout(timeout: zio.Duration)
+    extends RateLimitError(s"Rate limiter timed out after ${timeout.toSeconds}s")
+  case InvalidConfig(details: String) extends RateLimitError(s"Invalid rate limiter config: $details")
 
 // ============================================================================
 // Gemini Service
@@ -347,6 +357,12 @@ case class MigrationError(
   *   Timeout duration for Gemini API calls
   * @param geminiMaxRetries
   *   Maximum number of retry attempts for failed Gemini API calls
+  * @param geminiRequestsPerMinute
+  *   Maximum Gemini requests per minute (rate limit)
+  * @param geminiBurstSize
+  *   Maximum burst size for rate limiter
+  * @param geminiAcquireTimeout
+  *   Timeout for waiting on rate limiter token
   * @param parallelism
   *   Number of parallel processing workers
   * @param batchSize
@@ -370,6 +386,9 @@ case class MigrationConfig(
   geminiModel: String = "gemini-2.0-flash",
   geminiTimeout: zio.Duration = zio.Duration.fromSeconds(60),
   geminiMaxRetries: Int = 3,
+  geminiRequestsPerMinute: Int = 60,
+  geminiBurstSize: Int = 10,
+  geminiAcquireTimeout: zio.Duration = zio.Duration.fromSeconds(30),
 
   // Processing
   parallelism: Int = 4,

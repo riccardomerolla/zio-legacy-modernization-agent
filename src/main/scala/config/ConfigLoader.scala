@@ -80,6 +80,7 @@ object ConfigLoader:
       _ <- validateBatchSize(config.batchSize)
       _ <- validateRetries(config.geminiMaxRetries)
       _ <- validateTimeout(config.geminiTimeout)
+      _ <- validateRateLimiter(config.geminiRequestsPerMinute, config.geminiBurstSize, config.geminiAcquireTimeout)
     yield config
 
   private def validateParallelism(parallelism: Int): IO[String, Unit] =
@@ -105,3 +106,20 @@ object ConfigLoader:
       .fail(s"Timeout must be between 1 second and 10 minutes, got: ${timeout.toSeconds}s")
       .when(timeout.toSeconds < 1 || timeout.toSeconds > 600)
       .unit
+
+  private def validateRateLimiter(
+    requestsPerMinute: Int,
+    burstSize: Int,
+    acquireTimeout: zio.Duration,
+  ): IO[String, Unit] =
+    for
+      _ <- ZIO
+             .fail(s"Gemini requests per minute must be between 1 and 600, got: $requestsPerMinute")
+             .when(requestsPerMinute < 1 || requestsPerMinute > 600)
+      _ <- ZIO
+             .fail(s"Gemini burst size must be between 1 and 100, got: $burstSize")
+             .when(burstSize < 1 || burstSize > 100)
+      _ <- ZIO
+             .fail(s"Gemini acquire timeout must be between 1 and 300 seconds, got: ${acquireTimeout.toSeconds}s")
+             .when(acquireTimeout.toSeconds < 1 || acquireTimeout.toSeconds > 300)
+    yield ()
