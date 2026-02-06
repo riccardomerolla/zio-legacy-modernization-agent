@@ -57,11 +57,13 @@ lazy val root = (project in file("."))
       "io.opentelemetry" % "opentelemetry-exporter-otlp" % "1.44.1",
       "io.opentelemetry" % "opentelemetry-exporter-logging-otlp" % "1.44.1",
       "dev.zio" %% "zio-test" % "2.1.24" % Test,
-      "dev.zio" %% "zio-test-sbt" % "2.1.24" % Test
+      "dev.zio" %% "zio-test-sbt" % "2.1.24" % Test,
+      "dev.zio" %% "zio-test-magnolia" % "2.1.24" % Test
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
-    coverageExcludedPackages := ".*\\.example\\..*",
-    coverageMinimumStmtTotal := 70,
+    coverageExcludedPackages := "<empty>;.*\\.example\\..*",
+    coverageExcludedFiles := ".*Main\\.scala",
+    coverageMinimumStmtTotal := 80,
     coverageFailOnMinimum := true,
     coverageHighlighting := true,
     run / javaOptions ++= Seq(
