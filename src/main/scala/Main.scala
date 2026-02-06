@@ -231,6 +231,7 @@ object Main extends ZIOAppDefault:
 
       // Layer 2: Service implementations (depend on Layer 3 & Config)
       RateLimiter.live,
+      ResponseParser.live,
       GeminiService.live,
       StateService.live(config.stateDir),
 

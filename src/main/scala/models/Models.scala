@@ -91,6 +91,16 @@ enum DiscoveryError(val message: String) derives JsonCodec:
     extends DiscoveryError(s"Failed to write discovery report at $path: $cause")
   case InvalidConfig(details: String)            extends DiscoveryError(s"Invalid discovery config: $details")
 
+/** Analysis errors with typed error handling */
+enum AnalysisError(val message: String) derives JsonCodec:
+  case FileReadFailed(path: Path, cause: String) extends AnalysisError(s"Failed to read COBOL file $path: $cause")
+  case GeminiFailed(fileName: String, cause: String)
+    extends AnalysisError(s"Gemini analysis failed for $fileName: $cause")
+  case ParseFailed(fileName: String, cause: String)
+    extends AnalysisError(s"Failed to parse analysis for $fileName: $cause")
+  case ReportWriteFailed(path: Path, cause: String)
+    extends AnalysisError(s"Failed to write analysis report at $path: $cause")
+
 // ============================================================================
 // Gemini Service
 // ============================================================================

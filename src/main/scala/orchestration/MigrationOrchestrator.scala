@@ -67,7 +67,7 @@ object MigrationOrchestrator:
             // Step 2: Deep Analysis
             _        <- Logger.info("Step 2: Deep Analysis")
             analyses <- ZIO.foreach(inventory.files.filter(_.fileType == FileType.Program)) { file =>
-                          analyzerAgent.analyze(file).provide(ZLayer.succeed(geminiService))
+                          analyzerAgent.analyze(file).mapError(e => new Exception(e.message))
                         }
             _        <- stateService.createCheckpoint(runId, MigrationStep.Analysis).mapError(e => new Exception(e.message))
 
