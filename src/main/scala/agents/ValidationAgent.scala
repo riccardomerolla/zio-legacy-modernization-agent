@@ -41,12 +41,37 @@ object ValidationAgent:
             for
               _                  <- validateProject(project)
               _                  <- Logger.info(s"Validating ${project.projectName}")
+              _                  <-
+                Logger.debug(
+                  s"Validation inputs for ${project.projectName}: entities=${project.entities.size}, services=${project.services.size}, controllers=${project.controllers.size}, repositories=${project.repositories.size}"
+                )
               compileResult      <- runCompile(project)
+              _                  <-
+                Logger.debug(
+                  s"Compile result for ${project.projectName}: success=${compileResult.success}, exitCode=${compileResult.exitCode}"
+                )
               coverageMetrics     = calculateCoverage(project, analysis)
+              _                  <-
+                Logger.debug(
+                  f"Coverage for ${project.projectName}: variables=${coverageMetrics.variablesCovered}%.2f%%, procedures=${coverageMetrics.proceduresCovered}%.2f%%, fileSections=${coverageMetrics.fileSectionCovered}%.2f%%, unmapped=${coverageMetrics.unmappedItems.size}"
+                )
               staticIssues        = runStaticChecks(project, analysis)
+              _                  <- Logger.debug(
+                                      s"Static heuristic checks for ${project.projectName}: ${staticIssues.size} issues"
+                                    )
               mavenStaticIssues  <- runMavenStaticAnalysis(project)
+              _                  <- Logger.debug(
+                                      s"Maven static checks for ${project.projectName}: ${mavenStaticIssues.size} issues"
+                                    )
               coverageIssues      = coverageUnmapped(coverageMetrics)
+              _                  <- Logger.debug(
+                                      s"Coverage checks for ${project.projectName}: ${coverageIssues.size} issues"
+                                    )
               semanticValidation <- runSemanticValidation(project, analysis)
+              _                  <-
+                Logger.debug(
+                  f"Semantic validation for ${project.projectName}: preserved=${semanticValidation.businessLogicPreserved}, confidence=${semanticValidation.confidence}%.2f, issues=${semanticValidation.issues.size}"
+                )
               validatedAt        <- Clock.instant
               allIssues           =
                 (compileIssue(
@@ -71,41 +96,44 @@ object ValidationAgent:
           private def validateProject(project: SpringBootProject): ZIO[Any, ValidationError, Unit] =
             if project.projectName.trim.isEmpty then
               ZIO.fail(ValidationError.InvalidProject(project.projectName, "projectName cannot be empty"))
-            else ZIO.unit
+            else Logger.debug(s"Validation project accepted: ${project.projectName}")
 
           private def runCompile(project: SpringBootProject): ZIO[Any, ValidationError, CompileResult] =
             val projectDir = config.outputDir.resolve(project.projectName.toLowerCase)
             val pomPath    = projectDir.resolve("pom.xml")
-            ZIO
-              .attemptBlocking(java.nio.file.Files.exists(pomPath))
-              .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
-              .flatMap { hasPom =>
-                if !hasPom then
-                  ZIO.succeed(
-                    CompileResult(
-                      success = false,
-                      exitCode = -1,
-                      output = s"Missing build file at $pomPath",
-                    )
-                  )
-                else
-                  ZIO
-                    .attemptBlocking {
-                      val process = new ProcessBuilder("mvn", "-q", "compile")
-                        .directory(projectDir.toFile)
-                        .redirectErrorStream(true)
-                        .start()
-                      val output  = new String(process.getInputStream.readAllBytes())
-                      val code    = process.waitFor()
-                      CompileResult(success = code == 0, exitCode = code, output = truncate(output))
-                    }
-                    .timeout(90.seconds)
-                    .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
-                    .map {
-                      case Some(result) => result
-                      case None         => CompileResult(success = false, exitCode = 124, output = "mvn compile timed out")
-                    }
-              }
+            Logger.debug(s"Compile check for ${project.projectName}: projectDir=$projectDir, pomPath=$pomPath") *>
+              ZIO
+                .attemptBlocking(java.nio.file.Files.exists(pomPath))
+                .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
+                .flatMap { hasPom =>
+                  if !hasPom then
+                    Logger.warn(s"Compile skipped for ${project.projectName}: missing pom.xml at $pomPath") *>
+                      ZIO.succeed(
+                        CompileResult(
+                          success = false,
+                          exitCode = -1,
+                          output = s"Missing build file at $pomPath",
+                        )
+                      )
+                  else
+                    Logger.debug(s"Running Maven compile for ${project.projectName}") *>
+                      ZIO
+                        .attemptBlocking {
+                          val process = new ProcessBuilder("mvn", "-q", "compile")
+                            .directory(projectDir.toFile)
+                            .redirectErrorStream(true)
+                            .start()
+                          val output  = new String(process.getInputStream.readAllBytes())
+                          val code    = process.waitFor()
+                          CompileResult(success = code == 0, exitCode = code, output = truncate(output))
+                        }
+                        .timeout(90.seconds)
+                        .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
+                        .map {
+                          case Some(result) => result
+                          case None         => CompileResult(success = false, exitCode = 124, output = "mvn compile timed out")
+                        }
+                }
 
           private def calculateCoverage(project: SpringBootProject, analysis: CobolAnalysis): CoverageMetrics =
             val normalizedFields = project.entities.flatMap(_.fields.map(f => normalizeName(f.name))).toSet
@@ -146,50 +174,56 @@ object ValidationAgent:
             : ZIO[Any, ValidationError, List[ValidationIssue]] =
             val projectDir = config.outputDir.resolve(project.projectName.toLowerCase)
             val pomPath    = projectDir.resolve("pom.xml")
-            ZIO
-              .attemptBlocking(java.nio.file.Files.exists(pomPath))
-              .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
-              .flatMap { hasPom =>
-                if !hasPom then ZIO.succeed(Nil)
-                else
-                  ZIO
-                    .attemptBlocking {
-                      val process = new ProcessBuilder("mvn", "-q", "checkstyle:check", "spotbugs:check")
-                        .directory(projectDir.toFile)
-                        .redirectErrorStream(true)
-                        .start()
-                      val output  = new String(process.getInputStream.readAllBytes())
-                      val code    = process.waitFor()
-                      (code, truncate(output))
-                    }
-                    .timeout(120.seconds)
-                    .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
-                    .map {
-                      case Some((0, _))      => Nil
-                      case Some((_, output)) =>
-                        List(
-                          ValidationIssue(
-                            severity = Severity.WARNING,
-                            category = IssueCategory.StaticAnalysis,
-                            message = "Maven static analysis reported issues (checkstyle/spotbugs)",
-                            file = None,
-                            line = None,
-                            suggestion = Some(output),
-                          )
-                        )
-                      case None              =>
-                        List(
-                          ValidationIssue(
-                            severity = Severity.WARNING,
-                            category = IssueCategory.StaticAnalysis,
-                            message = "Maven static analysis timed out",
-                            file = None,
-                            line = None,
-                            suggestion = Some("Run checkstyle and spotbugs manually for detailed diagnostics"),
-                          )
-                        )
-                    }
-              }
+            Logger.debug(
+              s"Maven static analysis for ${project.projectName}: projectDir=$projectDir, pomPath=$pomPath"
+            ) *>
+              ZIO
+                .attemptBlocking(java.nio.file.Files.exists(pomPath))
+                .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
+                .flatMap { hasPom =>
+                  if !hasPom then
+                    Logger.debug(s"Skipping Maven static analysis for ${project.projectName}: missing pom.xml") *>
+                      ZIO.succeed(Nil)
+                  else
+                    Logger.debug(s"Running Maven checkstyle/spotbugs for ${project.projectName}") *>
+                      ZIO
+                        .attemptBlocking {
+                          val process = new ProcessBuilder("mvn", "-q", "checkstyle:check", "spotbugs:check")
+                            .directory(projectDir.toFile)
+                            .redirectErrorStream(true)
+                            .start()
+                          val output  = new String(process.getInputStream.readAllBytes())
+                          val code    = process.waitFor()
+                          (code, truncate(output))
+                        }
+                        .timeout(120.seconds)
+                        .mapError(e => ValidationError.CompileFailed(project.projectName, e.getMessage))
+                        .map {
+                          case Some((0, _))      => Nil
+                          case Some((_, output)) =>
+                            List(
+                              ValidationIssue(
+                                severity = Severity.WARNING,
+                                category = IssueCategory.StaticAnalysis,
+                                message = "Maven static analysis reported issues (checkstyle/spotbugs)",
+                                file = None,
+                                line = None,
+                                suggestion = Some(output),
+                              )
+                            )
+                          case None              =>
+                            List(
+                              ValidationIssue(
+                                severity = Severity.WARNING,
+                                category = IssueCategory.StaticAnalysis,
+                                message = "Maven static analysis timed out",
+                                file = None,
+                                line = None,
+                                suggestion = Some("Run checkstyle and spotbugs manually for detailed diagnostics"),
+                              )
+                            )
+                        }
+                }
 
           private def runStaticChecks(project: SpringBootProject, analysis: CobolAnalysis): List[ValidationIssue] =
             val entityIssues =
@@ -272,9 +306,19 @@ object ValidationAgent:
             val javaCode    = renderJavaSnapshot(project)
             val prompt      = ValidationPrompts.validateTransformation(cobolSource, javaCode, analysis)
             for
-              response   <- aiService
-                              .execute(prompt)
-                              .mapError(e => ValidationError.SemanticValidationFailed(project.projectName, e.message))
+              _          <-
+                Logger.debug(
+                  s"Running semantic validation for ${project.projectName}: cobolChars=${cobolSource.length}, javaChars=${javaCode.length}, promptChars=${prompt.length}"
+                )
+              response   <-
+                aiService
+                  .execute(prompt)
+                  .tap(resp =>
+                    Logger.debug(
+                      s"Semantic AI response for ${project.projectName}: outputChars=${resp.output.length}, metadata=${resp.metadata.keys.mkString(",")}"
+                    )
+                  )
+                  .mapError(e => ValidationError.SemanticValidationFailed(project.projectName, e.message))
               validation <- responseParser
                               .parse[SemanticValidation](response)
                               .mapError(e => ValidationError.SemanticValidationFailed(project.projectName, e.message))
@@ -353,14 +397,16 @@ object ValidationAgent:
             coverageIssues ++ unmappedItemIssues
 
           private def writeReports(projectName: String, report: ValidationReport): ZIO[Any, ValidationError, Unit] =
+            val jsonPath = reportDir.resolve(s"${projectName.toLowerCase}-validation.json")
+            val mdPath   = reportDir.resolve(s"${projectName.toLowerCase}-validation.md")
             for
               _ <- fileService.ensureDirectory(reportDir).mapError(fe =>
                      ValidationError.ReportWriteFailed(reportDir, fe.message)
                    )
-              _ <-
-                writeFileAtomic(reportDir.resolve(s"${projectName.toLowerCase}-validation.json"), report.toJsonPretty)
-              _ <-
-                writeFileAtomic(reportDir.resolve(s"${projectName.toLowerCase}-validation.md"), renderMarkdown(report))
+              _ <- Logger.debug(s"Writing validation JSON report to $jsonPath")
+              _ <- writeFileAtomic(jsonPath, report.toJsonPretty)
+              _ <- Logger.debug(s"Writing validation markdown report to $mdPath")
+              _ <- writeFileAtomic(mdPath, renderMarkdown(report))
             yield ()
 
           private def writeFileAtomic(path: Path, content: String): ZIO[Any, ValidationError, Unit] =

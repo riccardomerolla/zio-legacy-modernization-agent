@@ -33,6 +33,9 @@ object MigrationOrchestrator:
   ): ZIO[MigrationOrchestrator, Throwable, MigrationResult] =
     ZIO.serviceWithZIO[MigrationOrchestrator](_.runFullMigrationWithProgress(sourcePath, outputPath, onProgress))
 
+  def runStep(step: MigrationStep): ZIO[MigrationOrchestrator, Throwable, StepResult] =
+    ZIO.serviceWithZIO[MigrationOrchestrator](_.runStep(step))
+
   val live: ZLayer[
     CobolDiscoveryAgent &
       CobolAnalyzerAgent &
@@ -228,9 +231,21 @@ object MigrationOrchestrator:
                            stateRef = stateRef,
                            errorsRef = errorsRef,
                          ) {
-                           ZIO.foreach(projects.zip(analyses)) { (project, analysis) =>
-                             validationAgent.validate(project, analysis).mapError(e => new Exception(e.message))
-                           }
+                           for
+                             _       <-
+                               ZIO
+                                 .when(projects.isEmpty || analyses.isEmpty) {
+                                   Logger.warn(
+                                     s"Validation phase has no inputs (projects=${projects.size}, analyses=${analyses.size}); nothing to validate."
+                                   )
+                                 }
+                                 .unit
+                             reports <- ZIO.foreach(projects.zip(analyses)) { (project, analysis) =>
+                                          validationAgent.validate(project, analysis).mapError(e =>
+                                            new Exception(e.message)
+                                          )
+                                        }
+                           yield reports
                          }
 
             validationReports = validated.orElse(resumeState.map(_.validationReports)).getOrElse(List.empty)

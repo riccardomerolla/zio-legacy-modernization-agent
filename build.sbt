@@ -57,6 +57,7 @@ lazy val root = (project in file("."))
       "dev.zio" %% "zio-logging" % "2.4.0",
       "dev.zio" %% "zio-logging-slf4j2" % "2.4.0",
       "ch.qos.logback" % "logback-classic" % "1.5.12",
+      "net.logstash.logback" % "logstash-logback-encoder" % "7.4",
       "dev.zio" %% "zio-opentelemetry" % "3.0.0",
       "dev.zio" %% "zio-opentelemetry-zio-logging" % "3.0.0",
       "io.opentelemetry" % "opentelemetry-sdk" % "1.44.1",

@@ -506,7 +506,32 @@ object Main extends ZIOAppDefault:
 
   /** Run specific step with validated configuration */
   private def runStepWithConfig(step: MigrationStep, config: MigrationConfig): ZIO[Any, Throwable, Unit] =
-    stepProgram(step, config)
+    stepProgram(step, config).provide(
+      // Layer 3: Core Services & Config
+      FileService.live,
+      ZLayer.succeed(config),
+      ZLayer.succeed(config.resolvedProviderConfig),
+      ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
+
+      // Layer 2: Service implementations
+      RateLimiter.live,
+      ResponseParser.live,
+      Client.default,
+      HttpAIClient.live,
+      AIService.fromConfig.mapError(e => new RuntimeException(e.message)),
+      StateService.live(config.stateDir),
+
+      // Layer 1: Agent implementations
+      CobolDiscoveryAgent.live,
+      CobolAnalyzerAgent.live,
+      DependencyMapperAgent.live,
+      JavaTransformerAgent.live,
+      ValidationAgent.live,
+      DocumentationAgent.live,
+
+      // Layer 0: Orchestrator
+      MigrationOrchestrator.live,
+    )
 
   private def migrationProgram(config: MigrationConfig): ZIO[MigrationOrchestrator, Throwable, Unit] =
     for
@@ -557,13 +582,18 @@ object Main extends ZIOAppDefault:
       _ <- printMigrationSummary(result)
     yield ()
 
-  private def stepProgram(step: MigrationStep, config: MigrationConfig): ZIO[Any, Throwable, Unit] =
+  private def stepProgram(step: MigrationStep, config: MigrationConfig): ZIO[MigrationOrchestrator, Throwable, Unit] =
     for
       _ <- printBanner
       _ <- Logger.info(s"Running step: ${step}")
       _ <- Logger.info(s"Configuration: ${config}")
-      // TODO: Implement step execution via MigrationOrchestrator
-      _ <- Logger.info(s"Step ${step} completed")
+      _ <- Logger.info(s"Executing migration orchestrator for step: $step")
+      r <- MigrationOrchestrator.runStep(step)
+      _ <-
+        if r.success then Logger.info(s"Step ${step} completed")
+        else
+          Logger.error(s"Step ${step} failed: ${r.error.getOrElse("unknown error")}") *>
+            ZIO.fail(new RuntimeException(r.error.getOrElse(s"Step $step failed")))
     yield ()
 
   private def printBanner: ZIO[Any, Nothing, Unit] =
