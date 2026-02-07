@@ -92,17 +92,18 @@ object GeminiService:
           prompt: String,
           config: MigrationConfig,
         ): ZIO[Any, GeminiError, GeminiResponse] =
-          val operation =
+          val providerConfig = config.resolvedProviderConfig
+          val operation      =
             for
-              _      <- ZIO.logInfo(s"Executing Gemini CLI with model: ${config.geminiModel}")
+              _      <- ZIO.logInfo(s"Executing Gemini CLI with model: ${providerConfig.model}")
               _      <- checkGeminiInstalled
-              result <- runGeminiProcess(prompt, config)
+              result <- runGeminiProcess(prompt, providerConfig)
               _      <- ZIO.logDebug(s"Gemini execution completed with exit code: ${result.exitCode}")
             yield result
 
           // Build retry policy from config
           val policy = RetryPolicy(
-            maxRetries = config.geminiMaxRetries,
+            maxRetries = providerConfig.maxRetries,
             baseDelay = Duration.fromSeconds(1),
             maxDelay = Duration.fromSeconds(30),
           )
@@ -137,11 +138,11 @@ object GeminiService:
           */
         private def runGeminiProcess(
           prompt: String,
-          config: MigrationConfig,
+          providerConfig: models.AIProviderConfig,
         ): ZIO[Any, GeminiError, GeminiResponse] =
           for
-            process  <- startProcess(prompt, config)
-            output   <- readOutput(process, config)
+            process  <- startProcess(prompt, providerConfig)
+            output   <- readOutput(process, providerConfig)
             exitCode <- waitForCompletion(process)
             _        <- validateExitCode(exitCode, output)
           yield GeminiResponse(output, exitCode)
@@ -149,19 +150,19 @@ object GeminiService:
         /** Start the Gemini CLI process */
         private def startProcess(
           prompt: String,
-          config: MigrationConfig,
+          providerConfig: models.AIProviderConfig,
         ): ZIO[Any, GeminiError, Process] =
           val commands = List(
             "gemini",
             "-p",
             prompt,
             "-m",
-            config.geminiModel,
+            providerConfig.model,
             "-y", // YOLO mode: auto-approve all actions
             "-s", // Run in sandbox mode for safety
           )
 
-          ZIO.logDebug(s"Starting Gemini process: gemini -p <prompt> -m ${config.geminiModel} -y -s") *>
+          ZIO.logDebug(s"Starting Gemini process: gemini -p <prompt> -m ${providerConfig.model} -y -s") *>
             ZIO
               .attemptBlocking {
                 new ProcessBuilder(commands.asJava)
@@ -174,7 +175,7 @@ object GeminiService:
         /** Read process output with timeout */
         private def readOutput(
           process: Process,
-          config: MigrationConfig,
+          providerConfig: models.AIProviderConfig,
         ): ZIO[Any, GeminiError, String] =
           ZIO
             .attemptBlocking {
@@ -187,7 +188,7 @@ object GeminiService:
             )
             .mapError(e => GeminiError.OutputReadFailed(e.getMessage))
             .tapError(err => ZIO.logError(s"Failed to read Gemini output: ${err.message}"))
-            .timeoutFail(GeminiError.Timeout(config.geminiTimeout))(config.geminiTimeout)
+            .timeoutFail(GeminiError.Timeout(providerConfig.timeout))(providerConfig.timeout)
             .tapError {
               case GeminiError.Timeout(d) => ZIO.logError(s"Gemini process timed out after ${d.toSeconds}s")
               case other                  => ZIO.logError(s"Gemini output read error: ${other.message}")

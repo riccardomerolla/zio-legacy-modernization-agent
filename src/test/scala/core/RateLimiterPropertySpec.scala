@@ -4,13 +4,30 @@ import zio.*
 import zio.test.*
 import zio.test.TestAspect.*
 
-import models.RateLimitError
+import models.{ AIProvider, AIProviderConfig, RateLimitError }
 
 /** Property-based tests for RateLimiter and RateLimiterConfig. */
 object RateLimiterPropertySpec extends ZIOSpecDefault:
 
   def spec: Spec[Any, Any] = suite("RateLimiterPropertySpec")(
     suite("RateLimiterConfig")(
+      test("fromAIProviderConfig maps all fields correctly") {
+        check(Gen.int(1, 600), Gen.int(1, 100), Gen.long(1000L, 300000L)) { (rpm, burst, timeoutMs) =>
+          val providerConfig    = AIProviderConfig(
+            provider = AIProvider.OpenAi,
+            model = "gpt-4.1",
+            requestsPerMinute = rpm,
+            burstSize = burst,
+            acquireTimeout = Duration.fromMillis(timeoutMs),
+          )
+          val rateLimiterConfig = RateLimiterConfig.fromAIProviderConfig(providerConfig)
+          assertTrue(
+            rateLimiterConfig.requestsPerMinute == rpm,
+            rateLimiterConfig.burstSize == burst,
+            rateLimiterConfig.acquireTimeout == Duration.fromMillis(timeoutMs),
+          )
+        }
+      },
       test("fromMigrationConfig maps all fields correctly") {
         check(Gen.int(1, 600), Gen.int(1, 100), Gen.long(1000L, 300000L)) { (rpm, burst, timeoutMs) =>
           val migrationConfig   = models.MigrationConfig(
@@ -27,6 +44,31 @@ object RateLimiterPropertySpec extends ZIOSpecDefault:
             rateLimiterConfig.acquireTimeout == Duration.fromMillis(timeoutMs),
           )
         }
+      },
+      test("fromMigrationConfig uses aiProvider when present") {
+        val migrationConfig = models.MigrationConfig(
+          sourceDir = java.nio.file.Paths.get("/tmp/src"),
+          outputDir = java.nio.file.Paths.get("/tmp/out"),
+          aiProvider = Some(
+            AIProviderConfig(
+              provider = AIProvider.Anthropic,
+              model = "claude-3-5-sonnet",
+              requestsPerMinute = 42,
+              burstSize = 7,
+              acquireTimeout = 12.seconds,
+            )
+          ),
+          geminiRequestsPerMinute = 111,
+          geminiBurstSize = 22,
+          geminiAcquireTimeout = 25.seconds,
+        )
+
+        val rateLimiterConfig = RateLimiterConfig.fromMigrationConfig(migrationConfig)
+        assertTrue(
+          rateLimiterConfig.requestsPerMinute == 42,
+          rateLimiterConfig.burstSize == 7,
+          rateLimiterConfig.acquireTimeout == 12.seconds,
+        )
       },
       test("default config has sensible values") {
         val config = RateLimiterConfig()

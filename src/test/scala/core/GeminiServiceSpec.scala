@@ -2,12 +2,15 @@ package core
 
 import java.nio.file.Paths
 
+import scala.annotation.nowarn
+
 import zio.*
 import zio.test.*
 import zio.test.Assertion.*
 
 import models.*
 
+@nowarn("cat=deprecation")
 object GeminiServiceSpec extends ZIOSpecDefault:
 
   /** Helper to create a test MigrationConfig */
