@@ -82,8 +82,28 @@ object Main extends ZIOAppDefault:
     Option[Boolean],
   )
 
-  type StepOpts     = ((Path, Path, Option[Path], Option[Boolean], Option[BigInt], Option[String]), String)
+  type StepBaseOpts = (
+    Path,
+    Path,
+    Option[Path],
+    Option[Boolean],
+    Option[BigInt],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[String],
+    Option[BigInt],
+  )
+  type StepOpts     = (StepBaseOpts, String)
   type ListRunsOpts = (Option[Path], Option[Path])
+
+  private enum CliCommand:
+    case Migrate(opts: MigrateOpts)
+    case Step(opts: StepOpts)
+    case ListRuns(opts: ListRunsOpts)
+    case NamedStep(stepName: String, opts: StepBaseOpts)
 
   private val migrateCmd: Command[MigrateOpts] =
     Command(
@@ -94,9 +114,13 @@ object Main extends ZIOAppDefault:
         discoveryExcludeOpt ++ parallelismOpt ++ batchSizeOpt ++ resumeOpt ++ dryRunOpt ++ verboseOpt,
     ).withHelp("Run the full migration pipeline")
 
+  private val stepBaseOpts = sourceDirOpt ++ outputDirOpt ++ configFileOpt ++ verboseOpt ++ discoveryMaxDepthOpt ++
+    discoveryExcludeOpt ++ aiProviderOpt ++ aiModelOpt ++ aiBaseUrlOpt ++ aiApiKeyOpt ++ aiTemperatureOpt ++
+    aiMaxTokensOpt
+
   private val stepCmd: Command[StepOpts] = Command(
     "step",
-    sourceDirOpt ++ outputDirOpt ++ configFileOpt ++ verboseOpt ++ discoveryMaxDepthOpt ++ discoveryExcludeOpt,
+    stepBaseOpts,
     stepNameArg,
   ).withHelp("Run a specific migration step")
 
@@ -105,13 +129,37 @@ object Main extends ZIOAppDefault:
     stateDirOpt ++ configFileOpt,
   ).withHelp("List available migration runs and checkpoints")
 
+  private val discoveryCmd: Command[StepBaseOpts] =
+    Command("discovery", stepBaseOpts).withHelp("Run discovery step")
+  private val analysisCmd: Command[StepBaseOpts] =
+    Command("analysis", stepBaseOpts).withHelp("Run analysis step")
+  private val mappingCmd: Command[StepBaseOpts] =
+    Command("mapping", stepBaseOpts).withHelp("Run mapping step")
+  private val transformationCmd: Command[StepBaseOpts] =
+    Command("transformation", stepBaseOpts).withHelp("Run transformation step")
+  private val validationCmd: Command[StepBaseOpts] =
+    Command("validation", stepBaseOpts).withHelp("Run validation step")
+  private val documentationCmd: Command[StepBaseOpts] =
+    Command("documentation", stepBaseOpts).withHelp("Run documentation step")
+
+  private val command: Command[CliCommand] =
+    migrateCmd.map(CliCommand.Migrate.apply) |
+      stepCmd.map(CliCommand.Step.apply) |
+      listRunsCmd.map(CliCommand.ListRuns.apply) |
+      discoveryCmd.map(opts => CliCommand.NamedStep("discovery", opts)) |
+      analysisCmd.map(opts => CliCommand.NamedStep("analysis", opts)) |
+      mappingCmd.map(opts => CliCommand.NamedStep("mapping", opts)) |
+      transformationCmd.map(opts => CliCommand.NamedStep("transformation", opts)) |
+      validationCmd.map(opts => CliCommand.NamedStep("validation", opts)) |
+      documentationCmd.map(opts => CliCommand.NamedStep("documentation", opts))
+
   private val cliApp = CliApp.make(
     name = "zio-legacy-modernization",
     version = "1.0.0",
     summary = text("COBOL to Spring Boot Migration Tool"),
-    command = migrateCmd | stepCmd | listRunsCmd,
+    command = command,
   ) {
-    case opts: MigrateOpts @unchecked =>
+    case CliCommand.Migrate(opts) =>
       executeMigrate(
         opts._1,
         opts._2,
@@ -135,14 +183,42 @@ object Main extends ZIOAppDefault:
         opts._20,
       )
 
-    case opts: StepOpts @unchecked =>
-      executeStep(opts._1._1, opts._1._2, opts._1._3, opts._1._4, opts._1._5, opts._1._6, opts._2)
+    case CliCommand.Step(opts) =>
+      executeStep(
+        opts._1._1,
+        opts._1._2,
+        opts._1._3,
+        opts._1._4,
+        opts._1._5,
+        opts._1._6,
+        opts._1._7,
+        opts._1._8,
+        opts._1._9,
+        opts._1._10,
+        opts._1._11,
+        opts._1._12,
+        opts._2,
+      )
 
-    case opts: ListRunsOpts @unchecked =>
+    case CliCommand.ListRuns(opts) =>
       executeListRuns(opts._1, opts._2)
 
-    case _ =>
-      ZIO.fail(new IllegalArgumentException("Unknown command"))
+    case CliCommand.NamedStep(stepName, opts) =>
+      executeStep(
+        opts._1,
+        opts._2,
+        opts._3,
+        opts._4,
+        opts._5,
+        opts._6,
+        opts._7,
+        opts._8,
+        opts._9,
+        opts._10,
+        opts._11,
+        opts._12,
+        stepName,
+      )
   }
 
   // ============================================================================
@@ -254,6 +330,12 @@ object Main extends ZIOAppDefault:
     verbose: Option[Boolean],
     discoveryMaxDepth: Option[BigInt],
     discoveryExclude: Option[String],
+    aiProvider: Option[String],
+    aiModel: Option[String],
+    aiBaseUrl: Option[String],
+    aiApiKey: Option[String],
+    aiTemperature: Option[String],
+    aiMaxTokens: Option[BigInt],
     stepName: String,
   ): ZIO[Any, Throwable, Unit] =
     for
@@ -279,10 +361,26 @@ object Main extends ZIOAppDefault:
                              .applyAIEnvironmentOverrides(withConfigProvider)
                              .mapError(msg => new IllegalArgumentException(msg))
 
+      parsedAiProvider <- parseAIProviderOption(aiProvider).mapError(msg => new IllegalArgumentException(msg))
+      parsedTemp       <- parseTemperatureOption(aiTemperature).mapError(msg => new IllegalArgumentException(msg))
+
+      resolvedProvider = envResolvedConfig.resolvedProviderConfig
+      providerConfig   = AIProviderConfig.withDefaults(
+                           resolvedProvider.copy(
+                             provider = parsedAiProvider.getOrElse(resolvedProvider.provider),
+                             model = aiModel.getOrElse(resolvedProvider.model),
+                             baseUrl = aiBaseUrl.orElse(resolvedProvider.baseUrl),
+                             apiKey = aiApiKey.orElse(resolvedProvider.apiKey),
+                             temperature = parsedTemp.orElse(resolvedProvider.temperature),
+                             maxTokens = aiMaxTokens.map(_.toInt).orElse(resolvedProvider.maxTokens),
+                           )
+                         )
+
       migrationConfig = envResolvedConfig.copy(
                           sourceDir = sourceDir,
                           outputDir = outputDir,
                           verbose = verbose.getOrElse(envResolvedConfig.verbose),
+                          aiProvider = Some(providerConfig),
                           discoveryMaxDepth =
                             discoveryMaxDepth.map(_.toInt).getOrElse(envResolvedConfig.discoveryMaxDepth),
                           discoveryExcludePatterns =
