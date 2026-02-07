@@ -5,6 +5,7 @@ import zio.Console.*
 import zio.cli.*
 import zio.cli.HelpDoc.Span.text
 import zio.http.Client
+import zio.logging.backend.SLF4J
 
 import _root_.config.ConfigLoader
 import agents.*
@@ -18,6 +19,9 @@ import orchestration.*
   * and Google Gemini CLI.
   */
 object Main extends ZIOAppDefault:
+
+  override val bootstrap: ZLayer[ZIOAppArgs, Any, Any] =
+    Runtime.removeDefaultLoggers >>> SLF4J.slf4j
 
   // ============================================================================
   // CLI Definition
