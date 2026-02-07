@@ -1,0 +1,54 @@
+package models
+
+import zio.json.*
+
+// OpenAI-compatible
+case class ChatCompletionRequest(
+  model: String,
+  messages: List[ChatMessage],
+  temperature: Option[Double] = None,
+  max_tokens: Option[Int] = None,
+) derives JsonCodec
+
+case class ChatMessage(role: String, content: String) derives JsonCodec
+
+case class ChatCompletionResponse(
+  id: String,
+  choices: List[ChatChoice],
+  usage: Option[TokenUsage] = None,
+  model: String,
+) derives JsonCodec
+
+case class ChatChoice(
+  index: Int,
+  message: ChatMessage,
+  finish_reason: Option[String] = None,
+) derives JsonCodec
+
+case class TokenUsage(
+  prompt_tokens: Int,
+  completion_tokens: Int,
+  total_tokens: Int,
+) derives JsonCodec
+
+// Anthropic-compatible
+case class AnthropicRequest(
+  model: String,
+  max_tokens: Int,
+  messages: List[ChatMessage],
+  temperature: Option[Double] = None,
+) derives JsonCodec
+
+case class AnthropicResponse(
+  id: String,
+  content: List[ContentBlock],
+  model: String,
+  usage: Option[AnthropicUsage] = None,
+) derives JsonCodec
+
+case class ContentBlock(`type`: String, text: String) derives JsonCodec
+
+case class AnthropicUsage(
+  input_tokens: Int,
+  output_tokens: Int,
+) derives JsonCodec
