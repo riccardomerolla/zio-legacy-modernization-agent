@@ -3,6 +3,8 @@ package models
 import java.nio.file.{ Path, Paths }
 import java.time.Instant
 
+import scala.annotation.nowarn
+
 import zio.*
 import zio.json.*
 
@@ -161,11 +163,38 @@ enum DocError(val message: String) derives JsonCodec:
 enum AIProvider derives JsonCodec:
   case GeminiCli, GeminiApi, OpenAi, Anthropic
 
+object AIProvider:
+  def defaultBaseUrl(provider: AIProvider): Option[String] = provider match
+    case AIProvider.GeminiCli => None
+    case AIProvider.GeminiApi => Some("https://generativelanguage.googleapis.com")
+    case AIProvider.OpenAi    => Some("https://api.openai.com/v1")
+    case AIProvider.Anthropic => Some("https://api.anthropic.com")
+
 /** Provider-agnostic response from AI execution */
 case class AIResponse(
   output: String,
   metadata: Map[String, String] = Map.empty,
 ) derives JsonCodec
+
+case class AIProviderConfig(
+  provider: AIProvider = AIProvider.GeminiCli,
+  model: String = "gemini-2.5-flash",
+  baseUrl: Option[String] = None,
+  apiKey: Option[String] = None,
+  timeout: zio.Duration = 90.seconds,
+  maxRetries: Int = 3,
+  requestsPerMinute: Int = 60,
+  burstSize: Int = 10,
+  acquireTimeout: zio.Duration = 30.seconds,
+  temperature: Option[Double] = None,
+  maxTokens: Option[Int] = None,
+) derives JsonCodec
+
+object AIProviderConfig:
+  def withDefaults(config: AIProviderConfig): AIProviderConfig =
+    config.baseUrl match
+      case Some(_) => config
+      case None    => config.copy(baseUrl = AIProvider.defaultBaseUrl(config.provider))
 
 /** Response from Gemini CLI execution */
 case class GeminiResponse(
@@ -532,18 +561,20 @@ case class MigrationError(
   *   Path to the output directory for generated Java code
   * @param stateDir
   *   Path to the directory for storing migration state and checkpoints
+  * @param aiProvider
+  *   Optional provider-agnostic AI configuration
   * @param geminiModel
-  *   Gemini model name to use for AI operations
+  *   Legacy Gemini model name (deprecated, use aiProvider.model)
   * @param geminiTimeout
-  *   Timeout duration for Gemini API calls
+  *   Legacy Gemini timeout (deprecated, use aiProvider.timeout)
   * @param geminiMaxRetries
-  *   Maximum number of retry attempts for failed Gemini API calls
+  *   Legacy Gemini max retries (deprecated, use aiProvider.maxRetries)
   * @param geminiRequestsPerMinute
-  *   Maximum Gemini requests per minute (rate limit)
+  *   Legacy Gemini requests per minute (deprecated, use aiProvider.requestsPerMinute)
   * @param geminiBurstSize
-  *   Maximum burst size for rate limiter
+  *   Legacy Gemini burst size (deprecated, use aiProvider.burstSize)
   * @param geminiAcquireTimeout
-  *   Timeout for waiting on rate limiter token
+  *   Legacy Gemini acquire timeout (deprecated, use aiProvider.acquireTimeout)
   * @param discoveryMaxDepth
   *   Maximum directory depth for discovery scanning
   * @param discoveryExcludePatterns
@@ -567,12 +598,21 @@ case class MigrationConfig(
   outputDir: Path,
   stateDir: Path = Paths.get(".migration-state"),
 
+  // Provider-agnostic AI settings
+  aiProvider: Option[AIProviderConfig] = None,
+
   // Gemini settings
+  @deprecated("Use aiProvider.model instead", "0.2.0")
   geminiModel: String = "gemini-2.5-flash",
+  @deprecated("Use aiProvider.timeout instead", "0.2.0")
   geminiTimeout: zio.Duration = zio.Duration.fromSeconds(90),
+  @deprecated("Use aiProvider.maxRetries instead", "0.2.0")
   geminiMaxRetries: Int = 3,
+  @deprecated("Use aiProvider.requestsPerMinute instead", "0.2.0")
   geminiRequestsPerMinute: Int = 60,
+  @deprecated("Use aiProvider.burstSize instead", "0.2.0")
   geminiBurstSize: Int = 10,
+  @deprecated("Use aiProvider.acquireTimeout instead", "0.2.0")
   geminiAcquireTimeout: zio.Duration = zio.Duration.fromSeconds(30),
 
   // Discovery settings
@@ -598,7 +638,23 @@ case class MigrationConfig(
   resumeFromCheckpoint: Option[String] = None,
   dryRun: Boolean = false,
   verbose: Boolean = false,
-) derives JsonCodec
+) derives JsonCodec:
+
+  @nowarn("cat=deprecation")
+  def resolvedProviderConfig: AIProviderConfig =
+    aiProvider
+      .map(AIProviderConfig.withDefaults)
+      .getOrElse(
+        AIProviderConfig(
+          provider = AIProvider.GeminiCli,
+          model = geminiModel,
+          timeout = geminiTimeout,
+          maxRetries = geminiMaxRetries,
+          requestsPerMinute = geminiRequestsPerMinute,
+          burstSize = geminiBurstSize,
+          acquireTimeout = geminiAcquireTimeout,
+        )
+      )
 
 case class MigrationState(
   runId: String,

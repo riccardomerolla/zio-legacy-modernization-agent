@@ -5,7 +5,7 @@ import java.nio.file.Paths
 import zio.*
 import zio.test.*
 
-import models.MigrationConfig
+import models.{ AIProvider, AIProviderConfig, MigrationConfig }
 
 object ConfigLoaderSpec extends ZIOSpecDefault:
 
@@ -194,6 +194,40 @@ object ConfigLoaderSpec extends ZIOSpecDefault:
         for result <- ConfigLoader.validate(validConfig.copy(discoveryExcludePatterns = List.empty))
         yield assertTrue(result.discoveryExcludePatterns.isEmpty)
       },
+      test("validates provider retries from aiProvider when present") {
+        val config = validConfig.copy(
+          aiProvider = Some(
+            AIProviderConfig(
+              provider = AIProvider.OpenAi,
+              model = "gpt-4.1",
+              maxRetries = 11,
+            )
+          ),
+          geminiMaxRetries = 0, // Should be ignored when aiProvider is defined
+        )
+        for result <- ConfigLoader.validate(config).either
+        yield assertTrue(
+          result.isLeft,
+          result.left.exists(_.contains("retries")),
+        )
+      },
+      test("validates provider timeout from aiProvider when present") {
+        val config = validConfig.copy(
+          aiProvider = Some(
+            AIProviderConfig(
+              provider = AIProvider.Anthropic,
+              model = "claude-3-5-sonnet",
+              timeout = Duration.Zero,
+            )
+          ),
+          geminiTimeout = Duration.fromSeconds(60), // Should be ignored when aiProvider is defined
+        )
+        for result <- ConfigLoader.validate(config).either
+        yield assertTrue(
+          result.isLeft,
+          result.left.exists(_.contains("Timeout")),
+        )
+      },
     ),
     suite("validate - property-based")(
       test("valid parallelism range always passes") {
@@ -282,6 +316,7 @@ object ConfigLoaderSpec extends ZIOSpecDefault:
         assertTrue(
           config.geminiModel == "gemini-2.5-flash",
           config.geminiMaxRetries == 3,
+          config.aiProvider.isEmpty,
           config.parallelism == 4,
           config.batchSize == 10,
           config.enableCheckpointing,

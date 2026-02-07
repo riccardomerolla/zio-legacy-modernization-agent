@@ -2,7 +2,7 @@ package core
 
 import zio.*
 
-import models.{ MigrationConfig, RateLimitError }
+import models.{ AIProviderConfig, MigrationConfig, RateLimitError }
 
 /** Token bucket rate limiter for Gemini requests */
 trait RateLimiter:
@@ -17,12 +17,15 @@ final case class RateLimiterConfig(
 )
 
 object RateLimiterConfig:
-  def fromMigrationConfig(config: MigrationConfig): RateLimiterConfig =
+  def fromAIProviderConfig(config: AIProviderConfig): RateLimiterConfig =
     RateLimiterConfig(
-      requestsPerMinute = config.geminiRequestsPerMinute,
-      burstSize = config.geminiBurstSize,
-      acquireTimeout = config.geminiAcquireTimeout,
+      requestsPerMinute = config.requestsPerMinute,
+      burstSize = config.burstSize,
+      acquireTimeout = config.acquireTimeout,
     )
+
+  def fromMigrationConfig(config: MigrationConfig): RateLimiterConfig =
+    fromAIProviderConfig(config.resolvedProviderConfig)
 
 final case class RateLimiterMetrics(
   totalRequests: Long,

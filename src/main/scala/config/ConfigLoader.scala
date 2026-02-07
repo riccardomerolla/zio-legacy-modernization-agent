@@ -75,12 +75,17 @@ object ConfigLoader:
     *   ZIO effect that either succeeds with the config or fails with validation errors
     */
   def validate(config: MigrationConfig): IO[String, MigrationConfig] =
+    val providerConfig = config.resolvedProviderConfig
     for
       _ <- validateParallelism(config.parallelism)
       _ <- validateBatchSize(config.batchSize)
-      _ <- validateRetries(config.geminiMaxRetries)
-      _ <- validateTimeout(config.geminiTimeout)
-      _ <- validateRateLimiter(config.geminiRequestsPerMinute, config.geminiBurstSize, config.geminiAcquireTimeout)
+      _ <- validateRetries(providerConfig.maxRetries)
+      _ <- validateTimeout(providerConfig.timeout)
+      _ <- validateRateLimiter(
+             providerConfig.requestsPerMinute,
+             providerConfig.burstSize,
+             providerConfig.acquireTimeout,
+           )
       _ <- validateDiscovery(config.discoveryMaxDepth, config.discoveryExcludePatterns)
     yield config
 

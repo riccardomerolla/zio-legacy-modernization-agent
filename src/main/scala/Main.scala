@@ -152,16 +152,23 @@ object Main extends ZIOAppDefault:
                       case None       =>
                         ConfigLoader.loadWithEnvOverrides.orElse(ZIO.succeed(MigrationConfig(sourceDir, outputDir)))
 
+      resolvedProvider = baseConfig.resolvedProviderConfig
+      providerConfig   = AIProviderConfig.withDefaults(
+                           resolvedProvider.copy(
+                             model = geminiModel.getOrElse(resolvedProvider.model),
+                             timeout = geminiTimeout
+                               .map(t => zio.Duration.fromSeconds(t.toLong))
+                               .getOrElse(resolvedProvider.timeout),
+                             maxRetries = geminiRetries.map(_.toInt).getOrElse(resolvedProvider.maxRetries),
+                           )
+                         )
+
       // Override with CLI arguments
       migrationConfig = baseConfig.copy(
                           sourceDir = sourceDir,
                           outputDir = outputDir,
                           stateDir = stateDir.getOrElse(baseConfig.stateDir),
-                          geminiModel = geminiModel.getOrElse(baseConfig.geminiModel),
-                          geminiTimeout = geminiTimeout.map(t => zio.Duration.fromSeconds(t.toLong)).getOrElse(
-                            baseConfig.geminiTimeout
-                          ),
-                          geminiMaxRetries = geminiRetries.map(_.toInt).getOrElse(baseConfig.geminiMaxRetries),
+                          aiProvider = Some(providerConfig),
                           discoveryMaxDepth = discoveryMaxDepth.map(_.toInt).getOrElse(baseConfig.discoveryMaxDepth),
                           discoveryExcludePatterns =
                             parseExcludePatterns(discoveryExclude).getOrElse(baseConfig.discoveryExcludePatterns),

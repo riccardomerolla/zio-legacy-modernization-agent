@@ -99,6 +99,22 @@ object ModelsSpec extends ZIOSpecDefault:
           output = "Generated summary"
         ),
       ),
+      roundTripTest(
+        "AIProviderConfig round-trip",
+        AIProviderConfig(
+          provider = AIProvider.OpenAi,
+          model = "gpt-4.1",
+          baseUrl = Some("http://localhost:1234/v1"),
+          apiKey = Some("test-key"),
+          timeout = Duration.fromSeconds(120),
+          maxRetries = 5,
+          requestsPerMinute = 120,
+          burstSize = 20,
+          acquireTimeout = Duration.fromSeconds(45),
+          temperature = Some(0.2),
+          maxTokens = Some(1024),
+        ),
+      ),
       encodingTest(
         "AIResponse encoding",
         AIResponse(
@@ -143,6 +159,61 @@ object ModelsSpec extends ZIOSpecDefault:
         val json    = error.toJson
         val decoded = json.fromJson[AIError]
         assertTrue(decoded == Right(error))
+      },
+      test("AIProvider default baseUrl values are provider-specific") {
+        assertTrue(
+          AIProvider.defaultBaseUrl(AIProvider.GeminiCli).isEmpty,
+          AIProvider.defaultBaseUrl(AIProvider.GeminiApi).contains("https://generativelanguage.googleapis.com"),
+          AIProvider.defaultBaseUrl(AIProvider.OpenAi).contains("https://api.openai.com/v1"),
+          AIProvider.defaultBaseUrl(AIProvider.Anthropic).contains("https://api.anthropic.com"),
+        )
+      },
+      test("resolvedProviderConfig falls back to legacy Gemini fields when aiProvider is missing") {
+        val config = MigrationConfig(
+          sourceDir = Paths.get("/tmp/src"),
+          outputDir = Paths.get("/tmp/out"),
+          geminiModel = "gemini-2.5-pro",
+          geminiTimeout = Duration.fromSeconds(75),
+          geminiMaxRetries = 4,
+          geminiRequestsPerMinute = 90,
+          geminiBurstSize = 12,
+          geminiAcquireTimeout = Duration.fromSeconds(20),
+        )
+
+        val resolved = config.resolvedProviderConfig
+        assertTrue(
+          resolved.provider == AIProvider.GeminiCli,
+          resolved.model == "gemini-2.5-pro",
+          resolved.timeout == Duration.fromSeconds(75),
+          resolved.maxRetries == 4,
+          resolved.requestsPerMinute == 90,
+          resolved.burstSize == 12,
+          resolved.acquireTimeout == Duration.fromSeconds(20),
+          resolved.baseUrl.isEmpty,
+        )
+      },
+      test("resolvedProviderConfig uses aiProvider and applies default baseUrl when missing") {
+        val config = MigrationConfig(
+          sourceDir = Paths.get("/tmp/src"),
+          outputDir = Paths.get("/tmp/out"),
+          aiProvider = Some(
+            AIProviderConfig(
+              provider = AIProvider.OpenAi,
+              model = "gpt-4o-mini",
+              baseUrl = None,
+              maxRetries = 2,
+            )
+          ),
+          geminiModel = "legacy-ignored",
+        )
+
+        val resolved = config.resolvedProviderConfig
+        assertTrue(
+          resolved.provider == AIProvider.OpenAi,
+          resolved.model == "gpt-4o-mini",
+          resolved.maxRetries == 2,
+          resolved.baseUrl.contains("https://api.openai.com/v1"),
+        )
       },
     ),
     // ========================================================================
