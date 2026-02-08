@@ -7,6 +7,7 @@ import scala.annotation.nowarn
 
 import zio.*
 import zio.json.*
+import zio.json.ast.Json
 
 /** Custom JSON codecs for Java types that don't have built-in ZIO JSON support
   */
@@ -481,11 +482,57 @@ case class TestResults(
   failed: Int,
 ) derives JsonCodec
 
-enum Severity derives JsonCodec:
+enum Severity:
   case ERROR, WARNING, INFO
 
-enum IssueCategory derives JsonCodec:
-  case Compile, Coverage, StaticAnalysis, Semantic, Convention
+object Severity:
+  given JsonCodec[Severity] = JsonCodec[String].transformOrFail(
+    value =>
+      value.trim.toUpperCase match
+        case "ERROR"   => Right(Severity.ERROR)
+        case "WARNING" => Right(Severity.WARNING)
+        case "INFO"    => Right(Severity.INFO)
+        case other     => Left(s"invalid severity value: $other"),
+    severity => severity.toString,
+  )
+
+enum IssueCategory:
+  case Compile, Coverage, StaticAnalysis, Semantic, Convention, Undefined
+
+object IssueCategory:
+  private val known: Map[String, IssueCategory] = Map(
+    "COMPILE"        -> IssueCategory.Compile,
+    "COMPILATION"    -> IssueCategory.Compile,
+    "COVERAGE"       -> IssueCategory.Coverage,
+    "STATICANALYSIS" -> IssueCategory.StaticAnalysis,
+    "STATICCHECK"    -> IssueCategory.StaticAnalysis,
+    "CHECKSTYLE"     -> IssueCategory.StaticAnalysis,
+    "SPOTBUGS"       -> IssueCategory.StaticAnalysis,
+    "SEMANTIC"       -> IssueCategory.Semantic,
+    "BUSINESSLOGIC"  -> IssueCategory.Semantic,
+    "LOGIC"          -> IssueCategory.Semantic,
+    "ARCHITECTURAL"  -> IssueCategory.Semantic,
+    "ARCHITECTURE"   -> IssueCategory.Semantic,
+    "DESIGN"         -> IssueCategory.Semantic,
+    "CONVENTION"     -> IssueCategory.Convention,
+    "STYLE"          -> IssueCategory.Convention,
+    "FORMATTING"     -> IssueCategory.Convention,
+    "UNDEFINED"      -> IssueCategory.Undefined,
+  )
+
+  given JsonCodec[IssueCategory] = JsonCodec[String].transform(
+    value => fromRaw(value),
+    category => category.toString,
+  )
+
+  def fromRaw(value: String): IssueCategory =
+    known.getOrElse(normalize(value), IssueCategory.Undefined)
+
+  def isKnownRaw(value: String): Boolean =
+    known.contains(normalize(value))
+
+  private def normalize(value: String): String =
+    value.trim.toUpperCase.replaceAll("[^A-Z0-9]", "")
 
 case class CompileResult(
   success: Boolean,
@@ -500,7 +547,56 @@ case class ValidationIssue(
   file: Option[String],
   line: Option[Int],
   suggestion: Option[String],
-) derives JsonCodec
+)
+
+object ValidationIssue:
+  private case class RawValidationIssue(
+    severity: Severity,
+    category: IssueCategory,
+    message: String,
+    file: Option[String],
+    line: Option[Json],
+    suggestion: Option[String],
+  ) derives JsonCodec
+
+  given JsonCodec[ValidationIssue] = JsonCodec[RawValidationIssue].transformOrFail(
+    raw =>
+      decodeLine(raw.line).map(line =>
+        ValidationIssue(
+          severity = raw.severity,
+          category = raw.category,
+          message = raw.message,
+          file = raw.file,
+          line = line,
+          suggestion = raw.suggestion,
+        )
+      ),
+    issue =>
+      RawValidationIssue(
+        severity = issue.severity,
+        category = issue.category,
+        message = issue.message,
+        file = issue.file,
+        line = issue.line.map(v => Json.Num(v)),
+        suggestion = issue.suggestion,
+      ),
+  )
+
+  private def decodeLine(value: Option[Json]): Either[String, Option[Int]] =
+    value match
+      case None                   => Right(None)
+      case Some(Json.Null)        => Right(None)
+      case Some(Json.Num(number)) =>
+        scala.util.Try(number.intValueExact()).toOption
+          .map(Some(_))
+          .toRight(s"unsupported numeric line value: $number")
+      case Some(Json.Str(text))   =>
+        val normalized = text.trim
+        normalized.toIntOption
+          .orElse(normalized.toDoubleOption.map(_.toInt))
+          .map(Some(_))
+          .toRight(s"unsupported string line value: $text")
+      case Some(other)            => Left(s"unsupported line value type: $other")
 
 case class CoverageMetrics(
   variablesCovered: Double,

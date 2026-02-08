@@ -44,6 +44,7 @@ object ModelsPropertySpec extends ZIOSpecDefault:
       IssueCategory.StaticAnalysis,
       IssueCategory.Semantic,
       IssueCategory.Convention,
+      IssueCategory.Undefined,
     )
 
   private val genValidationStatus =

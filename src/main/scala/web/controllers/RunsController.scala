@@ -72,8 +72,10 @@ final case class RunsControllerLive(
                            dryRun = dryRun,
                          )
           _           <- orchestrator.startMigration(migrationCfg)
-          redirectUrl <- ZIO.fromEither(URL.decode("/")).orElseSucceed(URL.root)
-        yield Response.redirect(redirectUrl)
+        yield Response(
+          status = Status.SeeOther,
+          headers = Headers(Header.Custom("Location", "/")),
+        )
       }
     },
     Method.DELETE / "runs" / long("id")           -> handler { (runId: Long, _: Request) =>

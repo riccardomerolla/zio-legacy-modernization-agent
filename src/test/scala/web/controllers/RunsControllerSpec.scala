@@ -55,7 +55,7 @@ object RunsControllerSpec extends ZIOSpecDefault:
         response     <- controller.routes.runZIO(request)
         started      <- orchestrator.lastStartedConfig
       yield assertTrue(
-        response.status.isRedirection,
+        response.status == Status.SeeOther,
         response.rawHeader("location").contains("/"),
         started.exists(_.dryRun),
       )

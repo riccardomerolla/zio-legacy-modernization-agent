@@ -79,6 +79,28 @@ object ModelsSpec extends ZIOSpecDefault:
       roundTripTest("AIProvider.GeminiApi", AIProvider.GeminiApi),
       roundTripTest("AIProvider.OpenAi", AIProvider.OpenAi),
       roundTripTest("AIProvider.Anthropic", AIProvider.Anthropic),
+      test("IssueCategory decoder accepts common AI variants") {
+        val staticVariants  = List(
+          "\"StaticAnalysis\"",
+          "\"static_analysis\"",
+          "\"STATIC ANALYSIS\"",
+          "\"checkstyle\"",
+        )
+        val semanticVariant = "\"ARCHITECTURAL\""
+        val fallbackVariant = "\"STRUCTURALMAPPING\""
+        val staticDecoded   = staticVariants.map(_.fromJson[IssueCategory])
+        val semanticDecoded = semanticVariant.fromJson[IssueCategory]
+        val fallbackDecoded = fallbackVariant.fromJson[IssueCategory]
+        assertTrue(
+          staticDecoded.forall(_ == Right(IssueCategory.StaticAnalysis)),
+          semanticDecoded == Right(IssueCategory.Semantic),
+          fallbackDecoded == Right(IssueCategory.Undefined),
+        )
+      },
+      test("Severity decoder accepts lowercase variants") {
+        val decoded = "\"warning\"".fromJson[Severity]
+        assertTrue(decoded == Right(Severity.WARNING))
+      },
     ),
     suite("AI Models")(
       roundTripTest(
@@ -495,6 +517,19 @@ object ModelsSpec extends ZIOSpecDefault:
           suggestion = Some("Remove or use the variable"),
         ),
       ),
+      test("ValidationIssue decoder accepts line as numeric string") {
+        val json =
+          """{
+            |  "severity": "WARNING",
+            |  "category": "StaticAnalysis",
+            |  "message": "test",
+            |  "file": "CustomerService.java",
+            |  "line": "42",
+            |  "suggestion": null
+            |}""".stripMargin
+        val out  = json.fromJson[ValidationIssue]
+        assertTrue(out.map(_.line) == Right(Some(42)))
+      },
       roundTripTest(
         "SemanticValidation",
         SemanticValidation(
@@ -508,6 +543,7 @@ object ModelsSpec extends ZIOSpecDefault:
       roundTripTest("ValidationStatus.Failed", ValidationStatus.Failed),
       roundTripTest("Severity.ERROR", Severity.ERROR),
       roundTripTest("IssueCategory.Semantic", IssueCategory.Semantic),
+      roundTripTest("IssueCategory.Undefined", IssueCategory.Undefined),
       roundTripTest(
         "ValidationReport",
         ValidationReport(

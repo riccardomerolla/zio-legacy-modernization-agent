@@ -4,6 +4,7 @@ import java.nio.file.Path
 
 import zio.*
 import zio.json.*
+import zio.json.ast.Json
 
 import core.{ AIService, FileService, Logger, ResponseParser }
 import models.*
@@ -319,10 +320,45 @@ object ValidationAgent:
                     )
                   )
                   .mapError(e => ValidationError.SemanticValidationFailed(project.projectName, e.message))
+              _          <- logUnmatchedIssueCategories(project.projectName, response)
               validation <- responseParser
                               .parse[SemanticValidation](response)
                               .mapError(e => ValidationError.SemanticValidationFailed(project.projectName, e.message))
             yield validation
+
+          private def logUnmatchedIssueCategories(projectName: String, response: AIResponse): UIO[Unit] =
+            (for
+              jsonText <- responseParser.extractJson(response)
+              ast      <- ZIO.fromEither(jsonText.fromJson[Json]).orElseSucceed(Json.Null)
+              raws      = extractIssueCategories(ast)
+              unknowns  = raws.filterNot(IssueCategory.isKnownRaw).distinct
+              _        <-
+                if unknowns.isEmpty then ZIO.unit
+                else
+                  Logger.warn(
+                    s"Semantic validation for $projectName produced unknown issue categories mapped to Undefined: ${unknowns.mkString(", ")}"
+                  )
+            yield ()).catchAll(_ => ZIO.unit)
+
+          private def extractIssueCategories(ast: Json): List[String] =
+            ast match
+              case Json.Obj(fields) =>
+                fields
+                  .find(_._1 == "issues")
+                  .map(_._2)
+                  .collect {
+                    case Json.Arr(items) =>
+                      items.collect {
+                        case Json.Obj(issueFields) =>
+                          issueFields.find(_._1 == "category").flatMap {
+                            case (_, Json.Str(value)) => Some(value)
+                            case _                    => None
+                          }
+                      }.flatten
+                  }
+                  .getOrElse(Nil)
+                  .toList
+              case _                => Nil
 
           private def determineStatus(compileResult: CompileResult, issues: List[ValidationIssue]): ValidationStatus =
             if !compileResult.success || issues.exists(_.severity == Severity.ERROR) then ValidationStatus.Failed
