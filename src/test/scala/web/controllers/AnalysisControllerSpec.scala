@@ -58,6 +58,18 @@ object AnalysisControllerSpec extends ZIOSpecDefault:
         body.contains("PROGRAM1.cbl"),
       )
     },
+    test("GET /analysis without runId falls back to latest run") {
+      for
+        repo      <- TestRepository.make
+        controller = AnalysisControllerLive(repo)
+        response  <- controller.routes.runZIO(Request.get("/analysis"))
+        body      <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains("Analysis for Run #1"),
+        body.contains("PROGRAM1.cbl"),
+      )
+    },
     test("GET /analysis/:fileId returns file analysis detail") {
       for
         repo      <- TestRepository.make

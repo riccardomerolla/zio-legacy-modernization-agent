@@ -1,5 +1,7 @@
 package web.controllers
 
+import java.time.Instant
+
 import zio.*
 import zio.http.*
 import zio.test.*
@@ -26,6 +28,18 @@ object GraphControllerSpec extends ZIOSpecDefault:
       yield assertTrue(
         response.status == Status.Ok,
         body.contains("Dependency Graph"),
+      )
+    },
+    test("GET /graph without runId falls back to latest run") {
+      for
+        repo      <- TestRepository.make
+        controller = GraphControllerLive(repo)
+        response  <- controller.routes.runZIO(Request.get("/graph"))
+        body      <- response.body.asString
+      yield assertTrue(
+        response.status == Status.Ok,
+        body.contains("Run #7"),
+        body.contains("PROG1"),
       )
     },
     test("GET /api/graph/:runId returns JSON") {
@@ -55,6 +69,20 @@ object GraphControllerSpec extends ZIOSpecDefault:
   )
 
   final private case class TestRepository() extends MigrationRepository:
+    private val run = MigrationRunRow(
+      id = 7L,
+      sourceDir = "/tmp/source",
+      outputDir = "/tmp/out",
+      status = RunStatus.Completed,
+      startedAt = Instant.parse("2026-02-08T00:00:00Z"),
+      completedAt = Some(Instant.parse("2026-02-08T00:10:00Z")),
+      totalFiles = 1,
+      processedFiles = 1,
+      successfulConversions = 1,
+      failedConversions = 0,
+      currentPhase = Some("Completed"),
+      errorMessage = None,
+    )
 
     override def getDependenciesByRun(runId: Long): IO[PersistenceError, List[DependencyRow]] =
       ZIO.succeed(if runId == 7L then List(dependency) else Nil)
@@ -66,7 +94,7 @@ object GraphControllerSpec extends ZIOSpecDefault:
     override def getRun(id: Long): IO[PersistenceError, Option[MigrationRunRow]]                         =
       ZIO.dieMessage("unused in GraphControllerSpec")
     override def listRuns(offset: Int, limit: Int): IO[PersistenceError, List[MigrationRunRow]]          =
-      ZIO.dieMessage("unused in GraphControllerSpec")
+      ZIO.succeed(List(run))
     override def deleteRun(id: Long): IO[PersistenceError, Unit]                                         =
       ZIO.dieMessage("unused in GraphControllerSpec")
     override def saveFiles(files: List[CobolFileRow]): IO[PersistenceError, Unit]                        =
