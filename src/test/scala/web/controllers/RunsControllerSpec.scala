@@ -42,7 +42,7 @@ object RunsControllerSpec extends ZIOSpecDefault:
         body.contains("42"),
       )
     },
-    test("POST /runs starts migration and redirects to detail") {
+    test("POST /runs starts migration and redirects to dashboard") {
       for
         orchestrator <- TestOrchestrator.make(startedRunId = 77L)
         repo         <- TestRepository.make
@@ -56,7 +56,7 @@ object RunsControllerSpec extends ZIOSpecDefault:
         started      <- orchestrator.lastStartedConfig
       yield assertTrue(
         response.status.isRedirection,
-        response.rawHeader("location").nonEmpty,
+        response.rawHeader("location").contains("/"),
         started.exists(_.dryRun),
       )
     },

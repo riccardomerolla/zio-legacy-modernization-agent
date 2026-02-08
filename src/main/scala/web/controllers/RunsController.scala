@@ -71,10 +71,8 @@ final case class RunsControllerLive(
                            outputDir = Paths.get(outputDir),
                            dryRun = dryRun,
                          )
-          runId       <- orchestrator.startMigration(migrationCfg)
-          redirectUrl <- ZIO
-                           .fromEither(URL.decode(s"/runs/$runId"))
-                           .orElseSucceed(URL.root / "runs" / runId.toString)
+          _           <- orchestrator.startMigration(migrationCfg)
+          redirectUrl <- ZIO.fromEither(URL.decode("/")).orElseSucceed(URL.root)
         yield Response.redirect(redirectUrl)
       }
     },

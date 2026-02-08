@@ -26,6 +26,15 @@ object WebServer:
         dashboard.routes ++ runs.routes ++ analysis.routes ++ graph.routes ++ staticRoutes
     }
   }
+  private val defaultShutdownTimeout = java.time.Duration.ofSeconds(3L)
 
   def start(port: Int): ZIO[WebServer, Throwable, Nothing] =
-    ZIO.serviceWithZIO[WebServer](server => Server.serve(server.routes).provide(Server.defaultWithPort(port)))
+    start(host = "0.0.0.0", port = port)
+
+  def start(host: String, port: Int): ZIO[WebServer, Throwable, Nothing] =
+    val config =
+      Server.Config.default
+        .binding(host, port)
+        .gracefulShutdownTimeout(defaultShutdownTimeout)
+
+    ZIO.serviceWithZIO[WebServer](server => Server.serve(server.routes).provide(Server.defaultWith(_ => config)))

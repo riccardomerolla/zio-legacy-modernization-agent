@@ -76,6 +76,7 @@ lazy val root = (project in file("."))
     coverageMinimumStmtTotal := 80,
     coverageFailOnMinimum := true,
     coverageHighlighting := true,
+    run / fork := true,
     run / javaOptions ++= Seq(
       "--enable-native-access=ALL-UNNAMED",
       "--add-opens", "java.base/java.lang=ALL-UNNAMED"

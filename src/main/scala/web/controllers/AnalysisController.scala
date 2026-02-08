@@ -26,7 +26,7 @@ final case class AnalysisControllerLive(
     Method.GET / "analysis"                    -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          runId    <- getLongQuery(req, "runId")
+          runId    <- resolveAnalysisRunId(req)
           files    <- repository.getFilesByRun(runId)
           analyses <- repository.getAnalysesByRun(runId)
         yield html(HtmlViews.analysisList(runId, files, analyses))
@@ -55,6 +55,22 @@ final case class AnalysisControllerLive(
     ZIO
       .fromOption(req.queryParam(key).flatMap(_.toLongOption))
       .orElseFail(PersistenceError.QueryFailed(s"query:$key", s"Missing or invalid query parameter '$key'"))
+
+  private def resolveAnalysisRunId(req: Request): IO[PersistenceError, Long] =
+    req.queryParam("runId").flatMap(_.toLongOption) match
+      case Some(runId) => ZIO.succeed(runId)
+      case None        =>
+        repository
+          .listRuns(offset = 0, limit = 1)
+          .flatMap(_.headOption.map(_.id) match
+            case Some(runId) => ZIO.succeed(runId)
+            case None        =>
+              ZIO.fail(
+                PersistenceError.QueryFailed(
+                  "query:runId",
+                  "Missing query parameter 'runId' and no migration runs are available",
+                )
+              ))
 
   private def getStringQuery(req: Request, key: String): IO[PersistenceError, String] =
     ZIO

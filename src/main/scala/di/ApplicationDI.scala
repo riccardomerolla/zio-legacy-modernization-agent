@@ -8,11 +8,28 @@ import core.*
 import db.*
 import models.*
 import orchestration.*
+import web.WebServer
+import web.controllers.*
 
 object ApplicationDI:
 
-  def orchestratorLayer(config: MigrationConfig): ZLayer[Any, Nothing, MigrationOrchestrator] =
-    ZLayer.make[MigrationOrchestrator](
+  type CommonServices =
+    FileService &
+      MigrationConfig &
+      AIService &
+      StateService &
+      MigrationRepository &
+      ProgressTracker &
+      ResultPersister &
+      CobolDiscoveryAgent &
+      CobolAnalyzerAgent &
+      DependencyMapperAgent &
+      JavaTransformerAgent &
+      ValidationAgent &
+      DocumentationAgent
+
+  def commonLayers(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, CommonServices] =
+    ZLayer.make[CommonServices](
       // Core services and configuration
       FileService.live,
       ZLayer.succeed(config),
@@ -26,7 +43,7 @@ object ApplicationDI:
       HttpAIClient.live,
       AIService.fromConfig.mapError(e => new RuntimeException(e.message)).orDie,
       StateService.live(config.stateDir),
-      ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:${config.stateDir.resolve("migration.db")}")),
+      ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       MigrationRepository.live,
       ProgressTracker.live,
@@ -39,7 +56,27 @@ object ApplicationDI:
       JavaTransformerAgent.live,
       ValidationAgent.live,
       DocumentationAgent.live,
+    )
+
+  def orchestratorLayer(config: MigrationConfig): ZLayer[Any, Nothing, MigrationOrchestrator] =
+    orchestratorLayer(config, config.stateDir.resolve("migration.db"))
+
+  def orchestratorLayer(config: MigrationConfig, dbPath: java.nio.file.Path)
+    : ZLayer[Any, Nothing, MigrationOrchestrator] =
+    ZLayer.make[MigrationOrchestrator](
+      commonLayers(config, dbPath),
 
       // Orchestration
       MigrationOrchestrator.live,
+    )
+
+  def webServerLayer(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
+    ZLayer.make[WebServer](
+      commonLayers(config, dbPath),
+      MigrationOrchestrator.live,
+      RunsController.live,
+      AnalysisController.live,
+      GraphController.live,
+      DashboardController.live,
+      WebServer.live,
     )

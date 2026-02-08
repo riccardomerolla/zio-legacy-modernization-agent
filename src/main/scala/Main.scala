@@ -11,6 +11,7 @@ import core.*
 import di.ApplicationDI
 import models.*
 import orchestration.*
+import web.WebServer
 
 /** Main entry point for the Legacy Modernization Agent system
   *
@@ -58,6 +59,9 @@ object Main extends ZIOAppDefault:
   private val resumeOpt  = Options.text("resume").optional ?? "Resume from checkpoint (provide run ID)"
   private val dryRunOpt  = Options.boolean("dry-run").optional ?? "Perform dry run without writing files"
   private val verboseOpt = Options.boolean("verbose").alias("v").optional ?? "Enable verbose logging"
+  private val portOpt    = Options.integer("port").optional ?? "HTTP server port (default: 8080)"
+  private val hostOpt    = Options.text("host").optional ?? "HTTP server host (default: 0.0.0.0)"
+  private val dbPathOpt  = Options.text("db-path").optional ?? "SQLite DB path (default: ./migration.db)"
 
   private val stepNameArg = Args.text("step-name") ?? "Migration step to run"
 
@@ -101,12 +105,14 @@ object Main extends ZIOAppDefault:
   )
   type StepOpts     = (StepBaseOpts, String)
   type ListRunsOpts = (Option[Path], Option[Path])
+  type ServeOpts    = (Option[BigInt], Option[String], Option[String])
 
   private enum CliCommand:
     case Migrate(opts: MigrateOpts)
     case Step(opts: StepOpts)
     case ListRuns(opts: ListRunsOpts)
     case NamedStep(stepName: String, opts: StepBaseOpts)
+    case Serve(opts: ServeOpts)
 
   private val migrateCmd: Command[MigrateOpts] =
     Command(
@@ -144,6 +150,8 @@ object Main extends ZIOAppDefault:
     Command("validation", stepBaseOpts).withHelp("Run validation step")
   private val documentationCmd: Command[StepBaseOpts]  =
     Command("documentation", stepBaseOpts).withHelp("Run documentation step")
+  private val serveCmd: Command[ServeOpts]             =
+    Command("serve", portOpt ++ hostOpt ++ dbPathOpt).withHelp("Start the web portal (default: http://0.0.0.0:8080)")
 
   private val command: Command[CliCommand] =
     migrateCmd.map(CliCommand.Migrate.apply) |
@@ -154,7 +162,8 @@ object Main extends ZIOAppDefault:
       mappingCmd.map(opts => CliCommand.NamedStep("mapping", opts)) |
       transformationCmd.map(opts => CliCommand.NamedStep("transformation", opts)) |
       validationCmd.map(opts => CliCommand.NamedStep("validation", opts)) |
-      documentationCmd.map(opts => CliCommand.NamedStep("documentation", opts))
+      documentationCmd.map(opts => CliCommand.NamedStep("documentation", opts)) |
+      serveCmd.map(CliCommand.Serve.apply)
 
   private val cliApp = CliApp.make(
     name = "zio-legacy-modernization",
@@ -221,6 +230,13 @@ object Main extends ZIOAppDefault:
         opts._11,
         opts._12,
         stepName,
+      )
+
+    case CliCommand.Serve(opts) =>
+      executeServe(
+        port = opts._1.map(_.toInt).getOrElse(8080),
+        host = opts._2.getOrElse("0.0.0.0"),
+        dbPath = opts._3.getOrElse("./migration.db"),
       )
   }
 
@@ -463,6 +479,22 @@ object Main extends ZIOAppDefault:
             }
     yield ()
 
+  private def executeServe(port: Int, host: String, dbPath: String): ZIO[Any, Throwable, Unit] =
+    val dbFile = Paths.get(dbPath)
+
+    for
+      baseConfig <- ConfigLoader.loadWithEnvOverrides.orElse(
+                      ZIO.succeed(MigrationConfig(Paths.get("cobol-source"), Paths.get("java-output")))
+                    )
+      stateDir    = Option(dbFile.getParent).getOrElse(baseConfig.stateDir)
+      config      = baseConfig.copy(stateDir = stateDir)
+      _          <- ZIO.logInfo(s"Starting web portal on $host:$port using DB at $dbFile")
+      _          <- WebServer
+                      .start(host, port)
+                      .onInterrupt(ZIO.logInfo("Shutting down web portal..."))
+                      .provide(webServerLayer(config, dbFile))
+    yield ()
+
   private val banner =
     """
       |╔═══════════════════════════════════════════════════════════════════╗
@@ -480,11 +512,23 @@ object Main extends ZIOAppDefault:
 
   /** Run migration with validated configuration */
   private def runMigrationWithConfig(config: MigrationConfig): ZIO[Any, OrchestratorError, Unit] =
-    migrationProgram(config).provide(ApplicationDI.orchestratorLayer(config))
+    migrationProgram(config).provide(orchestratorLayer(config, config.stateDir.resolve("migration.db")))
 
   /** Run specific step with validated configuration */
   private def runStepWithConfig(step: MigrationStep, config: MigrationConfig): ZIO[Any, OrchestratorError, Unit] =
-    stepProgram(step, config).provide(ApplicationDI.orchestratorLayer(config))
+    stepProgram(step, config).provide(orchestratorLayer(config, config.stateDir.resolve("migration.db")))
+
+  private def commonLayers(config: MigrationConfig, dbPath: Path): ZLayer[Any, Nothing, ApplicationDI.CommonServices] =
+    ApplicationDI.commonLayers(config, dbPath)
+
+  private def orchestratorLayer(config: MigrationConfig, dbPath: Path): ZLayer[Any, Nothing, MigrationOrchestrator] =
+    ZLayer.make[MigrationOrchestrator](
+      commonLayers(config, dbPath),
+      MigrationOrchestrator.live,
+    )
+
+  private def webServerLayer(config: MigrationConfig, dbPath: Path): ZLayer[Any, Nothing, WebServer] =
+    ApplicationDI.webServerLayer(config, dbPath)
 
   private def migrationProgram(config: MigrationConfig): ZIO[MigrationOrchestrator, OrchestratorError, Unit] =
     for
