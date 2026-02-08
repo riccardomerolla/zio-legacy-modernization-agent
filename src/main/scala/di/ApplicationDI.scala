@@ -5,6 +5,7 @@ import zio.http.Client
 
 import agents.*
 import core.*
+import db.*
 import models.*
 import orchestration.*
 
@@ -25,6 +26,11 @@ object ApplicationDI:
       HttpAIClient.live,
       AIService.fromConfig.mapError(e => new RuntimeException(e.message)).orDie,
       StateService.live(config.stateDir),
+      ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:${config.stateDir.resolve("migration.db")}")),
+      Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      MigrationRepository.live,
+      ProgressTracker.live,
+      ResultPersister.live,
 
       // Agent implementations
       CobolDiscoveryAgent.live,

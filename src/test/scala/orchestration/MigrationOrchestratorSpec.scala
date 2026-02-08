@@ -9,6 +9,7 @@ import zio.test.*
 
 import agents.*
 import core.*
+import db.*
 import models.*
 
 object MigrationOrchestratorSpec extends ZIOSpecDefault:
@@ -37,6 +38,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                              outputDir = outputDir,
                              stateDir = stateDir,
                            )),
+                           noOpRepositoryLayer,
+                           noOpTrackerLayer,
+                           noOpPersisterLayer,
                            MigrationOrchestrator.live,
                          )
         yield assertTrue(
@@ -71,6 +75,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                              stateDir = stateDir,
                              dryRun = true,
                            )),
+                           noOpRepositoryLayer,
+                           noOpTrackerLayer,
+                           noOpPersisterLayer,
                            MigrationOrchestrator.live,
                          )
         yield assertTrue(
@@ -115,6 +122,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   outputDir = outputDir,
                                   stateDir = stateDir,
                                 )),
+                                noOpRepositoryLayer,
+                                noOpTrackerLayer,
+                                noOpPersisterLayer,
                                 MigrationOrchestrator.live,
                               )
         yield assertTrue(
@@ -154,6 +164,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                    outputDir = outputDir,
                                    stateDir = stateDir,
                                  )),
+                                 noOpRepositoryLayer,
+                                 noOpTrackerLayer,
+                                 noOpPersisterLayer,
                                  MigrationOrchestrator.live,
                                )
         yield assertTrue(
@@ -202,6 +215,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                     sourceDir = sourceDir,
                                     outputDir = outputDir,
                                   )),
+                                  noOpRepositoryLayer,
+                                  noOpTrackerLayer,
+                                  noOpPersisterLayer,
                                   MigrationOrchestrator.live,
                                 )
                                 .exit
@@ -258,6 +274,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                     outputDir = outputDir,
                                     stateDir = stateDir,
                                   )),
+                                  noOpRepositoryLayer,
+                                  noOpTrackerLayer,
+                                  noOpPersisterLayer,
                                   MigrationOrchestrator.live,
                                 )
           resumedResult    <- MigrationOrchestrator
@@ -278,6 +297,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                     stateDir = stateDir,
                                     resumeFromCheckpoint = Some(firstResult.runId),
                                   )),
+                                  noOpRepositoryLayer,
+                                  noOpTrackerLayer,
+                                  noOpPersisterLayer,
                                   MigrationOrchestrator.live,
                                 )
           calls            <- discoveryCalls.get
@@ -297,7 +319,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
     lineCount = 10,
     lastModified = Instant.parse("2026-02-06T00:00:00Z"),
     encoding = "UTF-8",
-    fileType = FileType.Program,
+    fileType = models.FileType.Program,
   )
 
   private val sampleAnalysis = CobolAnalysis(
@@ -405,4 +427,43 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
 
       override def isAvailable: ZIO[Any, Nothing, Boolean] =
         ZIO.succeed(true)
+    })
+
+  private val noOpRepositoryLayer: ULayer[MigrationRepository] =
+    ZLayer.succeed(new MigrationRepository {
+      override def createRun(run: MigrationRunRow): IO[PersistenceError, Long]                             = ZIO.succeed(1L)
+      override def updateRun(run: MigrationRunRow): IO[PersistenceError, Unit]                             = ZIO.unit
+      override def getRun(id: Long): IO[PersistenceError, Option[MigrationRunRow]]                         = ZIO.none
+      override def listRuns(offset: Int, limit: Int): IO[PersistenceError, List[MigrationRunRow]]          =
+        ZIO.succeed(List.empty)
+      override def deleteRun(id: Long): IO[PersistenceError, Unit]                                         = ZIO.unit
+      override def saveFiles(files: List[CobolFileRow]): IO[PersistenceError, Unit]                        = ZIO.unit
+      override def getFilesByRun(runId: Long): IO[PersistenceError, List[CobolFileRow]]                    = ZIO.succeed(List.empty)
+      override def saveAnalysis(analysis: CobolAnalysisRow): IO[PersistenceError, Long]                    = ZIO.succeed(1L)
+      override def getAnalysesByRun(runId: Long): IO[PersistenceError, List[CobolAnalysisRow]]             =
+        ZIO.succeed(List.empty)
+      override def saveDependencies(deps: List[DependencyRow]): IO[PersistenceError, Unit]                 = ZIO.unit
+      override def getDependenciesByRun(runId: Long): IO[PersistenceError, List[DependencyRow]]            =
+        ZIO.succeed(List.empty)
+      override def saveProgress(p: PhaseProgressRow): IO[PersistenceError, Long]                           = ZIO.succeed(1L)
+      override def getProgress(runId: Long, phase: String): IO[PersistenceError, Option[PhaseProgressRow]] = ZIO.none
+      override def updateProgress(p: PhaseProgressRow): IO[PersistenceError, Unit]                         = ZIO.unit
+    })
+
+  private val noOpTrackerLayer: ULayer[ProgressTracker] =
+    ZLayer.succeed(new ProgressTracker {
+      override def startPhase(runId: Long, phase: String, total: Int): IO[PersistenceError, Unit]   = ZIO.unit
+      override def updateProgress(update: ProgressUpdate): IO[PersistenceError, Unit]               = ZIO.unit
+      override def completePhase(runId: Long, phase: String): IO[PersistenceError, Unit]            = ZIO.unit
+      override def failPhase(runId: Long, phase: String, error: String): IO[PersistenceError, Unit] = ZIO.unit
+      override def subscribe(runId: Long): UIO[Dequeue[ProgressUpdate]]                             = Queue.unbounded[ProgressUpdate]
+    })
+
+  private val noOpPersisterLayer: ULayer[ResultPersister] =
+    ZLayer.succeed(new ResultPersister {
+      override def saveDiscoveryResult(runId: Long, inventory: FileInventory): IO[PersistenceError, Unit]   = ZIO.unit
+      override def saveAnalysisResult(runId: Long, analysis: CobolAnalysis): IO[PersistenceError, Unit]     = ZIO.unit
+      override def saveDependencyResult(runId: Long, graph: DependencyGraph): IO[PersistenceError, Unit]    = ZIO.unit
+      override def saveTransformResult(runId: Long, project: SpringBootProject): IO[PersistenceError, Unit] = ZIO.unit
+      override def saveValidationResult(runId: Long, report: ValidationReport): IO[PersistenceError, Unit]  = ZIO.unit
     })
