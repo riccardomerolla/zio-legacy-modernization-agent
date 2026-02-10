@@ -332,6 +332,36 @@ object OutputSchemas:
       |}
       |""".stripMargin
 
+  /** Schema for BusinessLogicExtraction - extracted business purpose, use cases and rules
+    *
+    * Returned by: BusinessLogicExtractorAgent
+    */
+  val businessLogicExtraction: String =
+    """
+      |{
+      |  "fileName": "string (COBOL source filename)",
+      |  "businessPurpose": "string (1-2 sentence business goal)",
+      |  "useCases": [
+      |    {
+      |      "name": "string (business operation name)",
+      |      "trigger": "string (what initiates operation)",
+      |      "description": "string (what this operation does)",
+      |      "keySteps": ["string (ordered business steps)"]
+      |    }
+      |  ],
+      |  "rules": [
+      |    {
+      |      "category": "string (DataValidation | BusinessLogic | Authorization | DataIntegrity | Other)",
+      |      "description": "string (rule description)",
+      |      "condition": "string? (when rule applies)",
+      |      "errorCode": "string? (error code or message key)",
+      |      "suggestion": "string? (recommended remediation)"
+      |    }
+      |  ],
+      |  "summary": "string (short executive summary)"
+      |}
+      |""".stripMargin
+
   /** Map of case class names to their schema definitions
     *
     * Allows lookup by class name for dynamic schema reference generation
@@ -349,6 +379,7 @@ object OutputSchemas:
     "ValidationReport"       -> validationReport,
     "MigrationDocumentation" -> migrationDocumentation,
     "FileInventory"          -> fileInventory,
+    "BusinessLogicExtraction" -> businessLogicExtraction,
   )
 
   /** Get schema by case class name with error handling

@@ -75,6 +75,7 @@ object MigrationOrchestratorWebSpec extends ZIOSpecDefault:
       StateService.live(cfg.stateDir),
       discovery,
       analyzerLayer,
+      businessLogicLayer,
       mapperLayer,
       transformerLayer,
       validationLayer,
@@ -200,6 +201,24 @@ object MigrationOrchestratorWebSpec extends ZIOSpecDefault:
     ZLayer.succeed(new DependencyMapperAgent {
       override def mapDependencies(analyses: List[CobolAnalysis]): ZIO[Any, MappingError, DependencyGraph] =
         ZIO.succeed(DependencyGraph.empty)
+    })
+
+  private val businessLogicLayer: ULayer[BusinessLogicExtractorAgent] =
+    ZLayer.succeed(new BusinessLogicExtractorAgent {
+      override def extract(analysis: CobolAnalysis): ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
+        ZIO.succeed(
+          BusinessLogicExtraction(
+            fileName = analysis.file.name,
+            businessPurpose = "Stub",
+            useCases = List.empty,
+            rules = List.empty,
+            summary = "Stub",
+          )
+        )
+      override def extractAll(
+        analyses: List[CobolAnalysis]
+      ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
+        ZIO.foreach(analyses)(extract)
     })
 
   private val transformerLayer: ULayer[JavaTransformerAgent] =

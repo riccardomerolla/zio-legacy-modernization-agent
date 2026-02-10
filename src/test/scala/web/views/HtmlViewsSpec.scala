@@ -376,6 +376,7 @@ object HtmlViewsSpec extends ZIOSpecDefault:
           html.contains("""value="GeminiCli""""),
           html.contains("""selected="selected""""),
           html.contains("""name="features.enableCheckpointing""""),
+          html.contains("""name="features.enableBusinessLogicExtractor""""),
         )
       },
       test("settings page renders flash and custom values") {
@@ -384,6 +385,7 @@ object HtmlViewsSpec extends ZIOSpecDefault:
             "ai.provider"                  -> "OpenAi",
             "ai.model"                     -> "gpt-4.1",
             "features.enableCheckpointing" -> "false",
+            "features.enableBusinessLogicExtractor" -> "true",
             "features.verbose"             -> "true",
           ),
           flash = Some("Settings saved"),
@@ -392,6 +394,7 @@ object HtmlViewsSpec extends ZIOSpecDefault:
           html.contains("Settings saved"),
           html.contains("""value="OpenAi""""),
           html.contains("""value="gpt-4.1""""),
+          html.contains("""name="features.enableBusinessLogicExtractor""""),
           html.contains("""name="features.verbose""""),
         )
       },

@@ -36,6 +36,7 @@ object MigrationOrchestratorIntegrationSpec extends ZIOSpecDefault:
                                   FileService.live,
                                   StateService.live(stateDir),
                                   analyzerLayer,
+                                  businessLogicLayer,
                                   CobolDiscoveryAgent.live,
                                   DependencyMapperAgent.live,
                                   JavaTransformerAgent.live,
@@ -92,6 +93,7 @@ object MigrationOrchestratorIntegrationSpec extends ZIOSpecDefault:
                                 FileService.live,
                                 StateService.live(stateDir),
                                 analyzerLayer,
+                                businessLogicLayer,
                                 CobolDiscoveryAgent.live,
                                 DependencyMapperAgent.live,
                                 JavaTransformerAgent.live,
@@ -111,6 +113,7 @@ object MigrationOrchestratorIntegrationSpec extends ZIOSpecDefault:
                                 FileService.live,
                                 StateService.live(stateDir),
                                 analyzerLayer,
+                                businessLogicLayer,
                                 CobolDiscoveryAgent.live,
                                 DependencyMapperAgent.live,
                                 JavaTransformerAgent.live,
@@ -168,6 +171,25 @@ object MigrationOrchestratorIntegrationSpec extends ZIOSpecDefault:
 
       override def isAvailable: ZIO[Any, Nothing, Boolean] =
         ZIO.succeed(true)
+    })
+
+  private val businessLogicLayer: ULayer[BusinessLogicExtractorAgent] =
+    ZLayer.succeed(new BusinessLogicExtractorAgent {
+      override def extract(analysis: CobolAnalysis): ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
+        ZIO.succeed(
+          BusinessLogicExtraction(
+            fileName = analysis.file.name,
+            businessPurpose = "Stubbed business purpose",
+            useCases = List.empty,
+            rules = List.empty,
+            summary = "Stubbed",
+          )
+        )
+
+      override def extractAll(
+        analyses: List[CobolAnalysis]
+      ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
+        ZIO.foreach(analyses)(extract)
     })
 
   private val validationLayer: ULayer[ValidationAgent] =

@@ -42,6 +42,7 @@ final case class SettingsControllerLive(
     "discovery.maxDepth",
     "discovery.excludePatterns",
     "features.enableCheckpointing",
+    "features.enableBusinessLogicExtractor",
     "features.verbose",
     "project.basePackage",
     "project.name",
@@ -64,7 +65,8 @@ final case class SettingsControllerLive(
           form <- parseForm(req)
           _    <- ZIO.foreachDiscard(settingsKeys) { key =>
                     val value = key match
-                      case "features.enableCheckpointing" | "features.verbose" =>
+                      case "features.enableCheckpointing" | "features.enableBusinessLogicExtractor" |
+                          "features.verbose" =>
                         if form.get(key).exists(_.equalsIgnoreCase("on")) then "true" else "false"
                       case _                                                   =>
                         form.getOrElse(key, "")

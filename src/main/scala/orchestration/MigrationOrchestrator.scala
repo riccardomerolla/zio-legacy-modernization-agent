@@ -64,6 +64,7 @@ object MigrationOrchestrator:
   val live: ZLayer[
     CobolDiscoveryAgent &
       CobolAnalyzerAgent &
+      BusinessLogicExtractorAgent &
       DependencyMapperAgent &
       JavaTransformerAgent &
       ValidationAgent &
@@ -83,6 +84,7 @@ object MigrationOrchestrator:
     for
       discoveryAgent     <- ZIO.service[CobolDiscoveryAgent]
       analyzerAgent      <- ZIO.service[CobolAnalyzerAgent]
+      businessLogicAgent <- ZIO.service[BusinessLogicExtractorAgent]
       mapperAgent        <- ZIO.service[DependencyMapperAgent]
       transformerAgent   <- ZIO.service[JavaTransformerAgent]
       validationAgent    <- ZIO.service[ValidationAgent]
@@ -185,7 +187,8 @@ object MigrationOrchestrator:
         runId: Long,
         runConfig: MigrationConfig,
       ): ZIO[Any, OrchestratorError, MigrationResult] =
-        withRunAgents(runId, runConfig) { (runAnalyzerAgent, runTransformerAgent, runValidationAgent) =>
+        withRunAgents(runId, runConfig) {
+          (runAnalyzerAgent, runBusinessLogicAgent, runTransformerAgent, runValidationAgent) =>
           for
             startStep <- resolveStartStep(runConfig)
             bootstrap <- loadResumeBootstrap(runConfig, startStep)
@@ -262,6 +265,21 @@ object MigrationOrchestrator:
                                else {
                                  ZIO.unit
                                }
+
+            _ <- if runConfig.dryRun && runConfig.enableBusinessLogicExtractor then {
+                   AgentTracker
+                     .trackBatch(runId, "business-logic-extraction", analyses, tracker) { (analysis, _) =>
+                       runBusinessLogicAgent.extract(analysis)
+                     }
+                     .catchAll(err =>
+                       Logger.warn(
+                         s"Business logic extraction skipped due to error for run $runId: ${err.message}"
+                       )
+                     )
+                     .unit
+                 } else {
+                   ZIO.unit
+                 }
 
             projects <- if runConfig.dryRun then ZIO.succeed(List.empty[SpringBootProject])
                         else if shouldExecuteFrom(startStep, MigrationStep.Transformation) then
@@ -646,12 +664,16 @@ object MigrationOrchestrator:
         runId: Long,
         runConfig: MigrationConfig,
       )(
-        effect: (CobolAnalyzerAgent, JavaTransformerAgent, ValidationAgent) => ZIO[Any, OrchestratorError, A]
+        effect: (CobolAnalyzerAgent, BusinessLogicExtractorAgent, JavaTransformerAgent, ValidationAgent) => ZIO[
+          Any,
+          OrchestratorError,
+          A,
+        ]
       ): ZIO[Any, OrchestratorError, A] =
         val startupProviderConfig = config.resolvedProviderConfig
         val runProviderConfig     = runConfig.resolvedProviderConfig
         if runProviderConfig == startupProviderConfig then
-          effect(analyzerAgent, transformerAgent, validationAgent)
+          effect(analyzerAgent, businessLogicAgent, transformerAgent, validationAgent)
         else
           ZIO.scoped {
             for
@@ -661,18 +683,19 @@ object MigrationOrchestrator:
                 )
               env           <- runAgentLayer(runConfig).build.mapError(aiAsOrchestrator(runId))
               runAnalyzer    = env.get[CobolAnalyzerAgent]
-              runTransformer = env.get[JavaTransformerAgent]
-              runValidation  = env.get[ValidationAgent]
-              result        <- effect(runAnalyzer, runTransformer, runValidation)
+              runBusinessLogic = env.get[BusinessLogicExtractorAgent]
+              runTransformer   = env.get[JavaTransformerAgent]
+              runValidation    = env.get[ValidationAgent]
+              result          <- effect(runAnalyzer, runBusinessLogic, runTransformer, runValidation)
             yield result
           }
 
       private def runAgentLayer(
         runConfig: MigrationConfig
-      ): ZLayer[Any, AIError, CobolAnalyzerAgent & JavaTransformerAgent & ValidationAgent] =
+      ): ZLayer[Any, AIError, CobolAnalyzerAgent & BusinessLogicExtractorAgent & JavaTransformerAgent & ValidationAgent] =
         val runProviderConfig = runConfig.resolvedProviderConfig
         val rateLimiterConfig = RateLimiterConfig.fromAIProviderConfig(runProviderConfig)
-        ZLayer.make[CobolAnalyzerAgent & JavaTransformerAgent & ValidationAgent](
+        ZLayer.make[CobolAnalyzerAgent & BusinessLogicExtractorAgent & JavaTransformerAgent & ValidationAgent](
           ZLayer.succeed(runConfig),
           ZLayer.succeed(runProviderConfig),
           ZLayer.succeed(rateLimiterConfig),
@@ -682,6 +705,7 @@ object MigrationOrchestrator:
           RateLimiter.live,
           AIService.fromConfig,
           CobolAnalyzerAgent.live,
+          BusinessLogicExtractorAgent.live,
           JavaTransformerAgent.live,
           ValidationAgent.live,
         )
@@ -867,6 +891,37 @@ object MigrationOrchestrator:
                               stateRef,
                               dependencyGraph = Some(dependencyGraph),
                             )
+
+          _ <- if config.dryRun && config.enableBusinessLogicExtractor then
+                 (for
+                   _ <- onProgress(
+                          PipelineProgressUpdate(
+                            MigrationStep.Mapping,
+                            "Starting phase: Business Logic Extraction",
+                            50,
+                          )
+                        )
+                   _ <- Logger.info("Starting phase: Business Logic Extraction")
+                   _ <- businessLogicAgent
+                          .extractAll(analyses)
+                          .foldZIO(
+                            err =>
+                              for
+                                ts <- Clock.instant
+                                _  <- errorsRef.update(_ :+ MigrationError(MigrationStep.Mapping, err.message, ts))
+                                _  <- Logger.warn(s"Business Logic Extraction failed: ${err.message}")
+                              yield (),
+                            _ => Logger.info("Completed phase: Business Logic Extraction"),
+                          )
+                   _ <- onProgress(
+                          PipelineProgressUpdate(
+                            MigrationStep.Mapping,
+                            "Completed phase: Business Logic Extraction",
+                            55,
+                          )
+                        )
+                 yield ())
+          else ZIO.unit
 
           // 4) Transformation (skip in dry-run)
           transformed <- runPhase(

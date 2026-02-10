@@ -66,6 +66,26 @@ object RunsControllerSpec extends ZIOSpecDefault:
         started.exists(_.dryRun),
       )
     },
+    test("POST /runs propagates business logic extractor feature from settings") {
+      for
+        orchestrator <- TestOrchestrator.make(startedRunId = 77L)
+        repo         <- TestRepository.make(
+                          settings = List(
+                            SettingRow("features.enableBusinessLogicExtractor", "true", Instant.parse("2026-02-08T00:00:00Z"))
+                          )
+                        )
+        controller    = RunsControllerLive(orchestrator, repo)
+        request       = Request.post(
+                          "/runs",
+                          Body.fromString("sourceDir=%2Ftmp%2Fsource&outputDir=%2Ftmp%2Foutput&dryRun=on"),
+                        )
+        _            <- controller.routes.runZIO(request)
+        started      <- orchestrator.lastStartedConfig
+      yield assertTrue(
+        started.exists(_.dryRun),
+        started.exists(_.enableBusinessLogicExtractor),
+      )
+    },
     test("POST /runs/:id/retry resumes from latest failed phase") {
       val failedProgress = PhaseProgressRow(
         id = 1L,
@@ -183,7 +203,8 @@ object RunsControllerSpec extends ZIOSpecDefault:
       yield TestOrchestrator(runsRef, startedRef, cancelledRef, startedRunId, progress)
 
   final private case class TestRepository(
-    progressRows: Ref[Map[(Long, String), PhaseProgressRow]]
+    progressRows: Ref[Map[(Long, String), PhaseProgressRow]],
+    settingsRows: Ref[List[SettingRow]],
   ) extends MigrationRepository:
 
     override def getProgress(runId: Long, phase: String): IO[PersistenceError, Option[PhaseProgressRow]] =
@@ -215,12 +236,16 @@ object RunsControllerSpec extends ZIOSpecDefault:
       ZIO.dieMessage("unused in RunsControllerSpec")
     override def updateProgress(p: PhaseProgressRow): IO[PersistenceError, Unit]                =
       ZIO.dieMessage("unused in RunsControllerSpec")
-    override def getAllSettings: IO[PersistenceError, List[SettingRow]]                         = ZIO.succeed(Nil)
+    override def getAllSettings: IO[PersistenceError, List[SettingRow]]                         = settingsRows.get
     override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]              = ZIO.none
     override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]          = ZIO.unit
 
   private object TestRepository:
     def make(
-      progress: Map[(Long, String), PhaseProgressRow] = Map.empty
+      progress: Map[(Long, String), PhaseProgressRow] = Map.empty,
+      settings: List[SettingRow] = Nil,
     ): UIO[TestRepository] =
-      Ref.make(progress).map(TestRepository.apply)
+      for
+        progressRef <- Ref.make(progress)
+        settingsRef <- Ref.make(settings)
+      yield TestRepository(progressRef, settingsRef)

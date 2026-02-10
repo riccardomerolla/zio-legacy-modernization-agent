@@ -121,6 +121,16 @@ object PromptTemplates:
   object Documentation:
     export DocumentationPrompts.{ generateTechnicalDesign, generateMigrationSummary, version }
 
+  /** BusinessLogicExtractor agent prompts (version: 1.0.0)
+    *
+    * Generates prompts to extract business-focused intent from COBOL analyses:
+    *   - extractBusinessLogic: business purpose, use cases, and rule extraction
+    *
+    * Output: BusinessLogicExtraction JSON
+    */
+  object BusinessLogicExtractor:
+    export BusinessLogicExtractorPrompts.{ extractBusinessLogic, version }
+
   /** Output JSON schemas for all response types
     *
     * Maps case class names to their JSON schema definitions:
@@ -180,6 +190,7 @@ object PromptTemplates:
     "JavaTransformer"  -> JavaTransformerPrompts.version,
     "Validation"       -> ValidationPrompts.version,
     "Documentation"    -> DocumentationPrompts.version,
+    "BusinessLogicExtractor" -> BusinessLogicExtractorPrompts.version,
   )
 
   /** Get all current template versions as formatted string

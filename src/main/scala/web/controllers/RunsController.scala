@@ -34,7 +34,15 @@ final case class RunsControllerLive(
   repository: MigrationRepository,
 ) extends RunsController:
 
-  private val knownPhases = List("discovery", "analysis", "mapping", "transformation", "validation", "documentation")
+  private val knownPhases = List(
+    "discovery",
+    "analysis",
+    "mapping",
+    "business-logic-extraction",
+    "transformation",
+    "validation",
+    "documentation",
+  )
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "runs"                           -> handler { (req: Request) =>
@@ -211,6 +219,7 @@ final case class RunsControllerLive(
       parallelism = s.get("processing.parallelism").flatMap(_.toIntOption).getOrElse(4),
       batchSize = s.get("processing.batchSize").flatMap(_.toIntOption).getOrElse(10),
       enableCheckpointing = s.get("features.enableCheckpointing").map(_ == "true").getOrElse(true),
+      enableBusinessLogicExtractor = s.get("features.enableBusinessLogicExtractor").map(_ == "true").getOrElse(false),
       verbose = s.get("features.verbose").map(_ == "true").getOrElse(false),
       dryRun = dryRun,
       basePackage = s.get("project.basePackage").filter(_.nonEmpty).getOrElse("com.example"),

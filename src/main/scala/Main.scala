@@ -543,36 +543,8 @@ object Main extends ZIOAppDefault:
 
       result <-
         if config.dryRun then
-          Logger.info("DRY RUN MODE - No files will be written") *>
-            Clock.instant.map { now =>
-              MigrationResult(
-                runId = s"dry-run-${now.toEpochMilli}",
-                startedAt = now,
-                completedAt = now,
-                config = config,
-                inventory = FileInventory(
-                  discoveredAt = now,
-                  sourceDirectory = config.sourceDir,
-                  files = List.empty,
-                  summary = InventorySummary(
-                    totalFiles = 0,
-                    programFiles = 0,
-                    copybooks = 0,
-                    jclFiles = 0,
-                    totalLines = 0L,
-                    totalBytes = 0L,
-                  ),
-                ),
-                analyses = List.empty,
-                dependencyGraph = DependencyGraph.empty,
-                projects = List.empty,
-                validationReport = ValidationReport.empty,
-                validationReports = List.empty,
-                documentation = MigrationDocumentation.empty,
-                errors = List.empty,
-                status = MigrationStatus.CompletedWithWarnings,
-              )
-            }
+          Logger.info("DRY RUN MODE - Running analysis-only pipeline (no generated project files)") *>
+            MigrationOrchestrator.runFullMigration(config.sourceDir, config.outputDir)
         else MigrationOrchestrator.runFullMigration(config.sourceDir, config.outputDir)
 
       _ <- Logger.info(s"Migration completed: ${result.projects.length} projects generated")

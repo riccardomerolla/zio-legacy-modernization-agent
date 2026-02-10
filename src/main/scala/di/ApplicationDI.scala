@@ -26,6 +26,7 @@ object ApplicationDI:
       ResultPersister &
       CobolDiscoveryAgent &
       CobolAnalyzerAgent &
+      BusinessLogicExtractorAgent &
       DependencyMapperAgent &
       JavaTransformerAgent &
       ValidationAgent &
@@ -55,6 +56,7 @@ object ApplicationDI:
       // Agent implementations
       CobolDiscoveryAgent.live,
       CobolAnalyzerAgent.live,
+      BusinessLogicExtractorAgent.live,
       DependencyMapperAgent.live,
       JavaTransformerAgent.live,
       ValidationAgent.live,

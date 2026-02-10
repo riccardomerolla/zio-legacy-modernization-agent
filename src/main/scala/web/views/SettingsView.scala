@@ -141,6 +141,12 @@ object SettingsView:
           default = true,
         ),
         checkboxField(
+          "features.enableBusinessLogicExtractor",
+          "Enable Business Logic Extractor in Dry Run",
+          s,
+          default = false,
+        ),
+        checkboxField(
           "features.verbose",
           "Verbose Logging",
           s,

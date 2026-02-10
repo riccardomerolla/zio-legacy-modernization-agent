@@ -28,6 +28,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                            StateService.live(stateDir),
                            mockDiscoveryAgent,
                            mockAnalyzerAgent,
+                           mockBusinessLogicAgent,
                            mockMapperAgent,
                            mockTransformerAgent,
                            mockValidationAgent,
@@ -66,6 +67,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                            StateService.live(stateDir),
                            mockDiscoveryAgent,
                            mockAnalyzerAgent,
+                           mockBusinessLogicAgent,
                            mockMapperAgent,
                            mockTransformerAgent,
                            mockValidationAgent,
@@ -89,6 +91,104 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
           result.projects.isEmpty,
           result.validationReport == ValidationReport.empty,
         )
+      }
+    },
+    test("dry-run runs business logic extractor when enabled") {
+      ZIO.scoped {
+        for
+          stateDir      <- ZIO.attemptBlocking(Files.createTempDirectory("orchestrator-state-dry-ble"))
+          sourceDir     <- ZIO.attemptBlocking(Files.createTempDirectory("orchestrator-src-dry-ble"))
+          outputDir     <- ZIO.attemptBlocking(Files.createTempDirectory("orchestrator-out-dry-ble"))
+          extractionRef <- Ref.make(0)
+          countingAgent  = ZLayer.succeed(new BusinessLogicExtractorAgent {
+                             override def extract(analysis: CobolAnalysis)
+                               : ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
+                               extractionRef.update(_ + 1).as(sampleBusinessLogicExtraction.copy(fileName = analysis.file.name))
+                             override def extractAll(
+                               analyses: List[CobolAnalysis]
+                             ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
+                               extractionRef.update(_ + 1).as(analyses.map(a =>
+                                 sampleBusinessLogicExtraction.copy(fileName = a.file.name)
+                               ))
+                           })
+          _             <- MigrationOrchestrator
+                             .runFullMigration(sourceDir, outputDir)
+                             .provide(
+                               FileService.live,
+                               StateService.live(stateDir),
+                               mockDiscoveryAgent,
+                               mockAnalyzerAgent,
+                               countingAgent,
+                               mockMapperAgent,
+                               mockTransformerAgent,
+                               mockValidationAgent,
+                               mockDocumentationAgent,
+                               mockAI,
+                               ResponseParser.live,
+                               stubHttpAIClient,
+                               ZLayer.succeed(MigrationConfig(
+                                 sourceDir = sourceDir,
+                                 outputDir = outputDir,
+                                 stateDir = stateDir,
+                                 dryRun = true,
+                                 enableBusinessLogicExtractor = true,
+                               )),
+                               noOpRepositoryLayer,
+                               noOpTrackerLayer,
+                               noOpPersisterLayer,
+                               MigrationOrchestrator.live,
+                             )
+          calls         <- extractionRef.get
+        yield assertTrue(calls == 1)
+      }
+    },
+    test("dry-run does not run business logic extractor when disabled") {
+      ZIO.scoped {
+        for
+          stateDir      <- ZIO.attemptBlocking(Files.createTempDirectory("orchestrator-state-dry-ble-off"))
+          sourceDir     <- ZIO.attemptBlocking(Files.createTempDirectory("orchestrator-src-dry-ble-off"))
+          outputDir     <- ZIO.attemptBlocking(Files.createTempDirectory("orchestrator-out-dry-ble-off"))
+          extractionRef <- Ref.make(0)
+          countingAgent  = ZLayer.succeed(new BusinessLogicExtractorAgent {
+                             override def extract(analysis: CobolAnalysis)
+                               : ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
+                               extractionRef.update(_ + 1).as(sampleBusinessLogicExtraction.copy(fileName = analysis.file.name))
+                             override def extractAll(
+                               analyses: List[CobolAnalysis]
+                             ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
+                               extractionRef.update(_ + 1).as(analyses.map(a =>
+                                 sampleBusinessLogicExtraction.copy(fileName = a.file.name)
+                               ))
+                           })
+          _             <- MigrationOrchestrator
+                             .runFullMigration(sourceDir, outputDir)
+                             .provide(
+                               FileService.live,
+                               StateService.live(stateDir),
+                               mockDiscoveryAgent,
+                               mockAnalyzerAgent,
+                               countingAgent,
+                               mockMapperAgent,
+                               mockTransformerAgent,
+                               mockValidationAgent,
+                               mockDocumentationAgent,
+                               mockAI,
+                               ResponseParser.live,
+                               stubHttpAIClient,
+                               ZLayer.succeed(MigrationConfig(
+                                 sourceDir = sourceDir,
+                                 outputDir = outputDir,
+                                 stateDir = stateDir,
+                                 dryRun = true,
+                                 enableBusinessLogicExtractor = false,
+                               )),
+                               noOpRepositoryLayer,
+                               noOpTrackerLayer,
+                               noOpPersisterLayer,
+                               MigrationOrchestrator.live,
+                             )
+          calls         <- extractionRef.get
+        yield assertTrue(calls == 0)
       }
     },
     test("phase failure is captured as failed result") {
@@ -116,6 +216,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                 StateService.live(stateDir),
                                 mockDiscoveryAgent,
                                 failingAnalyzer,
+                                mockBusinessLogicAgent,
                                 mockMapperAgent,
                                 mockTransformerAgent,
                                 mockValidationAgent,
@@ -160,6 +261,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                  StateService.live(stateDir),
                                  failingDiscovery,
                                  mockAnalyzerAgent,
+                                 mockBusinessLogicAgent,
                                  mockMapperAgent,
                                  mockTransformerAgent,
                                  mockValidationAgent,
@@ -215,6 +317,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   failingStateLayer,
                                   mockDiscoveryAgent,
                                   mockAnalyzerAgent,
+                                  mockBusinessLogicAgent,
                                   mockMapperAgent,
                                   mockTransformerAgent,
                                   mockValidationAgent,
@@ -275,6 +378,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   StateService.live(stateDir),
                                   countingDiscovery,
                                   failingAnalyzer,
+                                  mockBusinessLogicAgent,
                                   mockMapperAgent,
                                   mockTransformerAgent,
                                   mockValidationAgent,
@@ -299,6 +403,7 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   StateService.live(stateDir),
                                   countingDiscovery,
                                   mockAnalyzerAgent,
+                                  mockBusinessLogicAgent,
                                   mockMapperAgent,
                                   mockTransformerAgent,
                                   mockValidationAgent,
@@ -373,6 +478,29 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
     overallStatus = ValidationStatus.Passed,
   )
 
+  private val sampleBusinessLogicExtraction = BusinessLogicExtraction(
+    fileName = "SAMPLE.cbl",
+    businessPurpose = "Maintains customer records and applies validation checks.",
+    useCases = List(
+      BusinessUseCase(
+        name = "Lookup customer",
+        trigger = "Customer inquiry request",
+        description = "Retrieves a customer profile by identifier.",
+        keySteps = List("Validate input", "Read customer data", "Return response"),
+      )
+    ),
+    rules = List(
+      BusinessRule(
+        category = "DataValidation",
+        description = "Customer identifier must be provided.",
+        condition = Some("Before processing"),
+        errorCode = Some("CUST-001"),
+        suggestion = Some("Provide a non-empty customer identifier."),
+      )
+    ),
+    summary = "Single-record lookup flow with required input validation.",
+  )
+
   private val sampleDocumentation = MigrationDocumentation(
     generatedAt = Instant.parse("2026-02-06T00:00:00Z"),
     summaryReport = "summary",
@@ -408,6 +536,16 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
     ZLayer.succeed(new DependencyMapperAgent {
       override def mapDependencies(analyses: List[CobolAnalysis]): ZIO[Any, MappingError, DependencyGraph] =
         ZIO.succeed(DependencyGraph.empty)
+    })
+
+  private val mockBusinessLogicAgent: ULayer[BusinessLogicExtractorAgent] =
+    ZLayer.succeed(new BusinessLogicExtractorAgent {
+      override def extract(analysis: CobolAnalysis): ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
+        ZIO.succeed(sampleBusinessLogicExtraction.copy(fileName = analysis.file.name))
+      override def extractAll(
+        analyses: List[CobolAnalysis]
+      ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
+        ZIO.succeed(analyses.map(a => sampleBusinessLogicExtraction.copy(fileName = a.file.name)))
     })
 
   private val mockTransformerAgent: ULayer[JavaTransformerAgent] =
