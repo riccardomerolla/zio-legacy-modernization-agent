@@ -189,184 +189,185 @@ object MigrationOrchestrator:
       ): ZIO[Any, OrchestratorError, MigrationResult] =
         withRunAgents(runId, runConfig) {
           (runAnalyzerAgent, runBusinessLogicAgent, runTransformerAgent, runValidationAgent) =>
-          for
-            startStep <- resolveStartStep(runConfig)
-            bootstrap <- loadResumeBootstrap(runConfig, startStep)
-            _         <- seedResumedArtifacts(runId, runConfig, startStep, bootstrap)
-            _         <- updateRunStatus(runId, RunStatus.Running, Some(startStep.toString), None, None)
+            for
+              startStep <- resolveStartStep(runConfig)
+              bootstrap <- loadResumeBootstrap(runConfig, startStep)
+              _         <- seedResumedArtifacts(runId, runConfig, startStep, bootstrap)
+              _         <- updateRunStatus(runId, RunStatus.Running, Some(startStep.toString), None, None)
 
-            inventory <-
-              if shouldExecuteFrom(startStep, MigrationStep.Discovery) then
-                AgentTracker
-                  .trackPhase(runId, "discovery", 1, tracker)(
-                    discoveryAgent.discover(runConfig.sourceDir).mapError(OrchestratorError.DiscoveryFailed.apply)
-                  )
-              else ZIO.succeed(bootstrap.inventory)
-            _         <- if shouldExecuteFrom(startStep, MigrationStep.Discovery) then {
-                           persistIgnoringFailure(
-                             s"saveDiscoveryResult(runId=$runId)",
-                             persister.saveDiscoveryResult(runId, inventory),
-                           )
-                         }
-                         else {
-                           ZIO.unit
-                         }
+              inventory <-
+                if shouldExecuteFrom(startStep, MigrationStep.Discovery) then
+                  AgentTracker
+                    .trackPhase(runId, "discovery", 1, tracker)(
+                      discoveryAgent.discover(runConfig.sourceDir).mapError(OrchestratorError.DiscoveryFailed.apply)
+                    )
+                else ZIO.succeed(bootstrap.inventory)
+              _         <- if shouldExecuteFrom(startStep, MigrationStep.Discovery) then {
+                             persistIgnoringFailure(
+                               s"saveDiscoveryResult(runId=$runId)",
+                               persister.saveDiscoveryResult(runId, inventory),
+                             )
+                           }
+                           else {
+                             ZIO.unit
+                           }
 
-            analysisFiles = inventory.files.filter(_.fileType == models.FileType.Program)
-            _            <- updateRunStatus(
-                              runId = runId,
-                              status = RunStatus.Running,
-                              currentPhase = Some(MigrationStep.Analysis.toString),
-                              errorMessage = None,
-                              completedAt = None,
-                              totalFiles = Some(analysisFiles.length),
-                            )
-            analyses     <- if shouldExecuteFrom(startStep, MigrationStep.Analysis) then {
-                              AgentTracker.trackBatch(runId, "analysis", analysisFiles, tracker) { (file, _) =>
-                                runAnalyzerAgent.analyze(file).mapError(OrchestratorError.AnalysisFailed(file.name, _))
-                              }
-                            }
-                            else {
-                              ZIO.succeed(bootstrap.analyses)
-                            }
-            _            <- if shouldExecuteFrom(startStep, MigrationStep.Analysis) then {
-                              ZIO.foreachDiscard(analyses)(analysis =>
-                                persistIgnoringFailure(
-                                  s"saveAnalysisResult(runId=$runId,file=${analysis.file.name})",
-                                  persister.saveAnalysisResult(runId, analysis),
-                                )
+              analysisFiles = inventory.files.filter(_.fileType == models.FileType.Program)
+              _            <- updateRunStatus(
+                                runId = runId,
+                                status = RunStatus.Running,
+                                currentPhase = Some(MigrationStep.Analysis.toString),
+                                errorMessage = None,
+                                completedAt = None,
+                                totalFiles = Some(analysisFiles.length),
                               )
-                            }
-                            else {
-                              ZIO.unit
-                            }
-            _            <- updateRunStatus(
-                              runId = runId,
-                              status = RunStatus.Running,
-                              currentPhase = Some(MigrationStep.Mapping.toString),
-                              errorMessage = None,
-                              completedAt = None,
-                              processedFiles = Some(analyses.length),
+              analyses     <- if shouldExecuteFrom(startStep, MigrationStep.Analysis) then {
+                                AgentTracker.trackBatch(runId, "analysis", analysisFiles, tracker) { (file, _) =>
+                                  runAnalyzerAgent.analyze(file).mapError(OrchestratorError.AnalysisFailed(file.name, _))
+                                }
+                              }
+                              else {
+                                ZIO.succeed(bootstrap.analyses)
+                              }
+              _            <- if shouldExecuteFrom(startStep, MigrationStep.Analysis) then {
+                                ZIO.foreachDiscard(analyses)(analysis =>
+                                  persistIgnoringFailure(
+                                    s"saveAnalysisResult(runId=$runId,file=${analysis.file.name})",
+                                    persister.saveAnalysisResult(runId, analysis),
+                                  )
+                                )
+                              }
+                              else {
+                                ZIO.unit
+                              }
+              _            <- updateRunStatus(
+                                runId = runId,
+                                status = RunStatus.Running,
+                                currentPhase = Some(MigrationStep.Mapping.toString),
+                                errorMessage = None,
+                                completedAt = None,
+                                processedFiles = Some(analyses.length),
+                              )
+
+              dependencyGraph <-
+                if shouldExecuteFrom(startStep, MigrationStep.Mapping) then
+                  AgentTracker
+                    .trackPhase(runId, "mapping", 1, tracker)(
+                      mapperAgent.mapDependencies(analyses).mapError(OrchestratorError.MappingFailed.apply)
+                    )
+                else ZIO.succeed(bootstrap.dependencyGraph)
+              _               <- if shouldExecuteFrom(startStep, MigrationStep.Mapping) then {
+                                   persistIgnoringFailure(
+                                     s"saveDependencyResult(runId=$runId)",
+                                     persister.saveDependencyResult(runId, dependencyGraph),
+                                   )
+                                 }
+                                 else {
+                                   ZIO.unit
+                                 }
+
+              _ <- if runConfig.dryRun && runConfig.enableBusinessLogicExtractor then {
+                     AgentTracker
+                       .trackBatch(runId, "business-logic-extraction", analyses, tracker) { (analysis, _) =>
+                         runBusinessLogicAgent.extract(analysis)
+                       }
+                       .catchAll(err =>
+                         Logger.warn(
+                           s"Business logic extraction skipped due to error for run $runId: ${err.message}"
+                         )
+                       )
+                       .unit
+                   }
+                   else {
+                     ZIO.unit
+                   }
+
+              projects <- if runConfig.dryRun then ZIO.succeed(List.empty[SpringBootProject])
+                          else if shouldExecuteFrom(startStep, MigrationStep.Transformation) then
+                            AgentTracker
+                              .trackPhase(runId, "transformation", 1, tracker)(
+                                runTransformerAgent
+                                  .transform(analyses, dependencyGraph)
+                                  .mapError(OrchestratorError.TransformationFailed("unified", _))
+                                  .map(List(_))
+                              )
+                          else ZIO.succeed(bootstrap.projects)
+              _        <- if runConfig.dryRun || !shouldExecuteFrom(startStep, MigrationStep.Transformation) then ZIO.unit
+                          else
+                            ZIO.foreachDiscard(projects)(project =>
+                              persistIgnoringFailure(
+                                s"saveTransformResult(runId=$runId,project=${project.projectName})",
+                                persister.saveTransformResult(runId, project),
+                              )
                             )
 
-            dependencyGraph <-
-              if shouldExecuteFrom(startStep, MigrationStep.Mapping) then
-                AgentTracker
-                  .trackPhase(runId, "mapping", 1, tracker)(
-                    mapperAgent.mapDependencies(analyses).mapError(OrchestratorError.MappingFailed.apply)
-                  )
-              else ZIO.succeed(bootstrap.dependencyGraph)
-            _               <- if shouldExecuteFrom(startStep, MigrationStep.Mapping) then {
-                                 persistIgnoringFailure(
-                                   s"saveDependencyResult(runId=$runId)",
-                                   persister.saveDependencyResult(runId, dependencyGraph),
-                                 )
+              validationReports <-
+                if runConfig.dryRun then ZIO.succeed(List.empty[ValidationReport])
+                else if shouldExecuteFrom(startStep, MigrationStep.Validation) then
+                  projects.headOption match
+                    case Some(project) =>
+                      AgentTracker.trackBatch(runId, "validation", analyses, tracker) { (analysis, _) =>
+                        runValidationAgent
+                          .validate(project, analysis)
+                          .mapError(OrchestratorError.ValidationFailed(analysis.file.name, _))
+                      }
+                    case None          => ZIO.succeed(List.empty[ValidationReport])
+                else ZIO.succeed(bootstrap.validationReports)
+              validationReport   = aggregateValidation(validationReports)
+              _                 <- if runConfig.dryRun || !shouldExecuteFrom(startStep, MigrationStep.Validation) then ZIO.unit
+                                   else
+                                     persistIgnoringFailure(
+                                       s"saveValidationResult(runId=$runId)",
+                                       persister.saveValidationResult(runId, validationReport),
+                                     )
+
+              completedAt   <- Clock.instant
+              status         = determineStatus(
+                                 errors = List.empty,
+                                 projects = projects,
+                                 dryRun = runConfig.dryRun,
+                                 validationReport = validationReport,
+                               )
+              baseResult     = MigrationResult(
+                                 runId = runId.toString,
+                                 startedAt = completedAt,
+                                 completedAt = completedAt,
+                                 config = runConfig,
+                                 inventory = inventory,
+                                 analyses = analyses,
+                                 dependencyGraph = dependencyGraph,
+                                 projects = projects,
+                                 validationReport = validationReport,
+                                 validationReports = validationReports,
+                                 documentation = MigrationDocumentation.empty,
+                                 errors = List.empty,
+                                 status = status,
+                               )
+              documentation <- if runConfig.dryRun || !shouldExecuteFrom(startStep, MigrationStep.Documentation) then {
+                                 ZIO.succeed(MigrationDocumentation.empty)
                                }
                                else {
-                                 ZIO.unit
-                               }
-
-            _ <- if runConfig.dryRun && runConfig.enableBusinessLogicExtractor then {
-                   AgentTracker
-                     .trackBatch(runId, "business-logic-extraction", analyses, tracker) { (analysis, _) =>
-                       runBusinessLogicAgent.extract(analysis)
-                     }
-                     .catchAll(err =>
-                       Logger.warn(
-                         s"Business logic extraction skipped due to error for run $runId: ${err.message}"
-                       )
-                     )
-                     .unit
-                 } else {
-                   ZIO.unit
-                 }
-
-            projects <- if runConfig.dryRun then ZIO.succeed(List.empty[SpringBootProject])
-                        else if shouldExecuteFrom(startStep, MigrationStep.Transformation) then
-                          AgentTracker
-                            .trackPhase(runId, "transformation", 1, tracker)(
-                              runTransformerAgent
-                                .transform(analyses, dependencyGraph)
-                                .mapError(OrchestratorError.TransformationFailed("unified", _))
-                                .map(List(_))
-                            )
-                        else ZIO.succeed(bootstrap.projects)
-            _        <- if runConfig.dryRun || !shouldExecuteFrom(startStep, MigrationStep.Transformation) then ZIO.unit
-                        else
-                          ZIO.foreachDiscard(projects)(project =>
-                            persistIgnoringFailure(
-                              s"saveTransformResult(runId=$runId,project=${project.projectName})",
-                              persister.saveTransformResult(runId, project),
-                            )
-                          )
-
-            validationReports <-
-              if runConfig.dryRun then ZIO.succeed(List.empty[ValidationReport])
-              else if shouldExecuteFrom(startStep, MigrationStep.Validation) then
-                projects.headOption match
-                  case Some(project) =>
-                    AgentTracker.trackBatch(runId, "validation", analyses, tracker) { (analysis, _) =>
-                      runValidationAgent
-                        .validate(project, analysis)
-                        .mapError(OrchestratorError.ValidationFailed(analysis.file.name, _))
-                    }
-                  case None          => ZIO.succeed(List.empty[ValidationReport])
-              else ZIO.succeed(bootstrap.validationReports)
-            validationReport   = aggregateValidation(validationReports)
-            _                 <- if runConfig.dryRun || !shouldExecuteFrom(startStep, MigrationStep.Validation) then ZIO.unit
-                                 else
-                                   persistIgnoringFailure(
-                                     s"saveValidationResult(runId=$runId)",
-                                     persister.saveValidationResult(runId, validationReport),
+                                 AgentTracker
+                                   .trackPhase(runId, "documentation", 1, tracker)(
+                                     documentationAgent
+                                       .generateDocs(baseResult)
+                                       .mapError(OrchestratorError.DocumentationFailed.apply)
                                    )
-
-            completedAt   <- Clock.instant
-            status         = determineStatus(
-                               errors = List.empty,
-                               projects = projects,
-                               dryRun = runConfig.dryRun,
-                               validationReport = validationReport,
-                             )
-            baseResult     = MigrationResult(
-                               runId = runId.toString,
-                               startedAt = completedAt,
-                               completedAt = completedAt,
-                               config = runConfig,
-                               inventory = inventory,
-                               analyses = analyses,
-                               dependencyGraph = dependencyGraph,
-                               projects = projects,
-                               validationReport = validationReport,
-                               validationReports = validationReports,
-                               documentation = MigrationDocumentation.empty,
-                               errors = List.empty,
-                               status = status,
-                             )
-            documentation <- if runConfig.dryRun || !shouldExecuteFrom(startStep, MigrationStep.Documentation) then {
-                               ZIO.succeed(MigrationDocumentation.empty)
-                             }
-                             else {
-                               AgentTracker
-                                 .trackPhase(runId, "documentation", 1, tracker)(
-                                   documentationAgent
-                                     .generateDocs(baseResult)
-                                     .mapError(OrchestratorError.DocumentationFailed.apply)
-                                 )
-                             }
-            finalResult    = baseResult.copy(documentation = documentation)
-            successCount   = projects.length
-            failCount      = analysisFiles.length - successCount
-            _             <- updateRunStatus(
-                               runId = runId,
-                               status = RunStatus.Completed,
-                               currentPhase = Some(MigrationStep.Documentation.toString),
-                               errorMessage = None,
-                               completedAt = Some(completedAt),
-                               processedFiles = Some(analysisFiles.length),
-                               successfulConversions = Some(successCount),
-                               failedConversions = Some(failCount),
-                             )
-          yield finalResult
+                               }
+              finalResult    = baseResult.copy(documentation = documentation)
+              successCount   = projects.length
+              failCount      = analysisFiles.length - successCount
+              _             <- updateRunStatus(
+                                 runId = runId,
+                                 status = RunStatus.Completed,
+                                 currentPhase = Some(MigrationStep.Documentation.toString),
+                                 errorMessage = None,
+                                 completedAt = Some(completedAt),
+                                 processedFiles = Some(analysisFiles.length),
+                                 successfulConversions = Some(successCount),
+                                 failedConversions = Some(failCount),
+                               )
+            yield finalResult
         }
 
       final private case class ResumeBootstrap(
@@ -677,12 +678,12 @@ object MigrationOrchestrator:
         else
           ZIO.scoped {
             for
-              _             <-
+              _               <-
                 Logger.info(
                   s"Run $runId overrides AI configuration: provider=${runProviderConfig.provider}, model=${runProviderConfig.model}"
                 )
-              env           <- runAgentLayer(runConfig).build.mapError(aiAsOrchestrator(runId))
-              runAnalyzer    = env.get[CobolAnalyzerAgent]
+              env             <- runAgentLayer(runConfig).build.mapError(aiAsOrchestrator(runId))
+              runAnalyzer      = env.get[CobolAnalyzerAgent]
               runBusinessLogic = env.get[BusinessLogicExtractorAgent]
               runTransformer   = env.get[JavaTransformerAgent]
               runValidation    = env.get[ValidationAgent]
@@ -892,36 +893,36 @@ object MigrationOrchestrator:
                               dependencyGraph = Some(dependencyGraph),
                             )
 
-          _ <- if config.dryRun && config.enableBusinessLogicExtractor then
-                 (for
-                   _ <- onProgress(
-                          PipelineProgressUpdate(
-                            MigrationStep.Mapping,
-                            "Starting phase: Business Logic Extraction",
-                            50,
-                          )
-                        )
-                   _ <- Logger.info("Starting phase: Business Logic Extraction")
-                   _ <- businessLogicAgent
-                          .extractAll(analyses)
-                          .foldZIO(
-                            err =>
-                              for
-                                ts <- Clock.instant
-                                _  <- errorsRef.update(_ :+ MigrationError(MigrationStep.Mapping, err.message, ts))
-                                _  <- Logger.warn(s"Business Logic Extraction failed: ${err.message}")
-                              yield (),
-                            _ => Logger.info("Completed phase: Business Logic Extraction"),
-                          )
-                   _ <- onProgress(
-                          PipelineProgressUpdate(
-                            MigrationStep.Mapping,
-                            "Completed phase: Business Logic Extraction",
-                            55,
-                          )
-                        )
-                 yield ())
-          else ZIO.unit
+          _ <- (if config.dryRun && config.enableBusinessLogicExtractor then
+                  for
+                    _ <- onProgress(
+                           PipelineProgressUpdate(
+                             MigrationStep.Mapping,
+                             "Starting phase: Business Logic Extraction",
+                             50,
+                           )
+                         )
+                    _ <- Logger.info("Starting phase: Business Logic Extraction")
+                    _ <- businessLogicAgent
+                           .extractAll(analyses)
+                           .foldZIO(
+                             err =>
+                               for
+                                 ts <- Clock.instant
+                                 _  <- errorsRef.update(_ :+ MigrationError(MigrationStep.Mapping, err.message, ts))
+                                 _  <- Logger.warn(s"Business Logic Extraction failed: ${err.message}")
+                               yield (),
+                             _ => Logger.info("Completed phase: Business Logic Extraction"),
+                           )
+                    _ <- onProgress(
+                           PipelineProgressUpdate(
+                             MigrationStep.Mapping,
+                             "Completed phase: Business Logic Extraction",
+                             55,
+                           )
+                         )
+                  yield ()
+                else ZIO.unit)
 
           // 4) Transformation (skip in dry-run)
           transformed <- runPhase(

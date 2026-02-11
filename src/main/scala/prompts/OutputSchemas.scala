@@ -367,18 +367,18 @@ object OutputSchemas:
     * Allows lookup by class name for dynamic schema reference generation
     */
   val schemaMap: Map[String, String] = Map(
-    "CobolAnalysis"          -> cobolAnalysis,
-    "DependencyGraph"        -> dependencyGraph,
-    "JavaEntity"             -> javaEntity,
-    "JavaService"            -> javaService,
-    "JavaController"         -> javaController,
-    "SemanticValidation"     -> semanticValidation,
-    "ValidationIssue"        -> validationIssue,
-    "ValidationStatus"       -> validationStatus,
-    "TestResults"            -> testResults,
-    "ValidationReport"       -> validationReport,
-    "MigrationDocumentation" -> migrationDocumentation,
-    "FileInventory"          -> fileInventory,
+    "CobolAnalysis"           -> cobolAnalysis,
+    "DependencyGraph"         -> dependencyGraph,
+    "JavaEntity"              -> javaEntity,
+    "JavaService"             -> javaService,
+    "JavaController"          -> javaController,
+    "SemanticValidation"      -> semanticValidation,
+    "ValidationIssue"         -> validationIssue,
+    "ValidationStatus"        -> validationStatus,
+    "TestResults"             -> testResults,
+    "ValidationReport"        -> validationReport,
+    "MigrationDocumentation"  -> migrationDocumentation,
+    "FileInventory"           -> fileInventory,
     "BusinessLogicExtraction" -> businessLogicExtraction,
   )
 

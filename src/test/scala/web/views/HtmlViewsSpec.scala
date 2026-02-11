@@ -382,11 +382,11 @@ object HtmlViewsSpec extends ZIOSpecDefault:
       test("settings page renders flash and custom values") {
         val html = HtmlViews.settingsPage(
           Map(
-            "ai.provider"                  -> "OpenAi",
-            "ai.model"                     -> "gpt-4.1",
-            "features.enableCheckpointing" -> "false",
+            "ai.provider"                           -> "OpenAi",
+            "ai.model"                              -> "gpt-4.1",
+            "features.enableCheckpointing"          -> "false",
             "features.enableBusinessLogicExtractor" -> "true",
-            "features.verbose"             -> "true",
+            "features.verbose"                      -> "true",
           ),
           flash = Some("Settings saved"),
         )

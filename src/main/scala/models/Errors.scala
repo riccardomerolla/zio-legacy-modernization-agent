@@ -4,7 +4,7 @@ import java.nio.file.Path
 
 import zio.json.*
 
-import Codecs.given
+import models.Codecs.given
 
 enum FileError(val message: String) derives JsonCodec:
   case NotFound(path: Path)               extends FileError(s"File not found: $path")

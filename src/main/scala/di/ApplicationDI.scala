@@ -21,6 +21,7 @@ object ApplicationDI:
       HttpAIClient &
       AIService &
       StateService &
+      javax.sql.DataSource &
       MigrationRepository &
       ProgressTracker &
       ResultPersister &
@@ -94,5 +95,7 @@ object ApplicationDI:
       GraphController.live,
       DashboardController.live,
       SettingsController.live,
+      ChatRepository.live.mapError(_ => new RuntimeException("chat repository initialization failed")).orDie,
+      ChatController.live,
       WebServer.live,
     )

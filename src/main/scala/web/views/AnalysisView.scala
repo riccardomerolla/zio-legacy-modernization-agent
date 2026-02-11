@@ -16,15 +16,15 @@ object AnalysisView:
       div(cls := "mb-6")(
         div(cls := "relative")(
           input(
-            `type`               := "search",
-            name                 := "q",
-            placeholder          := "Search files...",
-            cls                  := "block w-full rounded-md bg-white/5 border-0 py-2 pl-10 pr-3 text-white shadow-sm ring-1 ring-inset ring-white/10 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm/6",
-            attr("hx-get")       := s"/api/analysis/search?runId=$runId",
-            attr("hx-trigger")   := "keyup changed delay:300ms",
-            attr("hx-target")    := "#file-list",
-            attr("hx-swap")      := "innerHTML",
-            attr("hx-indicator") := "#search-indicator",
+            `type`                 := "search",
+            name                   := "q",
+            placeholder            := "Search files...",
+            cls                    := "block w-full rounded-md bg-white/5 border-0 py-2 pl-10 pr-3 text-white shadow-sm ring-1 ring-inset ring-white/10 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm/6",
+            attr("data-hx-get")    := s"/api/analysis/search?runId=$runId",
+            attr("hx-trigger")     := "keyup changed delay:300ms",
+            attr("data-hx-target") := "#file-list",
+            attr("data-hx-swap")   := "innerHTML",
+            attr("hx-indicator")   := "#search-indicator",
           ),
           div(cls := "pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3")(
             Components.svgIcon(

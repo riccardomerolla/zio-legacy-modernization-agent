@@ -1,6 +1,7 @@
 package web.views
 
 import db.{ CobolAnalysisRow, CobolFileRow, DependencyRow, MigrationRunRow, PhaseProgressRow }
+import models.{ AgentAssignment, AgentIssue, ChatConversation, ConversationMessage }
 
 object HtmlViews:
 
@@ -33,3 +34,26 @@ object HtmlViews:
 
   def settingsPage(settings: Map[String, String], flash: Option[String] = None): String =
     SettingsView.page(settings, flash)
+  def chatDashboard(conversations: List[ChatConversation]): String                      =
+    ChatView.dashboard(conversations)
+
+  def chatDetail(conversation: ChatConversation): String =
+    ChatView.detail(conversation)
+
+  def chatMessagesFragment(messages: List[ConversationMessage]): String =
+    ChatView.messagesFragment(messages)
+
+  def issuesView(
+    runId: Option[Long],
+    issues: List[AgentIssue],
+    statusFilter: Option[String],
+    query: Option[String],
+    tagFilter: Option[String],
+  ): String =
+    IssuesView.list(runId, issues, statusFilter, query, tagFilter)
+
+  def issueCreateForm(defaultRunId: Option[Long]): String =
+    IssuesView.newForm(defaultRunId)
+
+  def issueDetail(issue: AgentIssue, assignments: List[AgentAssignment]): String =
+    IssuesView.detail(issue, assignments)

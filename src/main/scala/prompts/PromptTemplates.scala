@@ -185,11 +185,11 @@ object PromptTemplates:
     * All templates are versioned for iteration and debugging. Returns a map of agent name to version.
     */
   def versions: Map[String, String] = Map(
-    "CobolAnalyzer"    -> CobolAnalyzerPrompts.version,
-    "DependencyMapper" -> DependencyMapperPrompts.version,
-    "JavaTransformer"  -> JavaTransformerPrompts.version,
-    "Validation"       -> ValidationPrompts.version,
-    "Documentation"    -> DocumentationPrompts.version,
+    "CobolAnalyzer"          -> CobolAnalyzerPrompts.version,
+    "DependencyMapper"       -> DependencyMapperPrompts.version,
+    "JavaTransformer"        -> JavaTransformerPrompts.version,
+    "Validation"             -> ValidationPrompts.version,
+    "Documentation"          -> DocumentationPrompts.version,
     "BusinessLogicExtractor" -> BusinessLogicExtractorPrompts.version,
   )
 

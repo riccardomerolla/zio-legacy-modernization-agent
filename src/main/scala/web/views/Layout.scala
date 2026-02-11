@@ -61,6 +61,13 @@ object Layout:
                 navItem("/graph", "Graph", Icons.chart, currentPath.startsWith("/graph")),
               ),
             ),
+            li(
+              div(cls := "text-xs/6 font-semibold text-gray-400")("Collaboration"),
+              ul(attr("role") := "list", cls := "-mx-2 mt-2 space-y-1")(
+                navItem("/chat", "Chat", Icons.chat, currentPath.startsWith("/chat")),
+                navItem("/issues", "Issues", Icons.flag, currentPath.startsWith("/issues")),
+              ),
+            ),
             li(cls := "mt-auto")(
               navItem("/settings", "Settings", Icons.cog, currentPath == "/settings")
             ),
@@ -120,6 +127,14 @@ object Layout:
 
     val chart: Frag = icon(
       "M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z"
+    )
+
+    val chat: Frag = icon(
+      "M2.25 12a8.25 8.25 0 1 1 14.59 5.28L21.75 21l-4.38-2.19A8.21 8.21 0 0 1 12 20.25 8.25 8.25 0 0 1 2.25 12Z"
+    )
+
+    val flag: Frag = icon(
+      "M3 3v18m0-12h11.25l-1.5 3 1.5 3H3"
     )
 
     val cog: Frag = icon(

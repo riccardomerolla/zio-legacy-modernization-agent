@@ -52,9 +52,9 @@ object DashboardView:
         ),
         div(
           id                   := "recent-runs",
-          attr("hx-get")       := "/api/runs/recent",
+          attr("data-hx-get")  := "/api/runs/recent",
           attr("hx-trigger")   := "every 5s",
-          attr("hx-swap")      := "innerHTML",
+          attr("data-hx-swap") := "innerHTML",
           attr("hx-indicator") := "#refresh-indicator",
         )(
           recentRunsContent(runs.take(10))

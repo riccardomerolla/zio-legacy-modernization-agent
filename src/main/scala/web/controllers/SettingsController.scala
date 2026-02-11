@@ -48,6 +48,7 @@ final case class SettingsControllerLive(
     "project.name",
     "project.version",
     "project.maxCompileRetries",
+    "issues.importFolder",
   )
 
   override val routes: Routes[Any, Response] = Routes(
@@ -66,9 +67,9 @@ final case class SettingsControllerLive(
           _    <- ZIO.foreachDiscard(settingsKeys) { key =>
                     val value = key match
                       case "features.enableCheckpointing" | "features.enableBusinessLogicExtractor" |
-                          "features.verbose" =>
+                           "features.verbose" =>
                         if form.get(key).exists(_.equalsIgnoreCase("on")) then "true" else "false"
-                      case _                                                   =>
+                      case _ =>
                         form.getOrElse(key, "")
                     if value.nonEmpty || key.startsWith("ai.") then repository.upsertSetting(key, value)
                     else ZIO.unit

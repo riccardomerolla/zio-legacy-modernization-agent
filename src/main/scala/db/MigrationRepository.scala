@@ -435,21 +435,120 @@ final case class MigrationRepositoryLive(
 
   private def initializeSchema: IO[PersistenceError, Unit] =
     for
-      maybeScript <- ZIO.attempt(Option(getClass.getClassLoader.getResourceAsStream("db/V1__init_schema.sql")))
-                       .mapError(e => PersistenceError.SchemaInitFailed(e.getMessage))
-      stream      <- ZIO.fromOption(maybeScript)
-                       .orElseFail(PersistenceError.SchemaInitFailed("Schema resource db/V1__init_schema.sql not found"))
-      script      <- ZIO.acquireReleaseWith(
-                       ZIO.succeed(scala.io.Source.fromInputStream(stream, "UTF-8"))
-                     )(src => ZIO.attempt(src.close()).orDie)(src => ZIO.attempt(src.mkString))
-                       .mapError(e => PersistenceError.SchemaInitFailed(e.getMessage))
-      statements   = script.split(";").map(_.trim).filter(_.nonEmpty).toList
-      _           <- ZIO.acquireReleaseWith(acquireConnection)(closeConnection) { conn =>
-                       ZIO.foreachDiscard(statements) { sql =>
-                         withStatement(conn, sql)(stmt => executeBlocking(sql)(stmt.execute(sql)).unit)
-                       }
-                     }
+      statements <- loadSchemaStatements(List("db/V1__init_schema.sql", "db/V2__chat_and_issues.sql"))
+      _          <- ZIO.acquireReleaseWith(acquireConnection)(closeConnection) { conn =>
+                      ZIO.foreachDiscard(statements) { sql =>
+                        withStatement(conn, sql)(stmt => executeBlocking(sql)(stmt.execute(sql)).unit)
+                      } *> ensureAgentIssueColumns(conn)
+                    }
     yield ()
+
+  private def ensureAgentIssueColumns(conn: Connection): IO[PersistenceError, Unit] =
+    for
+      info <- readAgentIssueColumns(conn)
+      _    <- if info.exists(c => c._1 == "run_id" && c._3 == 1) then rebuildAgentIssuesTable(conn) else ZIO.unit
+      now  <- readAgentIssueColumns(conn)
+      missingColumns = List(
+                         "tags" -> "TEXT",
+                         "preferred_agent" -> "TEXT",
+                         "context_path" -> "TEXT",
+                         "source_folder" -> "TEXT",
+                       ).filterNot { case (name, _) => now.exists(_._1 == name) }
+      _    <- ZIO.foreachDiscard(missingColumns) { case (name, ddl) =>
+                val alterSql = s"ALTER TABLE agent_issues ADD COLUMN $name $ddl"
+                withStatement(conn, alterSql)(stmt => executeBlocking(alterSql)(stmt.execute(alterSql)).unit)
+              }
+    yield ()
+
+  private def readAgentIssueColumns(conn: Connection): IO[PersistenceError, List[(String, String, Int)]] =
+    val pragmaSql = "PRAGMA table_info(agent_issues)"
+    withStatement(conn, pragmaSql) { stmt =>
+      ZIO.acquireReleaseWith(executeBlocking(pragmaSql)(stmt.executeQuery(pragmaSql)))(
+        rs => executeBlocking(pragmaSql)(rs.close()).ignore
+      ) { rs =>
+        def loop(acc: List[(String, String, Int)]): IO[PersistenceError, List[(String, String, Int)]] =
+          executeBlocking(pragmaSql)(rs.next()).flatMap {
+            case true  =>
+              for
+                name    <- executeBlocking(pragmaSql)(rs.getString("name"))
+                colType <- executeBlocking(pragmaSql)(rs.getString("type"))
+                notNull <- executeBlocking(pragmaSql)(rs.getInt("notnull"))
+                next    <- loop((name, colType, notNull) :: acc)
+              yield next
+            case false => ZIO.succeed(acc.reverse)
+          }
+        loop(Nil)
+      }
+    }
+
+  private def rebuildAgentIssuesTable(conn: Connection): IO[PersistenceError, Unit] =
+    val statements = List(
+      "PRAGMA foreign_keys = OFF",
+      "DROP TABLE IF EXISTS agent_issues_new",
+      """CREATE TABLE agent_issues_new (
+        |  id INTEGER PRIMARY KEY AUTOINCREMENT,
+        |  run_id INTEGER,
+        |  conversation_id INTEGER,
+        |  title TEXT NOT NULL,
+        |  description TEXT NOT NULL,
+        |  issue_type TEXT NOT NULL,
+        |  tags TEXT,
+        |  preferred_agent TEXT,
+        |  context_path TEXT,
+        |  source_folder TEXT,
+        |  priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'critical')),
+        |  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'assigned', 'in_progress', 'completed', 'failed', 'skipped')),
+        |  assigned_agent TEXT,
+        |  assigned_at TEXT,
+        |  completed_at TEXT,
+        |  error_message TEXT,
+        |  result_data TEXT,
+        |  created_at TEXT NOT NULL,
+        |  updated_at TEXT NOT NULL,
+        |  FOREIGN KEY (run_id) REFERENCES migration_runs(id) ON DELETE CASCADE,
+        |  FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE SET NULL
+        |)""".stripMargin,
+      """INSERT INTO agent_issues_new (
+        |  id, run_id, conversation_id, title, description, issue_type,
+        |  tags, preferred_agent, context_path, source_folder,
+        |  priority, status, assigned_agent, assigned_at, completed_at,
+        |  error_message, result_data, created_at, updated_at
+        |)
+        |SELECT
+        |  id, run_id, conversation_id, title, description, issue_type,
+        |  NULL, NULL, NULL, NULL,
+        |  priority, status, assigned_agent, assigned_at, completed_at,
+        |  error_message, result_data, created_at, updated_at
+        |FROM agent_issues""".stripMargin,
+      "DROP TABLE agent_issues",
+      "ALTER TABLE agent_issues_new RENAME TO agent_issues",
+      "CREATE INDEX IF NOT EXISTS idx_agent_issues_run_id ON agent_issues(run_id)",
+      "CREATE INDEX IF NOT EXISTS idx_agent_issues_status ON agent_issues(status)",
+      "CREATE INDEX IF NOT EXISTS idx_agent_issues_assigned_agent ON agent_issues(assigned_agent)",
+      "CREATE INDEX IF NOT EXISTS idx_agent_issues_conversation_id ON agent_issues(conversation_id)",
+      "PRAGMA foreign_keys = ON",
+    )
+    ZIO.foreachDiscard(statements) { sql =>
+      withStatement(conn, sql)(stmt => executeBlocking(sql)(stmt.execute(sql)).unit)
+    }
+
+  private def loadSchemaStatements(resources: List[String]): IO[PersistenceError, List[String]] =
+    ZIO.foreach(resources)(loadStatementsFromResource).map(_.flatten)
+
+  private def loadStatementsFromResource(resource: String): IO[PersistenceError, List[String]] =
+    for
+      maybeScript <- ZIO
+                       .attempt(Option(getClass.getClassLoader.getResourceAsStream(resource)))
+                       .mapError(e => PersistenceError.SchemaInitFailed(e.getMessage))
+      stream      <- ZIO
+                       .fromOption(maybeScript)
+                       .orElseFail(PersistenceError.SchemaInitFailed(s"Schema resource $resource not found"))
+      script      <- ZIO
+                       .acquireReleaseWith(
+                         ZIO.succeed(scala.io.Source.fromInputStream(stream, "UTF-8"))
+                       )(src => ZIO.attempt(src.close()).orDie)(src => ZIO.attempt(src.mkString))
+                       .mapError(e => PersistenceError.SchemaInitFailed(e.getMessage))
+    yield script.split(";").map(_.trim).filter(_.nonEmpty).toList
 
   private def executeUpdateReturningKey(
     conn: Connection,

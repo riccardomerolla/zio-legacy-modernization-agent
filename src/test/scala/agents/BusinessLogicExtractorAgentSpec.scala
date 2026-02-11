@@ -74,7 +74,8 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
                          ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir, parallelism = 2)),
                          BusinessLogicExtractorAgent.live,
                        )
-          summary <- ZIO.attemptBlocking(Files.readString(Path.of("reports/business-logic/business-logic-summary.json")))
+          summary <-
+            ZIO.attemptBlocking(Files.readString(Path.of("reports/business-logic/business-logic-summary.json")))
           parsed   = summary.fromJson[List[BusinessLogicExtraction]]
         yield assertTrue(
           out.size == 2,

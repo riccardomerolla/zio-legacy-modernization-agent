@@ -35,7 +35,8 @@ object BusinessLogicExtractorAgent:
         new BusinessLogicExtractorAgent {
           private val reportDir = Path.of("reports/business-logic")
 
-          override def extract(analysis: CobolAnalysis): ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
+          override def extract(analysis: CobolAnalysis)
+            : ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
             for
               _        <- Logger.info(s"Extracting business logic from ${analysis.file.name}")
               prompt    = PromptTemplates.BusinessLogicExtractor.extractBusinessLogic(analysis)

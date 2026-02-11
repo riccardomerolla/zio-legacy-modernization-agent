@@ -8,7 +8,7 @@ import scala.annotation.nowarn
 import zio.*
 import zio.json.*
 
-import Codecs.given
+import models.Codecs.given
 
 enum MigrationStep derives JsonCodec:
   case Discovery, Analysis, Mapping, Transformation, Validation, Documentation

@@ -103,7 +103,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
           countingAgent  = ZLayer.succeed(new BusinessLogicExtractorAgent {
                              override def extract(analysis: CobolAnalysis)
                                : ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
-                               extractionRef.update(_ + 1).as(sampleBusinessLogicExtraction.copy(fileName = analysis.file.name))
+                               extractionRef.update(_ + 1).as(sampleBusinessLogicExtraction.copy(fileName =
+                                 analysis.file.name
+                               ))
                              override def extractAll(
                                analyses: List[CobolAnalysis]
                              ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
@@ -152,7 +154,9 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
           countingAgent  = ZLayer.succeed(new BusinessLogicExtractorAgent {
                              override def extract(analysis: CobolAnalysis)
                                : ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
-                               extractionRef.update(_ + 1).as(sampleBusinessLogicExtraction.copy(fileName = analysis.file.name))
+                               extractionRef.update(_ + 1).as(sampleBusinessLogicExtraction.copy(fileName =
+                                 analysis.file.name
+                               ))
                              override def extractAll(
                                analyses: List[CobolAnalysis]
                              ): ZIO[Any, BusinessLogicExtractionError, List[BusinessLogicExtraction]] =
