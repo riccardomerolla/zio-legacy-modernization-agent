@@ -1,6 +1,28 @@
 package models
 
 import zio.json.*
+import zio.json.ast.Json
+
+// Structured output schema
+case class ResponseSchema(
+  name: String,
+  schema: Json,
+)
+
+object ResponseSchema:
+  given JsonCodec[ResponseSchema] = DeriveJsonCodec.gen[ResponseSchema]
+
+// OpenAI structured output types
+case class JsonSchemaSpec(
+  name: String,
+  schema: Json,
+  strict: Option[Boolean] = Some(true),
+) derives JsonCodec
+
+case class ResponseFormat(
+  `type`: String,
+  json_schema: Option[JsonSchemaSpec] = None,
+) derives JsonCodec
 
 // OpenAI-compatible
 case class ChatCompletionRequest(
@@ -10,6 +32,7 @@ case class ChatCompletionRequest(
   max_tokens: Option[Int] = None,
   max_completion_tokens: Option[Int] = None,
   stream: Option[Boolean] = None,
+  response_format: Option[ResponseFormat] = None,
 ) derives JsonCodec
 
 case class ChatMessage(role: String, content: String) derives JsonCodec
@@ -40,6 +63,7 @@ case class AnthropicRequest(
   max_tokens: Int,
   messages: List[ChatMessage],
   temperature: Option[Double] = None,
+  system: Option[String] = None,
 ) derives JsonCodec
 
 case class AnthropicResponse(
@@ -58,8 +82,14 @@ case class AnthropicUsage(
 ) derives JsonCodec
 
 // Gemini API-compatible
+case class GeminiGenerationConfig(
+  responseMimeType: Option[String] = None,
+  responseSchema: Option[Json] = None,
+) derives JsonCodec
+
 case class GeminiGenerateContentRequest(
-  contents: List[GeminiContent]
+  contents: List[GeminiContent],
+  generationConfig: Option[GeminiGenerationConfig] = None,
 ) derives JsonCodec
 
 case class GeminiGenerateContentResponse(

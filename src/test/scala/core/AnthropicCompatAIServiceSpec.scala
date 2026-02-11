@@ -2,6 +2,7 @@ package core
 
 import zio.*
 import zio.json.*
+import zio.json.ast.Json
 import zio.test.*
 
 import models.*
@@ -79,6 +80,44 @@ object AnthropicCompatAIServiceSpec extends ZIOSpecDefault:
         result.metadata.get("input_tokens").contains("40"),
         result.metadata.get("output_tokens").contains("20"),
         result.metadata.get("stop_reason").contains("end_turn"),
+      )
+    },
+    test("executeStructured sends system prompt with schema and prepends '{' to response") {
+      val response = AnthropicResponse(
+        content = List(ContentBlock("text", Some(""""result":"ok"}"""))),
+        model = Some("claude-sonnet-4-20250514"),
+      ).toJson
+
+      val schema = ResponseSchema("TestSchema", Json.Obj("type" -> Json.Str("object")))
+
+      for
+        callsRef <- Ref.make(List.empty[HttpCall])
+        httpLayer = ZLayer.succeed(new HttpAIClient {
+                      override def postJson(
+                        url: String,
+                        body: String,
+                        headers: Map[String, String],
+                        timeout: Duration,
+                      ): ZIO[Any, AIError, String] =
+                        callsRef.update(HttpCall(url, body, headers, timeout) :: _) *> ZIO.succeed(response)
+                    })
+        result   <- AIService.executeStructured("test prompt", schema).provide(
+                      AnthropicCompatAIService.layer,
+                      ZLayer.succeed(providerConfig),
+                      allowAllRateLimiter,
+                      httpLayer,
+                    )
+        calls    <- callsRef.get
+        parsed   <- ZIO
+                      .fromEither(calls.head.body.fromJson[AnthropicRequest])
+                      .mapError(err => new RuntimeException(err))
+                      .orDie
+      yield assertTrue(
+        result.output == """{"result":"ok"}""",
+        parsed.system.isDefined,
+        parsed.system.get.contains("schema"),
+        parsed.messages.exists(_.role == "assistant"),
+        parsed.messages.exists(m => m.role == "assistant" && m.content == "{"),
       )
     },
     test("concatenates multi-block text responses") {

@@ -12,8 +12,7 @@ object BusinessLogicExtractorPrompts:
     """You are a senior business analyst reverse-engineering COBOL systems.
       |Extract WHAT the business does, not low-level code mechanics.
       |
-      |CRITICAL REQUIREMENTS:
-      |- Respond with valid JSON only (no markdown, no commentary)
+      |REQUIREMENTS:
       |- Keep terminology business-friendly and concise
       |- Include concrete use cases and validation/business rules found in the source
       |- Do not invent operations that are not supported by the provided analysis
@@ -64,29 +63,4 @@ object BusinessLogicExtractorPrompts:
        |3. rules: validations/constraints/authorizations/data integrity rules.
        |4. summary: concise executive summary.
        |
-       |Return a single JSON object using this exact shape:
-       |{
-       |  "fileName": "${analysis.file.name}",
-       |  "businessPurpose": "...",
-       |  "useCases": [
-       |    {
-       |      "name": "...",
-       |      "trigger": "...",
-       |      "description": "...",
-       |      "keySteps": ["...", "..."]
-       |    }
-       |  ],
-       |  "rules": [
-       |    {
-       |      "category": "DataValidation | BusinessLogic | Authorization | DataIntegrity | Other",
-       |      "description": "...",
-       |      "condition": "...",
-       |      "errorCode": "...",
-       |      "suggestion": "..."
-       |    }
-       |  ],
-       |  "summary": "..."
-       |}
-       |
-       |Respond with JSON only.
        |""".stripMargin

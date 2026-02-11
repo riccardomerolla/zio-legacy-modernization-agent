@@ -1,6 +1,7 @@
 package models
 
 import zio.json.*
+import zio.json.ast.Json
 import zio.test.*
 
 object AIModelsSpec extends ZIOSpecDefault:
@@ -69,6 +70,55 @@ object AIModelsSpec extends ZIOSpecDefault:
       ),
     ),
     roundTripTest(
+      "ResponseSchema",
+      ResponseSchema("CobolAnalysis", Json.Obj("type" -> Json.Str("object"))),
+    ),
+    roundTripTest(
+      "JsonSchemaSpec",
+      JsonSchemaSpec(
+        name = "CobolAnalysis",
+        schema = Json.Obj("type" -> Json.Str("object")),
+        strict = Some(true),
+      ),
+    ),
+    roundTripTest(
+      "ResponseFormat",
+      ResponseFormat(
+        `type` = "json_schema",
+        json_schema = Some(
+          JsonSchemaSpec(
+            name = "Test",
+            schema = Json.Obj("type" -> Json.Str("object")),
+          )
+        ),
+      ),
+    ),
+    roundTripTest(
+      "GeminiGenerationConfig",
+      GeminiGenerationConfig(
+        responseMimeType = Some("application/json"),
+        responseSchema = Some(Json.Obj("type" -> Json.Str("object"))),
+      ),
+    ),
+    roundTripTest(
+      "ChatCompletionRequest with response_format",
+      ChatCompletionRequest(
+        model = "gpt-4o",
+        messages = List(ChatMessage("user", "test")),
+        response_format = Some(
+          ResponseFormat(
+            `type` = "json_schema",
+            json_schema = Some(
+              JsonSchemaSpec(
+                name = "TestSchema",
+                schema = Json.Obj("type" -> Json.Str("object")),
+              )
+            ),
+          )
+        ),
+      ),
+    ),
+    roundTripTest(
       "GeminiGenerateContentRequest",
       GeminiGenerateContentRequest(
         contents = List(
@@ -76,6 +126,27 @@ object AIModelsSpec extends ZIOSpecDefault:
             parts = List(GeminiPart("Explain this code"))
           )
         )
+      ),
+    ),
+    roundTripTest(
+      "GeminiGenerateContentRequest with generationConfig",
+      GeminiGenerateContentRequest(
+        contents = List(GeminiContent(parts = List(GeminiPart("test")))),
+        generationConfig = Some(
+          GeminiGenerationConfig(
+            responseMimeType = Some("application/json"),
+            responseSchema = Some(Json.Obj("type" -> Json.Str("object"))),
+          )
+        ),
+      ),
+    ),
+    roundTripTest(
+      "AnthropicRequest with system",
+      AnthropicRequest(
+        model = "claude-sonnet-4-20250514",
+        max_tokens = 2048,
+        messages = List(ChatMessage("user", "test")),
+        system = Some("Respond with JSON matching this schema"),
       ),
     ),
     roundTripTest(

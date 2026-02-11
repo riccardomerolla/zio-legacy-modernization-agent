@@ -63,7 +63,7 @@ object PromptTemplatesReExportSpec extends ZIOSpecDefault:
       },
       test("schemaReference generates instructions") {
         val result = PromptTemplates.Helpers.schemaReference("TestClass")
-        assertTrue(result.contains("TestClass"), result.contains("OUTPUT FORMAT"))
+        assertTrue(result.contains("TestClass"), result.contains("valid JSON"))
       },
       test("chunkByDivision extracts divisions") {
         val code   = "IDENTIFICATION DIVISION.\nPROGRAM-ID. TEST.\nPROCEDURE DIVISION.\nMAIN.\n    STOP RUN."

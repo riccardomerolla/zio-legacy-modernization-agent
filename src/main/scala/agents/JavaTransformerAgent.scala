@@ -7,7 +7,7 @@ import zio.json.*
 
 import core.{ AIService, FileService, Logger, ResponseParser }
 import models.*
-import prompts.PromptTemplates
+import prompts.{ OutputSchemas, PromptTemplates }
 
 /** JavaTransformerAgent - Transform COBOL programs into a unified Spring Boot project
   *
@@ -106,9 +106,10 @@ object JavaTransformerAgent:
 
           private def generateEntity(analysis: CobolAnalysis): ZIO[Any, TransformError, JavaEntity] =
             val prompt = PromptTemplates.JavaTransformer.generateEntity(analysis)
+            val schema = OutputSchemas.jsonSchemaMap("JavaEntity")
             for
               response <- aiService
-                            .execute(prompt)
+                            .executeStructured(prompt, schema)
                             .mapError(e => TransformError.AIFailed(analysis.file.name, e.message))
               entity   <- responseParser
                             .parse[JavaEntity](response)
@@ -122,9 +123,10 @@ object JavaTransformerAgent:
           ): ZIO[Any, TransformError, JavaService] =
             val deps   = graph.serviceCandidates
             val prompt = PromptTemplates.JavaTransformer.generateService(analysis, deps)
+            val schema = OutputSchemas.jsonSchemaMap("JavaService")
             for
               response <- aiService
-                            .execute(prompt)
+                            .executeStructured(prompt, schema)
                             .mapError(e => TransformError.AIFailed(analysis.file.name, e.message))
               service  <- responseParser
                             .parse[JavaService](response)
@@ -136,9 +138,10 @@ object JavaTransformerAgent:
             serviceName: String,
           ): ZIO[Any, TransformError, JavaController] =
             val prompt = PromptTemplates.JavaTransformer.generateController(analysis, serviceName)
+            val schema = OutputSchemas.jsonSchemaMap("JavaController")
             for
               response   <- aiService
-                              .execute(prompt)
+                              .executeStructured(prompt, schema)
                               .mapError(e => TransformError.AIFailed(analysis.file.name, e.message))
               controller <- responseParser
                               .parse[JavaController](response)

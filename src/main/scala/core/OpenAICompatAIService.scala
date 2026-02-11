@@ -12,11 +12,14 @@ final case class OpenAICompatAIService(
 ) extends AIService:
 
   override def execute(prompt: String): ZIO[Any, AIError, AIResponse] =
-    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(prompt)
+    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(prompt, None)
+
+  override def executeStructured(prompt: String, schema: ResponseSchema): ZIO[Any, AIError, AIResponse] =
+    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(prompt, Some(schema))
 
   override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] =
     val combinedPrompt = s"$prompt\n\nContext:\n$context"
-    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(combinedPrompt)
+    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(combinedPrompt, None)
 
   override def isAvailable: ZIO[Any, Nothing, Boolean] =
     config.baseUrl match
@@ -31,7 +34,10 @@ final case class OpenAICompatAIService(
           .as(true)
           .catchAll(_ => ZIO.succeed(true))
 
-  private def executeWithRetry(prompt: String): ZIO[Any, AIError, AIResponse] =
+  private def executeWithRetry(
+    prompt: String,
+    schema: Option[ResponseSchema],
+  ): ZIO[Any, AIError, AIResponse] =
     val policy = RetryPolicy(
       maxRetries = config.maxRetries,
       baseDelay = Duration.fromSeconds(1),
@@ -39,35 +45,42 @@ final case class OpenAICompatAIService(
     )
 
     RetryPolicy.withRetry(
-      executeOnce(prompt),
+      executeOnce(prompt, schema),
       policy,
       RetryPolicy.isRetryableAI,
     )
 
-  private def executeOnce(prompt: String): ZIO[Any, AIError, AIResponse] =
+  private def executeOnce(prompt: String, schema: Option[ResponseSchema]): ZIO[Any, AIError, AIResponse] =
     for
-      baseUrl <-
+      baseUrl       <-
         ZIO.fromOption(config.baseUrl).orElseFail(AIError.InvalidResponse("Missing baseUrl for OpenAI provider"))
-      request  = ChatCompletionRequest(
-                   model = config.model,
-                   messages = List(ChatMessage(role = "user", content = prompt)),
-                   temperature = Some(config.temperature.getOrElse(0.1)),
-                   max_tokens = Some(config.maxTokens.getOrElse(32768)),
-                   max_completion_tokens = None,
-                   stream = Some(false),
-                 )
-      url      = s"${baseUrl.stripSuffix("/")}/chat/completions"
-      body    <- httpClient.postJson(
-                   url = url,
-                   body = request.toJson,
-                   headers = authHeaders,
-                   timeout = config.timeout,
-                 )
-      parsed  <- ZIO
-                   .fromEither(body.fromJson[ChatCompletionResponse])
-                   .mapError(err => AIError.InvalidResponse(s"Failed to decode OpenAI response: $err"))
-      content <- extractContent(parsed)
-      metadata = extractMetadata(parsed)
+      responseFormat = schema.map(s =>
+                         ResponseFormat(
+                           `type` = "json_schema",
+                           json_schema = Some(JsonSchemaSpec(name = s.name, schema = s.schema)),
+                         )
+                       )
+      request        = ChatCompletionRequest(
+                         model = config.model,
+                         messages = List(ChatMessage(role = "user", content = prompt)),
+                         temperature = Some(config.temperature.getOrElse(0.1)),
+                         max_tokens = Some(config.maxTokens.getOrElse(32768)),
+                         max_completion_tokens = None,
+                         stream = Some(false),
+                         response_format = responseFormat,
+                       )
+      url            = s"${baseUrl.stripSuffix("/")}/chat/completions"
+      body          <- httpClient.postJson(
+                         url = url,
+                         body = request.toJson,
+                         headers = authHeaders,
+                         timeout = config.timeout,
+                       )
+      parsed        <- ZIO
+                         .fromEither(body.fromJson[ChatCompletionResponse])
+                         .mapError(err => AIError.InvalidResponse(s"Failed to decode OpenAI response: $err"))
+      content       <- extractContent(parsed)
+      metadata       = extractMetadata(parsed)
     yield AIResponse(output = content, metadata = metadata)
 
   private def extractContent(response: ChatCompletionResponse): ZIO[Any, AIError, String] =

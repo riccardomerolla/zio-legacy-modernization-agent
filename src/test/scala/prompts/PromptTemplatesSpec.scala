@@ -49,7 +49,7 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
           prompt.contains("CUSTPROG.cbl"),
           prompt.contains("```cobol"),
           prompt.contains("CobolAnalysis"),
-          prompt.contains("TEMPLATE_VERSION: 1.0.0"),
+          prompt.contains("TEMPLATE_VERSION: 1.1.0"),
         )
       },
       test("handles large files with chunking") {
@@ -192,7 +192,6 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
         assertTrue(
           prompt.contains("MIGRATION METRICS:"),
           prompt.contains("Duration:"),
-          prompt.contains("summaryReport"),
           prompt.contains("Success Criteria"),
         )
       },
@@ -224,6 +223,42 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
 
         assertTrue(schema.contains("not found"))
       },
+      test("jsonSchemaMap contains all structured output schemas") {
+        assertTrue(
+          OutputSchemas.jsonSchemaMap.contains("CobolAnalysis"),
+          OutputSchemas.jsonSchemaMap.contains("DependencyGraph"),
+          OutputSchemas.jsonSchemaMap.contains("JavaEntity"),
+          OutputSchemas.jsonSchemaMap.contains("JavaService"),
+          OutputSchemas.jsonSchemaMap.contains("JavaController"),
+          OutputSchemas.jsonSchemaMap.contains("SemanticValidation"),
+          OutputSchemas.jsonSchemaMap.contains("BusinessLogicExtraction"),
+          OutputSchemas.jsonSchemaMap.contains("MigrationDocumentation"),
+        )
+      },
+      test("getResponseSchema returns Some for valid key and None for invalid") {
+        assertTrue(
+          OutputSchemas.getResponseSchema("CobolAnalysis").isDefined,
+          OutputSchemas.getResponseSchema("InvalidKey").isEmpty,
+        )
+      },
+      test("prompts no longer contain verbose JSON formatting boilerplate") {
+        val cobolFile = CobolFile(
+          path = java.nio.file.Paths.get("/cobol/TEST.cbl"),
+          name = "TEST.cbl",
+          size = 100,
+          lineCount = 10,
+          lastModified = java.time.Instant.parse("2026-01-15T10:00:00Z"),
+          encoding = "UTF-8",
+          fileType = FileType.Program,
+        )
+        val prompt    = PromptTemplates.CobolAnalyzer.analyzeStructure(cobolFile, "IDENTIFICATION DIVISION.\nSTOP RUN.")
+
+        assertTrue(
+          !prompt.contains("CRITICAL RESPONSE FORMAT"),
+          !prompt.contains("Start with '{'"),
+          !prompt.contains("Respond with the JSON object now"),
+        )
+      },
     ),
     suite("PromptHelpers")(
       test("formatCobolCode wraps code in markdown block") {
@@ -240,7 +275,6 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
         val ref = PromptHelpers.schemaReference("CobolAnalysis")
 
         assertTrue(
-          ref.contains("OUTPUT FORMAT:"),
           ref.contains("CobolAnalysis"),
           ref.contains("valid JSON"),
         )
@@ -317,7 +351,7 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
           versions.contains("JavaTransformer"),
           versions.contains("Validation"),
           versions.contains("Documentation"),
-          versions.values.forall(_ == "1.0.0"),
+          versions.values.forall(v => v == "1.0.0" || v == "1.1.0"),
         )
       },
       test("versionSummary returns formatted version string") {
@@ -325,7 +359,7 @@ object PromptTemplatesSpec extends ZIOSpecDefault:
 
         assertTrue(
           summary.contains("Prompt Template Versions:"),
-          summary.contains("CobolAnalyzer: 1.0.0"),
+          summary.contains("CobolAnalyzer: 1.1.0"),
           summary.contains("Validation: 1.0.0"),
         )
       },

@@ -16,41 +16,54 @@ object GeminiApiAIService:
   ): AIService =
     new AIService {
       override def execute(prompt: String): ZIO[Any, AIError, AIResponse] =
-        rateLimiter.acquire.mapError(mapRateLimitError) *> executeRequest(prompt)
+        rateLimiter.acquire.mapError(mapRateLimitError) *> executeRequest(prompt, None)
+
+      override def executeStructured(prompt: String, schema: ResponseSchema): ZIO[Any, AIError, AIResponse] =
+        rateLimiter.acquire.mapError(mapRateLimitError) *> executeRequest(prompt, Some(schema))
 
       override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] =
         val combinedPrompt = s"$prompt\n\nContext:\n$context"
-        rateLimiter.acquire.mapError(mapRateLimitError) *> executeRequest(combinedPrompt)
+        rateLimiter.acquire.mapError(mapRateLimitError) *> executeRequest(combinedPrompt, None)
 
       override def isAvailable: ZIO[Any, Nothing, Boolean] =
         execute("health check").fold(_ => false, _ => true)
 
-      private def executeRequest(prompt: String): ZIO[Any, AIError, AIResponse] =
+      private def executeRequest(
+        prompt: String,
+        schema: Option[ResponseSchema],
+      ): ZIO[Any, AIError, AIResponse] =
         for
-          baseUrl <- ZIO.fromOption(providerConfig.baseUrl).orElseFail(
-                       AIError.InvalidResponse("Missing baseUrl for Gemini API provider")
-                     )
-          apiKey  <- ZIO.fromOption(providerConfig.apiKey).orElseFail(
-                       AIError.AuthenticationFailed("gemini-api")
-                     )
-          request  = GeminiGenerateContentRequest(
-                       contents = List(
-                         GeminiContent(
-                           parts = List(GeminiPart(text = prompt))
-                         )
-                       )
-                     )
-          url      = s"${baseUrl.stripSuffix("/")}/v1beta/models/${providerConfig.model}:generateContent"
-          body    <- httpClient.postJson(
-                       url = url,
-                       body = request.toJson,
-                       headers = Map("x-goog-api-key" -> apiKey),
-                       timeout = providerConfig.timeout,
-                     )
-          parsed  <- ZIO
-                       .fromEither(body.fromJson[GeminiGenerateContentResponse])
-                       .mapError(err => AIError.InvalidResponse(s"Failed to decode Gemini API response: $err"))
-          output  <- extractText(parsed)
+          baseUrl  <- ZIO.fromOption(providerConfig.baseUrl).orElseFail(
+                        AIError.InvalidResponse("Missing baseUrl for Gemini API provider")
+                      )
+          apiKey   <- ZIO.fromOption(providerConfig.apiKey).orElseFail(
+                        AIError.AuthenticationFailed("gemini-api")
+                      )
+          genConfig = schema.map(s =>
+                        GeminiGenerationConfig(
+                          responseMimeType = Some("application/json"),
+                          responseSchema = Some(s.schema),
+                        )
+                      )
+          request   = GeminiGenerateContentRequest(
+                        contents = List(
+                          GeminiContent(
+                            parts = List(GeminiPart(text = prompt))
+                          )
+                        ),
+                        generationConfig = genConfig,
+                      )
+          url       = s"${baseUrl.stripSuffix("/")}/v1beta/models/${providerConfig.model}:generateContent"
+          body     <- httpClient.postJson(
+                        url = url,
+                        body = request.toJson,
+                        headers = Map("x-goog-api-key" -> apiKey),
+                        timeout = providerConfig.timeout,
+                      )
+          parsed   <- ZIO
+                        .fromEither(body.fromJson[GeminiGenerateContentResponse])
+                        .mapError(err => AIError.InvalidResponse(s"Failed to decode Gemini API response: $err"))
+          output   <- extractText(parsed)
         yield AIResponse(
           output = output,
           metadata = baseMetadata(parsed),

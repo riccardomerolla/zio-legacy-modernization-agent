@@ -2,6 +2,7 @@ package core
 
 import zio.*
 import zio.json.*
+import zio.json.ast.Json
 import zio.test.*
 
 import models.*
@@ -87,6 +88,42 @@ object GeminiApiAIServiceSpec extends ZIOSpecDefault:
         result.metadata.get("model").contains("gemini-2.5-flash"),
         result.metadata.get("promptTokenCount").contains("11"),
         result.metadata.get("totalTokenCount").contains("18"),
+      )
+    },
+    test("executeStructured sends generationConfig with responseSchema") {
+      val response = GeminiGenerateContentResponse(
+        candidates = List(GeminiCandidate(GeminiContent(List(GeminiPart("""{"result":"ok"}""")))))
+      ).toJson
+
+      val schema = ResponseSchema("TestSchema", Json.Obj("type" -> Json.Str("object")))
+
+      for
+        callsRef <- Ref.make(List.empty[HttpCall])
+        httpLayer = ZLayer.succeed(new HttpAIClient {
+                      override def postJson(
+                        url: String,
+                        body: String,
+                        headers: Map[String, String],
+                        timeout: Duration,
+                      ): ZIO[Any, AIError, String] =
+                        callsRef.update(HttpCall(url, body, headers, timeout) :: _) *> ZIO.succeed(response)
+                    })
+        result   <- AIService.executeStructured("test prompt", schema).provide(
+                      GeminiApiAIService.layer,
+                      ZLayer.succeed(providerConfig),
+                      allowAllRateLimiter,
+                      httpLayer,
+                    )
+        calls    <- callsRef.get
+        parsed   <- ZIO
+                      .fromEither(calls.head.body.fromJson[GeminiGenerateContentRequest])
+                      .mapError(err => new RuntimeException(err))
+                      .orDie
+      yield assertTrue(
+        result.output == """{"result":"ok"}""",
+        parsed.generationConfig.isDefined,
+        parsed.generationConfig.get.responseMimeType.contains("application/json"),
+        parsed.generationConfig.get.responseSchema.isDefined,
       )
     },
     test("fails with InvalidResponse when response has no text") {

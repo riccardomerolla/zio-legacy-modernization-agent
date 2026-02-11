@@ -2,7 +2,7 @@ package core
 
 import zio.*
 
-import models.{ AIError, AIProvider, AIProviderConfig, AIResponse }
+import models.{ AIError, AIProvider, AIProviderConfig, AIResponse, ResponseSchema }
 
 trait AIService:
   def execute(prompt: String): ZIO[Any, AIError, AIResponse]
@@ -10,6 +10,9 @@ trait AIService:
   def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse]
 
   def executeWithConfig(prompt: String, config: AIProviderConfig): ZIO[Any, AIError, AIResponse] =
+    execute(prompt)
+
+  def executeStructured(prompt: String, schema: ResponseSchema): ZIO[Any, AIError, AIResponse] =
     execute(prompt)
 
   def isAvailable: ZIO[Any, Nothing, Boolean]
@@ -23,6 +26,9 @@ object AIService:
 
   def executeWithConfig(prompt: String, config: AIProviderConfig): ZIO[AIService, AIError, AIResponse] =
     ZIO.serviceWithZIO[AIService](_.executeWithConfig(prompt, config))
+
+  def executeStructured(prompt: String, schema: ResponseSchema): ZIO[AIService, AIError, AIResponse] =
+    ZIO.serviceWithZIO[AIService](_.executeStructured(prompt, schema))
 
   def isAvailable: ZIO[AIService, Nothing, Boolean] =
     ZIO.serviceWithZIO[AIService](_.isAvailable)
@@ -49,6 +55,9 @@ object AIService:
 
         override def executeWithConfig(prompt: String, config: AIProviderConfig): ZIO[Any, AIError, AIResponse] =
           build(AIProviderConfig.withDefaults(config)).execute(prompt)
+
+        override def executeStructured(prompt: String, schema: ResponseSchema): ZIO[Any, AIError, AIResponse] =
+          build(defaultProviderConfig).executeStructured(prompt, schema)
 
         override def isAvailable: ZIO[Any, Nothing, Boolean] =
           build(defaultProviderConfig).isAvailable

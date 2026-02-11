@@ -32,10 +32,7 @@ object PromptHelpers:
     *   Schema reference instructions for Gemini
     */
   def schemaReference(className: String): String =
-    s"""OUTPUT FORMAT:
-       |Your response must be valid JSON matching the $className case class from our Scala codebase.
-       |Do not include markdown formatting, explanations, or any text outside the JSON structure.
-       |Ensure all required fields are present and types are correct.""".stripMargin
+    s"Respond with valid JSON matching the $className schema."
 
   /** Build chunked context for large COBOL files by splitting on divisions
     *

@@ -2,6 +2,7 @@ package core
 
 import zio.*
 import zio.json.*
+import zio.json.ast.Json
 import zio.test.*
 
 import models.*
@@ -214,6 +215,55 @@ object OpenAICompatAIServiceSpec extends ZIOSpecDefault:
         attempts == 2,
       )
     } @@ TestAspect.withLiveClock,
+    test("executeStructured sends response_format with json_schema") {
+      val response = ChatCompletionResponse(
+        choices = List(
+          ChatChoice(
+            index = 0,
+            message = Some(ChatMessage("assistant", """{"result":"ok"}""")),
+            finish_reason = Some("stop"),
+          )
+        ),
+        model = Some("gpt-4o"),
+      ).toJson
+
+      val schema = ResponseSchema("TestSchema", Json.Obj("type" -> Json.Str("object")))
+
+      for
+        callsRef <- Ref.make(List.empty[HttpCall])
+        httpLayer = ZLayer.succeed(new HttpAIClient {
+                      override def postJson(
+                        url: String,
+                        body: String,
+                        headers: Map[String, String],
+                        timeout: Duration,
+                      ): ZIO[Any, AIError, String] =
+                        callsRef.update(HttpCall(url, body, headers, timeout) :: _) *> ZIO.succeed(response)
+
+                      override def get(
+                        url: String,
+                        headers: Map[String, String],
+                        timeout: Duration,
+                      ): ZIO[Any, AIError, String] = ZIO.succeed("{}")
+                    })
+        result   <- AIService.executeStructured("test prompt", schema).provide(
+                      OpenAICompatAIService.layer,
+                      ZLayer.succeed(providerConfig),
+                      allowAllRateLimiter,
+                      httpLayer,
+                    )
+        calls    <- callsRef.get
+        parsed   <- ZIO
+                      .fromEither(calls.head.body.fromJson[ChatCompletionRequest])
+                      .mapError(err => new RuntimeException(err))
+                      .orDie
+      yield assertTrue(
+        result.output == """{"result":"ok"}""",
+        parsed.response_format.isDefined,
+        parsed.response_format.get.`type` == "json_schema",
+        parsed.response_format.get.json_schema.get.name == "TestSchema",
+      )
+    },
     test("isAvailable checks /models and falls back to true when endpoint fails") {
       for
         callsRef  <- Ref.make(List.empty[String])

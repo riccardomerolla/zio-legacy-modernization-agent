@@ -29,8 +29,7 @@ object DocumentationPrompts:
     """You are an expert technical writer specializing in migration documentation.
       |Your role is to generate clear, comprehensive documentation for COBOL to Java migrations.
       |
-      |CRITICAL REQUIREMENTS:
-      |- Always respond with valid JSON only, no markdown inside JSON strings
+      |REQUIREMENTS:
       |- Generate Markdown-formatted documentation (stored in JSON string fields)
       |- Include architecture diagrams in Mermaid format
       |- Document all mappings between COBOL and Java
@@ -90,9 +89,6 @@ object DocumentationPrompts:
        |   - Database requirements
        |   - Infrastructure needs
        |
-       |Output format: Markdown stored in JSON field "designDocument"
-       |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Generate migration summary report
@@ -148,9 +144,6 @@ object DocumentationPrompts:
        |   - Manual review items
        |   - Performance testing needs
        |
-       |Output format: Markdown stored in JSON field "summaryReport"
-       |
-       |Respond with JSON only.
        |""".stripMargin
 
   private val documentationExamples =

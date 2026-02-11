@@ -12,16 +12,22 @@ final case class AnthropicCompatAIService(
 ) extends AIService:
 
   override def execute(prompt: String): ZIO[Any, AIError, AIResponse] =
-    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(prompt)
+    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(prompt, None)
+
+  override def executeStructured(prompt: String, schema: ResponseSchema): ZIO[Any, AIError, AIResponse] =
+    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(prompt, Some(schema))
 
   override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] =
     val combinedPrompt = s"$prompt\n\nContext:\n$context"
-    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(combinedPrompt)
+    rateLimiter.acquire.mapError(mapRateLimitError) *> executeWithRetry(combinedPrompt, None)
 
   override def isAvailable: ZIO[Any, Nothing, Boolean] =
     ZIO.succeed(config.baseUrl.nonEmpty)
 
-  private def executeWithRetry(prompt: String): ZIO[Any, AIError, AIResponse] =
+  private def executeWithRetry(
+    prompt: String,
+    schema: Option[ResponseSchema],
+  ): ZIO[Any, AIError, AIResponse] =
     val policy = RetryPolicy(
       maxRetries = config.maxRetries,
       baseDelay = Duration.fromSeconds(1),
@@ -29,32 +35,43 @@ final case class AnthropicCompatAIService(
     )
 
     RetryPolicy.withRetry(
-      executeOnce(prompt),
+      executeOnce(prompt, schema),
       policy,
       isRetryable,
     )
 
-  private def executeOnce(prompt: String): ZIO[Any, AIError, AIResponse] =
+  private def executeOnce(prompt: String, schema: Option[ResponseSchema]): ZIO[Any, AIError, AIResponse] =
     for
-      baseUrl <-
+      baseUrl  <-
         ZIO.fromOption(config.baseUrl).orElseFail(AIError.InvalidResponse("Missing baseUrl for Anthropic provider"))
-      request  = AnthropicRequest(
-                   model = config.model,
-                   max_tokens = config.maxTokens.getOrElse(32768),
-                   messages = List(ChatMessage(role = "user", content = prompt)),
-                   temperature = Some(config.temperature.getOrElse(0.1)),
-                 )
-      url      = s"${baseUrl.stripSuffix("/")}/v1/messages"
-      body    <- httpClient.postJson(
-                   url = url,
-                   body = request.toJson,
-                   headers = headers,
-                   timeout = config.timeout,
-                 )
-      parsed  <- parseAnthropicBody(body)
-      text    <- extractText(parsed)
-      metadata = extractMetadata(parsed)
-    yield AIResponse(output = text, metadata = metadata)
+      systemMsg = schema.map(s => s"Respond with valid JSON matching this schema:\n${s.schema.toJson}")
+      messages  = schema match
+                    case Some(_) =>
+                      List(
+                        ChatMessage(role = "user", content = prompt),
+                        ChatMessage(role = "assistant", content = "{"),
+                      )
+                    case None    =>
+                      List(ChatMessage(role = "user", content = prompt))
+      request   = AnthropicRequest(
+                    model = config.model,
+                    max_tokens = config.maxTokens.getOrElse(32768),
+                    messages = messages,
+                    temperature = Some(config.temperature.getOrElse(0.1)),
+                    system = systemMsg,
+                  )
+      url       = s"${baseUrl.stripSuffix("/")}/v1/messages"
+      body     <- httpClient.postJson(
+                    url = url,
+                    body = request.toJson,
+                    headers = headers,
+                    timeout = config.timeout,
+                  )
+      parsed   <- parseAnthropicBody(body)
+      text     <- extractText(parsed)
+      fixedText = if schema.isDefined then s"{$text" else text
+      metadata  = extractMetadata(parsed)
+    yield AIResponse(output = fixedText, metadata = metadata)
 
   private def parseAnthropicBody(body: String): ZIO[Any, AIError, AnthropicResponse] =
     ZIO

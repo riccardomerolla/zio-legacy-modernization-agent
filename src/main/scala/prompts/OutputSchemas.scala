@@ -1,371 +1,333 @@
 package prompts
 
-/** JSON schema documentation for Gemini CLI output formats
+import zio.json.ast.Json
+import zio.json.ast.Json.*
+
+import models.ResponseSchema
+
+/** JSON schema definitions for AI structured output
   *
-  * Provides schema specifications that guide Gemini to generate correctly structured JSON responses. These schemas
-  * correspond to the case classes in the models package and ensure type-safe parsing of Gemini's output.
+  * Provides both human-readable schema templates (for prompt inclusion) and proper JSON Schema objects (for API-level
+  * structured output enforcement via OpenAI response_format, Gemini generationConfig, etc.).
   *
-  * Each schema is a human-readable JSON template with:
-  *   - Field names matching case class field names exactly
-  *   - Type annotations (string, number, boolean, array, object)
-  *   - Optional fields marked with "?" suffix
-  *   - Nested object structures
-  *   - Example values where helpful
-  *
-  * Usage: Include these schemas in prompts via PromptHelpers.schemaReference()
+  * The JSON Schema objects match the case classes in the models package exactly.
   */
 object OutputSchemas:
 
-  /** Schema for CobolAnalysis - complete structural analysis of a COBOL program
-    *
-    * Returned by: CobolAnalyzerAgent
-    *
-    * Contains divisions, variables, procedures, copybook references, and complexity metrics
-    */
+  // ─── JSON Schema builder helpers ────────────────────────────────────────────
+
+  private def str: Json                                            = Obj("type" -> Str("string"))
+  private def num: Json                                            = Obj("type" -> Str("number"))
+  private def int: Json                                            = Obj("type" -> Str("integer"))
+  private def bool: Json                                           = Obj("type" -> Str("boolean"))
+  private def arr(items: Json): Json                               = Obj("type" -> Str("array"), "items" -> items)
+  private def nullable(schema: Json): Json                         =
+    schema match
+      case Obj(fields) => Obj(fields.appended("nullable" -> Bool(true)))
+      case other       => other
+  private def obj(props: (String, Json)*)(required: String*): Json =
+    Obj(
+      "type"                 -> Str("object"),
+      "properties"           -> Obj(props.toList.map((k, v) => k -> v)*),
+      "required"             -> Arr(required.map(Str(_)).toList*),
+      "additionalProperties" -> Bool(false),
+    )
+
+  // ─── CobolAnalysis ──────────────────────────────────────────────────────────
+
+  private val fileSchema: Json = obj(
+    "path"         -> str,
+    "name"         -> str,
+    "size"         -> int,
+    "lineCount"    -> int,
+    "lastModified" -> str,
+    "encoding"     -> str,
+    "fileType"     -> str,
+  )("path", "name", "size", "lineCount", "lastModified", "encoding", "fileType")
+
+  private val divisionsSchema: Json = obj(
+    "identification" -> nullable(str),
+    "environment"    -> nullable(str),
+    "data"           -> nullable(str),
+    "procedure"      -> nullable(str),
+  )()
+
+  private val variableSchema: Json = obj(
+    "name"     -> str,
+    "level"    -> int,
+    "dataType" -> str,
+    "picture"  -> nullable(str),
+    "usage"    -> nullable(str),
+  )("name", "level", "dataType")
+
+  private val statementSchema: Json = obj(
+    "lineNumber"    -> int,
+    "statementType" -> str,
+    "content"       -> str,
+  )("lineNumber", "statementType", "content")
+
+  private val procedureSchema: Json = obj(
+    "name"       -> str,
+    "paragraphs" -> arr(str),
+    "statements" -> arr(statementSchema),
+  )("name", "paragraphs", "statements")
+
+  private val complexitySchema: Json = obj(
+    "cyclomaticComplexity" -> int,
+    "linesOfCode"          -> int,
+    "numberOfProcedures"   -> int,
+  )("cyclomaticComplexity", "linesOfCode", "numberOfProcedures")
+
+  val cobolAnalysisJsonSchema: Json = obj(
+    "file"       -> fileSchema,
+    "divisions"  -> divisionsSchema,
+    "variables"  -> arr(variableSchema),
+    "procedures" -> arr(procedureSchema),
+    "copybooks"  -> arr(str),
+    "complexity" -> complexitySchema,
+  )("file", "divisions", "variables", "procedures", "copybooks", "complexity")
+
+  // ─── DependencyGraph ────────────────────────────────────────────────────────
+
+  private val depNodeSchema: Json = obj(
+    "id"         -> str,
+    "name"       -> str,
+    "nodeType"   -> str,
+    "complexity" -> int,
+  )("id", "name", "nodeType", "complexity")
+
+  private val depEdgeSchema: Json = obj(
+    "from"     -> str,
+    "to"       -> str,
+    "edgeType" -> str,
+  )("from", "to", "edgeType")
+
+  val dependencyGraphJsonSchema: Json = obj(
+    "nodes"             -> arr(depNodeSchema),
+    "edges"             -> arr(depEdgeSchema),
+    "serviceCandidates" -> arr(str),
+  )("nodes", "edges", "serviceCandidates")
+
+  // ─── JavaEntity ─────────────────────────────────────────────────────────────
+
+  private val javaFieldSchema: Json = obj(
+    "name"        -> str,
+    "javaType"    -> str,
+    "cobolSource" -> str,
+    "annotations" -> arr(str),
+  )("name", "javaType", "cobolSource", "annotations")
+
+  val javaEntityJsonSchema: Json = obj(
+    "className"   -> str,
+    "packageName" -> str,
+    "fields"      -> arr(javaFieldSchema),
+    "annotations" -> arr(str),
+    "sourceCode"  -> str,
+  )("className", "packageName", "fields", "annotations", "sourceCode")
+
+  // ─── JavaService ────────────────────────────────────────────────────────────
+
+  private val javaParamSchema: Json = obj(
+    "name"     -> str,
+    "javaType" -> str,
+  )("name", "javaType")
+
+  private val javaMethodSchema: Json = obj(
+    "name"       -> str,
+    "returnType" -> str,
+    "parameters" -> arr(javaParamSchema),
+    "body"       -> str,
+  )("name", "returnType", "parameters", "body")
+
+  val javaServiceJsonSchema: Json = obj(
+    "name"    -> str,
+    "methods" -> arr(javaMethodSchema),
+  )("name", "methods")
+
+  // ─── JavaController ─────────────────────────────────────────────────────────
+
+  private val endpointSchema: Json = obj(
+    "path"       -> str,
+    "method"     -> str,
+    "methodName" -> str,
+  )("path", "method", "methodName")
+
+  val javaControllerJsonSchema: Json = obj(
+    "name"      -> str,
+    "basePath"  -> str,
+    "endpoints" -> arr(endpointSchema),
+  )("name", "basePath", "endpoints")
+
+  // ─── SemanticValidation ─────────────────────────────────────────────────────
+
+  private val validationIssueSchema: Json = obj(
+    "severity"   -> str,
+    "category"   -> str,
+    "message"    -> str,
+    "file"       -> nullable(str),
+    "line"       -> nullable(int),
+    "suggestion" -> nullable(str),
+  )("severity", "category", "message")
+
+  val semanticValidationJsonSchema: Json = obj(
+    "businessLogicPreserved" -> bool,
+    "confidence"             -> num,
+    "summary"                -> str,
+    "issues"                 -> arr(validationIssueSchema),
+  )("businessLogicPreserved", "confidence", "summary", "issues")
+
+  // ─── BusinessLogicExtraction ────────────────────────────────────────────────
+
+  private val useCaseSchema: Json = obj(
+    "name"        -> str,
+    "trigger"     -> str,
+    "description" -> str,
+    "keySteps"    -> arr(str),
+  )("name", "trigger", "description", "keySteps")
+
+  private val businessRuleSchema: Json = obj(
+    "category"    -> str,
+    "description" -> str,
+    "condition"   -> nullable(str),
+    "errorCode"   -> nullable(str),
+    "suggestion"  -> nullable(str),
+  )("category", "description")
+
+  val businessLogicExtractionJsonSchema: Json = obj(
+    "fileName"        -> str,
+    "businessPurpose" -> str,
+    "useCases"        -> arr(useCaseSchema),
+    "rules"           -> arr(businessRuleSchema),
+    "summary"         -> str,
+  )("fileName", "businessPurpose", "useCases", "rules", "summary")
+
+  // ─── MigrationDocumentation ─────────────────────────────────────────────────
+
+  private val diagramSchema: Json = obj(
+    "name"        -> str,
+    "diagramType" -> str,
+    "content"     -> str,
+  )("name", "diagramType", "content")
+
+  val migrationDocumentationJsonSchema: Json = obj(
+    "generatedAt"          -> str,
+    "summaryReport"        -> str,
+    "designDocument"       -> str,
+    "apiDocumentation"     -> str,
+    "dataMappingReference" -> str,
+    "deploymentGuide"      -> str,
+    "diagrams"             -> arr(diagramSchema),
+  )(
+    "generatedAt",
+    "summaryReport",
+    "designDocument",
+    "apiDocumentation",
+    "dataMappingReference",
+    "deploymentGuide",
+    "diagrams",
+  )
+
+  // ─── ResponseSchema lookup ──────────────────────────────────────────────────
+
+  val jsonSchemaMap: Map[String, ResponseSchema] = Map(
+    "CobolAnalysis"           -> ResponseSchema("CobolAnalysis", cobolAnalysisJsonSchema),
+    "DependencyGraph"         -> ResponseSchema("DependencyGraph", dependencyGraphJsonSchema),
+    "JavaEntity"              -> ResponseSchema("JavaEntity", javaEntityJsonSchema),
+    "JavaService"             -> ResponseSchema("JavaService", javaServiceJsonSchema),
+    "JavaController"          -> ResponseSchema("JavaController", javaControllerJsonSchema),
+    "SemanticValidation"      -> ResponseSchema("SemanticValidation", semanticValidationJsonSchema),
+    "BusinessLogicExtraction" -> ResponseSchema("BusinessLogicExtraction", businessLogicExtractionJsonSchema),
+    "MigrationDocumentation"  -> ResponseSchema("MigrationDocumentation", migrationDocumentationJsonSchema),
+  )
+
+  def getResponseSchema(className: String): Option[ResponseSchema] =
+    jsonSchemaMap.get(className)
+
+  // ─── Human-readable schemas (kept for prompt text and Gemini CLI fallback) ─
+
   val cobolAnalysis: String =
-    """
-      |{
-      |  "file": {
-      |    "path": "string (absolute file path)",
-      |    "name": "string (filename with extension)",
-      |    "size": "number (bytes)",
-      |    "lastModified": "string (ISO-8601 timestamp)",
-      |    "encoding": "string (e.g., UTF-8)",
-      |    "fileType": "string (Program | Copybook | JCL)"
-      |  },
-      |  "divisions": {
-      |    "identification": "string? (raw text of IDENTIFICATION DIVISION)",
-      |    "environment": "string? (raw text of ENVIRONMENT DIVISION)",
-      |    "data": "string? (raw text of DATA DIVISION)",
-      |    "procedure": "string? (raw text of PROCEDURE DIVISION)"
-      |  },
-      |  "variables": [
-      |    {
-      |      "name": "string (variable name, e.g., WS-CUSTOMER-ID)",
-      |      "level": "number (COBOL level: 1, 5, 10, 77, 88)",
-      |      "dataType": "string (numeric | alphanumeric | group)",
-      |      "picture": "string? (PIC clause, e.g., 9(5), X(30))",
-      |      "usage": "string? (USAGE clause, e.g., COMP, COMP-3)"
-      |    }
-      |  ],
-      |  "procedures": [
-      |    {
-      |      "name": "string (paragraph or section name)",
-      |      "paragraphs": ["string (list of paragraph names in this section)"],
-      |      "statements": [
-      |        {
-      |          "lineNumber": "number",
-      |          "statementType": "string (MOVE | IF | PERFORM | EVALUATE | CALL | etc.)",
-      |          "content": "string (full statement text)"
-      |        }
-      |      ]
-      |    }
-      |  ],
-      |  "copybooks": ["string (copybook names without extension, e.g., CUSTREC)"],
-      |  "complexity": {
-      |    "cyclomaticComplexity": "number (count of decision points)",
-      |    "linesOfCode": "number (non-comment lines)",
-      |    "numberOfProcedures": "number (count of paragraphs/sections)"
-      |  }
-      |}
-      |""".stripMargin
+    """|{
+       |  "file": { "path": "string", "name": "string", "size": "number", "lineCount": "number", "lastModified": "string (ISO-8601)", "encoding": "string", "fileType": "string (Program | Copybook | JCL)" },
+       |  "divisions": { "identification": "string?", "environment": "string?", "data": "string?", "procedure": "string?" },
+       |  "variables": [{ "name": "string", "level": "number", "dataType": "string", "picture": "string?", "usage": "string?" }],
+       |  "procedures": [{ "name": "string", "paragraphs": ["string"], "statements": [{ "lineNumber": "number", "statementType": "string", "content": "string" }] }],
+       |  "copybooks": ["string"],
+       |  "complexity": { "cyclomaticComplexity": "number", "linesOfCode": "number", "numberOfProcedures": "number" }
+       |}""".stripMargin
 
-  /** Schema for DependencyGraph - relationships between COBOL programs and copybooks
-    *
-    * Returned by: DependencyMapperAgent
-    *
-    * Contains nodes (programs/copybooks) and edges (includes/calls relationships)
-    */
   val dependencyGraph: String =
-    """
-      |{
-      |  "nodes": [
-      |    {
-      |      "id": "string (unique identifier, use program/copybook name)",
-      |      "name": "string (display name)",
-      |      "nodeType": "string (Program | Copybook | SharedService)",
-      |      "complexity": "number (cyclomatic complexity or 0 for copybooks)"
-      |    }
-      |  ],
-      |  "edges": [
-      |    {
-      |      "from": "string (source node id)",
-      |      "to": "string (target node id)",
-      |      "edgeType": "string (Includes | Calls | Uses)"
-      |    }
-      |  ],
-      |  "serviceCandidates": ["string (copybook names used by 3+ programs)"]
-      |}
-      |""".stripMargin
+    """|{
+       |  "nodes": [{ "id": "string", "name": "string", "nodeType": "string (Program | Copybook | SharedService)", "complexity": "number" }],
+       |  "edges": [{ "from": "string", "to": "string", "edgeType": "string (Includes | Calls | Uses)" }],
+       |  "serviceCandidates": ["string"]
+       |}""".stripMargin
 
-  /** Schema for JavaEntity - JPA entity class from COBOL data structure
-    *
-    * Returned by: JavaTransformerAgent.generateEntity
-    *
-    * Converts COBOL DATA DIVISION variables to Java entity fields
-    */
   val javaEntity: String =
-    """
-      |{
-      |  "className": "string (CamelCase class name, e.g., CustomerRecord)",
-      |  "packageName": "string (Java package, e.g., com.example.customer.entity)",
-      |  "fields": [
-      |    {
-      |      "name": "string (camelCase field name, e.g., customerId)",
-      |      "javaType": "string (Integer | Long | String | BigDecimal | etc.)",
-      |      "cobolSource": "string (original COBOL field name or PIC clause)",
-      |      "annotations": [
-      |        "string (e.g., @Id, @Column(length = 30), @NotNull)"
-      |      ]
-      |    }
-      |  ],
-      |  "annotations": [
-      |    "string (class-level annotations: @Entity, @Table(name = \"...\"))"
-      |  ],
-      |  "sourceCode": "string (full Java class source)"
-      |}
-      |""".stripMargin
+    """|{
+       |  "className": "string", "packageName": "string",
+       |  "fields": [{ "name": "string", "javaType": "string", "cobolSource": "string", "annotations": ["string"] }],
+       |  "annotations": ["string"], "sourceCode": "string"
+       |}""".stripMargin
 
-  /** Schema for JavaService - Spring service class from COBOL procedures
-    *
-    * Returned by: JavaTransformerAgent.generateService
-    *
-    * Converts COBOL PROCEDURE DIVISION to Spring service methods
-    */
   val javaService: String =
-    """
-      |{
-      |  "name": "string (Service class name, e.g., CustomerService)",
-      |  "methods": [
-      |    {
-      |      "name": "string (camelCase method name, e.g., creditCheck)",
-      |      "returnType": "string (Java return type: void | String | etc.)",
-      |      "parameters": [
-      |        {
-      |          "name": "string (parameter name)",
-      |          "javaType": "string (parameter type)"
-      |        }
-      |      ],
-      |      "body": "string (method implementation as Java code)"
-      |    }
-      |  ]
-      |}
-      |""".stripMargin
+    """|{
+       |  "name": "string",
+       |  "methods": [{ "name": "string", "returnType": "string", "parameters": [{ "name": "string", "javaType": "string" }], "body": "string" }]
+       |}""".stripMargin
 
-  /** Schema for JavaController - REST controller from COBOL program entry points
-    *
-    * Returned by: JavaTransformerAgent.generateController
-    *
-    * Creates REST API endpoints for COBOL program execution
-    */
   val javaController: String =
-    """
-      |{
-      |  "name": "string (Controller class name, e.g., CustomerController)",
-      |  "basePath": "string (base API path, e.g., /api/customer)",
-      |  "endpoints": [
-      |    {
-      |      "path": "string (endpoint path, e.g., /process or /{id})",
-      |      "method": "string (GET | POST | PUT | DELETE | PATCH)",
-      |      "methodName": "string (handler method name, e.g., processCustomer)"
-      |    }
-      |  ]
-      |}
-      |""".stripMargin
+    """|{
+       |  "name": "string", "basePath": "string",
+       |  "endpoints": [{ "path": "string", "method": "string (GET | POST | PUT | DELETE | PATCH)", "methodName": "string" }]
+       |}""".stripMargin
 
-  /** Schema for SemanticValidation - AI semantic equivalence validation
-    *
-    * Returned by: ValidationAgent semantic validation prompt
-    */
   val semanticValidation: String =
-    """
-      |{
-      |  "businessLogicPreserved": "boolean (true if Java logic preserves COBOL behavior)",
-      |  "confidence": "number (0.0-1.0 confidence score)",
-      |  "summary": "string (short explanation of semantic validation result)",
-      |  "issues": [
-      |    {
-      |      "severity": "string (ERROR | WARNING | INFO)",
-      |      "category": "string (Semantic | Coverage | StaticAnalysis | Compile | Convention)",
-      |      "message": "string (issue description)",
-      |      "file": "string? (optional filename)",
-      |      "line": "number? (optional line number)",
-      |      "suggestion": "string? (recommended remediation)"
-      |    }
-      |  ]
-      |}
-      |""".stripMargin
+    """|{
+       |  "businessLogicPreserved": "boolean", "confidence": "number (0.0-1.0)", "summary": "string",
+       |  "issues": [{ "severity": "string (ERROR | WARNING | INFO)", "category": "string", "message": "string", "file": "string?", "line": "number?", "suggestion": "string?" }]
+       |}""".stripMargin
 
-  /** Schema for ValidationReport - code quality and correctness validation
-    *
-    * Returned by: ValidationAgent
-    *
-    * Contains compile result, coverage metrics, semantic validation, and issue classifications
-    */
   val validationReport: String =
-    """
-      |{
-      |  "projectName": "string (Spring Boot project name)",
-      |  "validatedAt": "string (ISO-8601 timestamp)",
-      |  "compileResult": {
-      |    "success": "boolean",
-      |    "exitCode": "number",
-      |    "output": "string (truncated compile output)"
-      |  },
-      |  "coverageMetrics": {
-      |    "variablesCovered": "number (percentage 0.0-100.0)",
-      |    "proceduresCovered": "number (percentage 0.0-100.0)",
-      |    "fileSectionCovered": "number (percentage 0.0-100.0)",
-      |    "unmappedItems": ["string (COBOL variables/procedures not mapped)"]
-      |  },
-      |  "issues": [
-      |    {
-      |      "severity": "string (ERROR | WARNING | INFO)",
-      |      "category": "string (Compile | Coverage | StaticAnalysis | Semantic | Convention)",
-      |      "message": "string",
-      |      "file": "string?",
-      |      "line": "number?",
-      |      "suggestion": "string?"
-      |    }
-      |  ],
-      |  "semanticValidation": {
-      |    "businessLogicPreserved": "boolean",
-      |    "confidence": "number (0.0-1.0)",
-      |    "summary": "string",
-      |    "issues": ["ValidationIssue objects with semantic findings"]
-      |  },
-      |  "overallStatus": "string (Passed | PassedWithWarnings | Failed)"
-      |}
-      |""".stripMargin
+    """|{
+       |  "projectName": "string", "validatedAt": "string (ISO-8601)",
+       |  "compileResult": { "success": "boolean", "exitCode": "number", "output": "string" },
+       |  "coverageMetrics": { "variablesCovered": "number", "proceduresCovered": "number", "fileSectionCovered": "number", "unmappedItems": ["string"] },
+       |  "issues": [{ "severity": "string", "category": "string", "message": "string", "file": "string?", "line": "number?", "suggestion": "string?" }],
+       |  "semanticValidation": { "businessLogicPreserved": "boolean", "confidence": "number", "summary": "string", "issues": [] },
+       |  "overallStatus": "string (Passed | PassedWithWarnings | Failed)"
+       |}""".stripMargin
 
-  /** Schema for TestResults - generated testing summary
-    *
-    * Returned by: ValidationAgent test-generation prompt
-    */
   val testResults: String =
-    """
-      |{
-      |  "totalTests": "number (count of all generated tests)",
-      |  "passed": "number (count of passing tests)",
-      |  "failed": "number (count of failing tests)"
-      |}
-      |""".stripMargin
+    """{ "totalTests": "number", "passed": "number", "failed": "number" }"""
 
-  /** Schema for ValidationIssue - reusable issue format
-    */
   val validationIssue: String =
-    """
-      |{
-      |  "severity": "string (ERROR | WARNING | INFO)",
-      |  "category": "string (Compile | Coverage | StaticAnalysis | Semantic | Convention)",
-      |  "message": "string",
-      |  "file": "string?",
-      |  "line": "number?",
-      |  "suggestion": "string?"
-      |}
-      |""".stripMargin
+    """{ "severity": "string", "category": "string", "message": "string", "file": "string?", "line": "number?", "suggestion": "string?" }"""
 
-  /** Schema for ValidationStatus - overall validation status enum
-    */
   val validationStatus: String =
-    """
-      |{
-      |  "value": "string (Passed | PassedWithWarnings | Failed)"
-      |}
-      |""".stripMargin
+    """{ "value": "string (Passed | PassedWithWarnings | Failed)" }"""
 
-  /** Schema for FileInventory - COBOL discovery inventory output
-    *
-    * Returned by: CobolDiscoveryAgent
-    *
-    * Contains file metadata and summary counts for discovery
-    */
   val fileInventory: String =
-    """
-      |{
-      |  "discoveredAt": "string (ISO-8601 timestamp)",
-      |  "sourceDirectory": "string (absolute source directory path)",
-      |  "files": [
-      |    {
-      |      "path": "string (absolute file path)",
-      |      "name": "string (filename with extension)",
-      |      "size": "number (bytes)",
-      |      "lineCount": "number",
-      |      "lastModified": "string (ISO-8601 timestamp)",
-      |      "encoding": "string (UTF-8 | EBCDIC)",
-      |      "fileType": "string (Program | Copybook | JCL)"
-      |    }
-      |  ],
-      |  "summary": {
-      |    "totalFiles": "number",
-      |    "programFiles": "number",
-      |    "copybooks": "number",
-      |    "jclFiles": "number",
-      |    "totalLines": "number",
-      |    "totalBytes": "number"
-      |  }
-      |}
-      |""".stripMargin
+    """|{
+       |  "discoveredAt": "string (ISO-8601)", "sourceDirectory": "string",
+       |  "files": [{ "path": "string", "name": "string", "size": "number", "lineCount": "number", "lastModified": "string", "encoding": "string", "fileType": "string" }],
+       |  "summary": { "totalFiles": "number", "programFiles": "number", "copybooks": "number", "jclFiles": "number", "totalLines": "number", "totalBytes": "number" }
+       |}""".stripMargin
 
-  /** Schema for MigrationDocumentation - comprehensive migration documentation
-    *
-    * Returned by: DocumentationAgent
-    *
-    * Contains technical design, API docs, data mappings, summary, and deployment guide
-    */
   val migrationDocumentation: String =
-    """
-      |{
-      |  "generatedAt": "string (ISO-8601 timestamp)",
-      |  "summaryReport": "string (Markdown-formatted migration summary report)",
-      |  "designDocument": "string (Markdown-formatted technical design document)",
-      |  "apiDocumentation": "string (Markdown-formatted API reference documentation)",
-      |  "dataMappingReference": "string (Markdown-formatted COBOL to Java data mappings)",
-      |  "deploymentGuide": "string (Markdown-formatted deployment instructions)",
-      |  "diagrams": [
-      |    {
-      |      "name": "string (diagram filename without extension)",
-      |      "diagramType": "string (Mermaid | PlantUML)",
-      |      "content": "string (diagram source text)"
-      |    }
-      |  ]
-      |}
-      |""".stripMargin
+    """|{
+       |  "generatedAt": "string (ISO-8601)", "summaryReport": "string", "designDocument": "string",
+       |  "apiDocumentation": "string", "dataMappingReference": "string", "deploymentGuide": "string",
+       |  "diagrams": [{ "name": "string", "diagramType": "string (Mermaid | PlantUML)", "content": "string" }]
+       |}""".stripMargin
 
-  /** Schema for BusinessLogicExtraction - extracted business purpose, use cases and rules
-    *
-    * Returned by: BusinessLogicExtractorAgent
-    */
   val businessLogicExtraction: String =
-    """
-      |{
-      |  "fileName": "string (COBOL source filename)",
-      |  "businessPurpose": "string (1-2 sentence business goal)",
-      |  "useCases": [
-      |    {
-      |      "name": "string (business operation name)",
-      |      "trigger": "string (what initiates operation)",
-      |      "description": "string (what this operation does)",
-      |      "keySteps": ["string (ordered business steps)"]
-      |    }
-      |  ],
-      |  "rules": [
-      |    {
-      |      "category": "string (DataValidation | BusinessLogic | Authorization | DataIntegrity | Other)",
-      |      "description": "string (rule description)",
-      |      "condition": "string? (when rule applies)",
-      |      "errorCode": "string? (error code or message key)",
-      |      "suggestion": "string? (recommended remediation)"
-      |    }
-      |  ],
-      |  "summary": "string (short executive summary)"
-      |}
-      |""".stripMargin
+    """|{
+       |  "fileName": "string", "businessPurpose": "string",
+       |  "useCases": [{ "name": "string", "trigger": "string", "description": "string", "keySteps": ["string"] }],
+       |  "rules": [{ "category": "string", "description": "string", "condition": "string?", "errorCode": "string?", "suggestion": "string?" }],
+       |  "summary": "string"
+       |}""".stripMargin
 
-  /** Map of case class names to their schema definitions
-    *
-    * Allows lookup by class name for dynamic schema reference generation
-    */
   val schemaMap: Map[String, String] = Map(
     "CobolAnalysis"           -> cobolAnalysis,
     "DependencyGraph"         -> dependencyGraph,
@@ -382,13 +344,6 @@ object OutputSchemas:
     "BusinessLogicExtraction" -> businessLogicExtraction,
   )
 
-  /** Get schema by case class name with error handling
-    *
-    * @param className
-    *   Name of the case class (e.g., "CobolAnalysis")
-    * @return
-    *   Schema string if found, or a default message if not found
-    */
   def getSchema(className: String): String =
     schemaMap.getOrElse(
       className,

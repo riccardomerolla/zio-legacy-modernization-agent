@@ -8,7 +8,7 @@ import zio.json.ast.Json
 
 import core.{ AIService, FileService, Logger, ResponseParser }
 import models.*
-import prompts.ValidationPrompts
+import prompts.{ OutputSchemas, ValidationPrompts }
 
 /** ValidationAgent - Validate generated Spring Boot code for correctness
   *
@@ -252,9 +252,10 @@ object ValidationAgent:
                 Logger.debug(
                   s"Running semantic validation for ${project.projectName}: cobolChars=${cobolSource.length}, javaChars=${javaCode.length}, promptChars=${prompt.length}"
                 )
+              schema      = OutputSchemas.jsonSchemaMap("SemanticValidation")
               response   <-
                 aiService
-                  .execute(prompt)
+                  .executeStructured(prompt, schema)
                   .tap(resp =>
                     Logger.debug(
                       s"Semantic AI response for ${project.projectName}: outputChars=${resp.output.length}, metadata=${resp.metadata.keys.mkString(",")}"

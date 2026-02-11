@@ -27,8 +27,7 @@ object DependencyMapperPrompts:
     """You are an expert in COBOL program dependency analysis and architecture mapping.
       |Your role is to build accurate dependency graphs from COBOL analysis data.
       |
-      |CRITICAL REQUIREMENTS:
-      |- Always respond with valid JSON only, no markdown, no explanations
+      |REQUIREMENTS:
       |- Identify ALL COPY statements as Include edges
       |- Identify ALL CALL statements as Call edges
       |- Calculate node complexity accurately
@@ -57,14 +56,6 @@ object DependencyMapperPrompts:
        |
        |${PromptHelpers.schemaReference("DependencyGraph")}
        |
-       |${PromptHelpers.validationRules(
-        List(
-          "nodes (must include all programs and copybooks)",
-          "edges (must capture all COPY and CALL relationships)",
-          "serviceCandidates (copybooks used by 3+ programs)",
-        )
-      )}
-       |
        |$fewShotExamples
        |
        |Build the graph:
@@ -84,7 +75,6 @@ object DependencyMapperPrompts:
        |   - If copybook is used by 3 or more programs, add to serviceCandidates
        |   - These represent shared data structures that should become shared services
        |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Format analysis summary for inclusion in prompt

@@ -27,8 +27,7 @@ object ValidationPrompts:
     """You are an expert in Java test generation and code validation.
       |Your role is to generate comprehensive tests that verify business logic preservation.
       |
-      |CRITICAL REQUIREMENTS:
-      |- Always respond with valid JSON only, no markdown, no explanations
+      |REQUIREMENTS:
       |- Generate JUnit 5 tests with modern patterns (@Test, assertions)
       |- Cover all business logic paths from original COBOL
       |- Use meaningful test names (should_returnApproved_when_balanceExceeds1000)
@@ -79,9 +78,6 @@ object ValidationPrompts:
        |5. Use descriptive test names following pattern: methodName_should_expectedBehavior_when_condition
        |6. Mock dependencies with @Mock and @InjectMocks
        |
-       |Output format: Return JSON with test class structure and test methods.
-       |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Validate transformation correctness
@@ -129,8 +125,6 @@ object ValidationPrompts:
        |7. Business logic is functionally equivalent
        |
        |Output: SemanticValidation with businessLogicPreserved true/false and classified issues.
-       |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Format method for prompt inclusion

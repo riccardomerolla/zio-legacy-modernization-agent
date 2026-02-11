@@ -9,7 +9,7 @@ import zio.stream.*
 
 import core.{ AIService, FileService, Logger, ResponseParser }
 import models.*
-import prompts.{ PromptHelpers, PromptTemplates }
+import prompts.{ OutputSchemas, PromptHelpers, PromptTemplates }
 
 /** CobolAnalyzerAgent - Deep structural analysis of COBOL programs using AI
   *
@@ -110,10 +110,11 @@ object CobolAnalyzerAgent:
                    |""".stripMargin
               case None      => prompt
 
-            val call =
+            val schema = OutputSchemas.jsonSchemaMap("CobolAnalysis")
+            val call   =
               for
                 response  <- aiService
-                               .execute(enrichedPrompt)
+                               .executeStructured(enrichedPrompt, schema)
                                .mapError(e => AnalysisError.AIFailed(cobolFile.name, e.message))
                 parsed    <- parseAnalysis(response, cobolFile)
                 validated <- validateAnalysis(parsed, cobolFile, attempt, maxAttempts)

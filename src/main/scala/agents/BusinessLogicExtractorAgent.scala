@@ -7,7 +7,7 @@ import zio.json.*
 
 import core.{ AIService, FileService, Logger, ResponseParser }
 import models.*
-import prompts.PromptTemplates
+import prompts.{ OutputSchemas, PromptTemplates }
 
 /** BusinessLogicExtractorAgent - Extract business purpose, use cases, and rules from COBOL analyses.
   */
@@ -40,8 +40,9 @@ object BusinessLogicExtractorAgent:
             for
               _        <- Logger.info(s"Extracting business logic from ${analysis.file.name}")
               prompt    = PromptTemplates.BusinessLogicExtractor.extractBusinessLogic(analysis)
+              schema    = OutputSchemas.jsonSchemaMap("BusinessLogicExtraction")
               response <- aiService
-                            .execute(prompt)
+                            .executeStructured(prompt, schema)
                             .mapError(err => BusinessLogicExtractionError.AIFailed(analysis.file.name, err.message))
               parsed   <- responseParser
                             .parse[BusinessLogicExtraction](response)

@@ -3,6 +3,7 @@ package core
 import java.nio.file.Paths
 
 import zio.*
+import zio.json.ast.Json
 import zio.test.*
 import zio.test.Assertion.*
 
@@ -421,6 +422,28 @@ object AIServiceSpec extends ZIOSpecDefault:
                           ZLayer.succeed(config),
                         )
         yield assertTrue(response.output == "gemini-api-ok")
+      },
+      test("executeStructured delegates through fromConfig") {
+        val config = AIProviderConfig(
+          provider = AIProvider.OpenAi,
+          model = "gpt-test",
+          baseUrl = Some("http://lmstudio.local/v1"),
+          apiKey = Some("test-key"),
+          maxRetries = 0,
+        )
+        val body   =
+          """{"choices":[{"index":0,"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}],"model":"gpt-test"}"""
+        val schema = ResponseSchema("TestSchema", Json.Obj("type" -> Json.Str("object")))
+        for
+          response <- AIService
+                        .executeStructured("test", schema)
+                        .provide(
+                          AIService.fromConfig,
+                          mockHttpClient((url, _) => if url.endsWith("/chat/completions") then body else "{}"),
+                          rateLimiterFor(config),
+                          ZLayer.succeed(config),
+                        )
+        yield assertTrue(response.output.contains("ok"))
       },
     ),
   )

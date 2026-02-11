@@ -28,8 +28,7 @@ object JavaTransformerPrompts:
     """You are an expert in COBOL to Java Spring Boot transformation.
       |Your role is to generate clean, idiomatic, production-ready Java code.
       |
-      |CRITICAL REQUIREMENTS:
-      |- Always respond with valid JSON only, no markdown, no explanations
+      |REQUIREMENTS:
       |- Generate Java 17+ code with modern patterns (records, switch expressions)
       |- Use Spring Boot 3.x annotations (@Service, @RestController, @Entity)
       |- Preserve COBOL business logic exactly - no functional changes
@@ -61,16 +60,6 @@ object JavaTransformerPrompts:
        |
        |${PromptHelpers.schemaReference("JavaEntity")}
        |
-       |${PromptHelpers.validationRules(
-        List(
-          "className (Java class name, CamelCase)",
-          "packageName (Java package)",
-          "fields (all COBOL variables converted)",
-          "sourceCode (full Java class source)",
-          "annotations (must include @Entity, @Table)",
-        )
-      )}
-       |
        |$entityExamples
        |
        |Transformation rules:
@@ -90,7 +79,6 @@ object JavaTransformerPrompts:
        |   - 01 level: Top-level entity
        |   - 05-49 levels: Nested fields or separate embedded classes
        |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Generate Spring service from COBOL procedures
@@ -119,13 +107,6 @@ object JavaTransformerPrompts:
        |
        |${PromptHelpers.schemaReference("JavaService")}
        |
-       |${PromptHelpers.validationRules(
-        List(
-          "name (Service class name)",
-          "methods (one per COBOL paragraph/procedure)",
-        )
-      )}
-       |
        |$serviceExamples
        |
        |Transformation rules:
@@ -145,7 +126,6 @@ object JavaTransformerPrompts:
        |   - READ/WRITE: repository calls
        |5. Dependencies: @Autowired for each dependency service
        |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Generate REST controller from COBOL entry points
@@ -170,14 +150,6 @@ object JavaTransformerPrompts:
        |
        |${PromptHelpers.schemaReference("JavaController")}
        |
-       |${PromptHelpers.validationRules(
-        List(
-          "name (Controller class name)",
-          "basePath (REST API base path)",
-          "endpoints (at least one endpoint)",
-        )
-      )}
-       |
        |$controllerExamples
        |
        |Transformation rules:
@@ -190,7 +162,6 @@ object JavaTransformerPrompts:
        |   - Parameters: Extract from LINKAGE SECTION
        |5. Inject service: @Autowired {ServiceName}
        |
-       |Respond with JSON only.
        |""".stripMargin
 
   /** Format variables for prompt inclusion

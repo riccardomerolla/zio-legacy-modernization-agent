@@ -29,58 +29,22 @@ object CobolAnalyzerPrompts:
       |including CICS, VSAM, and DB2 programs.
       |Your role is to perform precise structural analysis of COBOL programs.
       |
-      |Analyze the provided COBOL program and provide a detailed, structured analysis that includes:
-      |
-      |1. Overall program description
-      |2. Data divisions and their purpose
-      |3. Procedure divisions and their purpose
-      |4. Variables (name, level, type, size, group structure)
-      |5. Paragraphs/sections (name, description, logic, variables used, paragraphs called)
-      |6. Copybooks referenced
-      |7. File access (file name, mode, verbs used, status variable, FD linkage)
-      |8. Any embedded SQL or DB2 statements (type, purpose, variables used)
-      |9. Any embedded CICS statements (type, purpose, variables used)
-      |
-      |Your analysis should be structured in a way that can be easily parsed by a Java conversion system.
-      |
-      |
-      |🚨 CRITICAL RESPONSE FORMAT:
-      |- Your response MUST be a SINGLE JSON OBJECT starting with '{' and ending with '}'
-      |- DO NOT return a JSON ARRAY [...] — we need ONE object {...} for ONE COBOL file
-      |- NO markdown code blocks (```) — return raw JSON only
-      |- NO explanations before or after the JSON
-      |- Start your response with '{' (opening brace) immediately
-      |
-      |CRITICAL REQUIREMENTS:
-      |- Always respond with valid, complete JSON only — no markdown, no explanations, no trailing text
-      |- The JSON response MUST be well-formed: every opening brace/bracket must have a matching closing brace/bracket
-      |- Do NOT truncate the output — return the entire JSON object even if it is large
-      |- Verify that your JSON is syntactically valid before responding
+      |ANALYSIS RULES:
       |- Extract ALL variables, procedures, and copybook references
-      |- Calculate accurate complexity metrics
+      |- Calculate accurate complexity metrics (decision points: IF, EVALUATE, PERFORM UNTIL)
       |- Identify all control flow statements (IF, PERFORM, GOTO, EVALUATE)
       |- Parse PIC clauses correctly for data types
       |- Handle CICS programs: EXEC CICS statements are statement type "EXEC-CICS"
-      |- Handle level 77 variables (independent items) — they have their own level number
-      |- Handle level 88 condition names
-      |- The "divisions" field MUST be a JSON object (not an array)
-      |- The "copybooks" field MUST be a flat array of strings (not objects)
-      |- Every variable MUST include "level" (int), "dataType" (string), and "name" (string)
-      |- Every statement MUST include "lineNumber" (int), "statementType" (string), and "content" (string with the full COBOL statement text)
+      |- Handle level 77 variables (independent items) and level 88 condition names
       |
-      |CRITICAL - DIVISIONS FORMAT:
-      |- The "divisions" object values MUST be plain COBOL text strings, NOT nested JSON objects
-      |- DO NOT structure divisions as JSON objects with keys like {"programId": "...", ...}
-      |- DO NOT structure divisions as JSON with {"paragraphs": [], "statements": [], ...}
-      |- Instead, each division value should be the RAW COBOL text from that division
+      |DIVISIONS FORMAT:
+      |- The "divisions" values MUST be plain COBOL text strings, NOT nested JSON objects
       |- Example: "identification": "PROGRAM-ID. ZBANK. AUTHOR. JOHN DOE."
-      |- Example: "procedure": "MOVE X TO Y. IF A = B THEN..." (raw text, not structured JSON)
       |
-      |CRITICAL - DATA EXTRACTION:
-      |- Variables MUST be extracted to the TOP-LEVEL "variables" array, NOT embedded in divisions
-      |- Procedures MUST be extracted to the TOP-LEVEL "procedures" array, NOT embedded in divisions
-      |- For programs without named paragraphs (inline code), create a procedure named "MAIN-LOGIC" or "PROCEDURE-DIVISION"
-      |- ALL statements must be in the procedures[].statements array
+      |DATA EXTRACTION:
+      |- Variables MUST be in the top-level "variables" array, NOT embedded in divisions
+      |- Procedures MUST be in the top-level "procedures" array, NOT embedded in divisions
+      |- For programs without named paragraphs, create a procedure named "MAIN-LOGIC" or "PROCEDURE-DIVISION"
       |
       |TEMPLATE_VERSION: 1.1.0
       |""".stripMargin
@@ -125,16 +89,6 @@ object CobolAnalyzerPrompts:
        |
        |${PromptHelpers.schemaReference("CobolAnalysis")}
        |
-       |${PromptHelpers.validationRules(
-        List(
-          "divisions",
-          "variables",
-          "procedures",
-          "copybooks",
-          "complexity",
-        )
-      )}
-       |
        |$fewShotExamples
        |
        |Extract:
@@ -157,26 +111,6 @@ object CobolAnalyzerPrompts:
        |   - linesOfCode: Total non-comment lines
        |   - numberOfProcedures: Count of paragraphs/sections
        |
-       |━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-       |🎯 YOUR RESPONSE FORMAT:
-       |━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-       |
-       |Return a SINGLE JSON OBJECT (not an array):
-       |
-       |{
-       |  "file": {...},
-       |  "divisions": {...},
-       |  "variables": [...],
-       |  "procedures": [...],
-       |  "copybooks": [...],
-       |  "complexity": {...}
-       |}
-       |
-       |⚠️  Start with '{' — NOT with '['
-       |⚠️  End with '}' — NOT with ']'
-       |⚠️  ONE object for ONE file
-       |
-       |Respond with the JSON object now (no markdown, no array, no explanation).
        |""".stripMargin
 
   /** Analyze large COBOL file using division-based chunking
@@ -212,16 +146,6 @@ object CobolAnalyzerPrompts:
        |
        |${PromptHelpers.schemaReference("CobolAnalysis")}
        |
-       |${PromptHelpers.validationRules(
-        List(
-          "divisions",
-          "variables",
-          "procedures",
-          "copybooks",
-          "complexity",
-        )
-      )}
-       |
        |Extract from each division:
        |1. IDENTIFICATION: program-id, author, date-written
        |2. ENVIRONMENT: file controls, special-names
@@ -231,27 +155,6 @@ object CobolAnalyzerPrompts:
        |6. Calculate overall complexity metrics
        |
        |Combine analysis across all divisions into one complete CobolAnalysis JSON response.
-       |
-       |━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-       |🎯 YOUR RESPONSE FORMAT:
-       |━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-       |
-       |Return a SINGLE JSON OBJECT (not an array):
-       |
-       |{
-       |  "file": {...},
-       |  "divisions": {...},
-       |  "variables": [...],
-       |  "procedures": [...],
-       |  "copybooks": [...],
-       |  "complexity": {...}
-       |}
-       |
-       |⚠️  Start with '{' — NOT with '['
-       |⚠️  End with '}' — NOT with ']'
-       |⚠️  ONE object for ONE file
-       |
-       |Respond with the JSON object now (no markdown, no array, no explanation).
        |""".stripMargin
 
   private val fewShotExamples =
