@@ -98,6 +98,7 @@ object ApplicationDI:
       SettingsController.live,
       AgentsController.live,
       ChatRepository.live.mapError(_ => new RuntimeException("chat repository initialization failed")).orDie,
+      AgentConfigResolver.live,
       IssueAssignmentOrchestrator.live,
       ChatController.live,
       WebServer.live,
