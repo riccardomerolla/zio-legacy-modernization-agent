@@ -18,20 +18,20 @@ object IssueAssignmentOrchestrator:
     ZIO.serviceWithZIO[IssueAssignmentOrchestrator](_.assignIssue(issueId, agentName))
 
   val live
-    : ZLayer[ChatRepository & MigrationRepository & AIService & AIProviderConfig, Nothing, IssueAssignmentOrchestrator] =
+    : ZLayer[ChatRepository & MigrationRepository & AIService & AgentConfigResolver, Nothing, IssueAssignmentOrchestrator] =
     ZLayer.scoped {
       for
         chatRepository      <- ZIO.service[ChatRepository]
         migrationRepository <- ZIO.service[MigrationRepository]
         aiService           <- ZIO.service[AIService]
-        defaultProviderCfg  <- ZIO.service[AIProviderConfig]
+        configResolver      <- ZIO.service[AgentConfigResolver]
         queue               <- Queue.unbounded[AssignmentTask]
         service              =
           IssueAssignmentOrchestratorLive(
             chatRepository,
             migrationRepository,
             aiService,
-            defaultProviderCfg,
+            configResolver,
             queue,
           )
         _                   <- service.processQueue.forever.forkScoped
@@ -48,7 +48,7 @@ final private case class IssueAssignmentOrchestratorLive(
   chatRepository: ChatRepository,
   migrationRepository: MigrationRepository,
   aiService: AIService,
-  defaultProviderCfg: AIProviderConfig,
+  configResolver: AgentConfigResolver,
   queue: Queue[AssignmentTask],
 ) extends IssueAssignmentOrchestrator:
 
@@ -148,11 +148,7 @@ final private case class IssueAssignmentOrchestratorLive(
                             updatedAt = now,
                           )
                         )
-      settings       <- migrationRepository
-                          .getAllSettings
-                          .map(_.map(s => s.key -> s.value).toMap)
-                          .catchAll(_ => ZIO.succeed(Map.empty[String, String]))
-      aiConfig        = resolveAIProviderConfig(settings)
+      aiConfig       <- configResolver.resolveConfig(agentName)
       aiResponse     <- aiService
                           .executeWithConfig(prompt, aiConfig)
                           .mapError(err => PersistenceError.QueryFailed("ai_service", err.message))
@@ -174,54 +170,6 @@ final private case class IssueAssignmentOrchestratorLive(
                           .someOrFail(PersistenceError.NotFound("conversation", conversationId))
       _              <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
     yield ()
-
-  private def resolveAIProviderConfig(settings: Map[String, String]): AIProviderConfig =
-    val provider = settings
-      .get("ai.provider")
-      .flatMap(parseProvider)
-      .getOrElse(defaultProviderCfg.provider)
-
-    AIProviderConfig.withDefaults(
-      defaultProviderCfg.copy(
-        provider = provider,
-        model = settings.get("ai.model").filter(_.nonEmpty).getOrElse(defaultProviderCfg.model),
-        baseUrl = settings
-          .get("ai.baseUrl")
-          .filter(_.nonEmpty)
-          .orElse(AIProvider.defaultBaseUrl(provider))
-          .orElse(defaultProviderCfg.baseUrl),
-        apiKey = settings.get("ai.apiKey").filter(_.nonEmpty).orElse(defaultProviderCfg.apiKey),
-        timeout = settings
-          .get("ai.timeout")
-          .flatMap(_.toLongOption)
-          .map(Duration.fromSeconds)
-          .getOrElse(defaultProviderCfg.timeout),
-        maxRetries = settings
-          .get("ai.maxRetries")
-          .flatMap(_.toIntOption)
-          .getOrElse(defaultProviderCfg.maxRetries),
-        requestsPerMinute = settings
-          .get("ai.requestsPerMinute")
-          .flatMap(_.toIntOption)
-          .getOrElse(defaultProviderCfg.requestsPerMinute),
-        burstSize = settings.get("ai.burstSize").flatMap(_.toIntOption).getOrElse(defaultProviderCfg.burstSize),
-        acquireTimeout = settings
-          .get("ai.acquireTimeout")
-          .flatMap(_.toLongOption)
-          .map(Duration.fromSeconds)
-          .getOrElse(defaultProviderCfg.acquireTimeout),
-        temperature = settings.get("ai.temperature").flatMap(_.toDoubleOption).orElse(defaultProviderCfg.temperature),
-        maxTokens = settings.get("ai.maxTokens").flatMap(_.toIntOption).orElse(defaultProviderCfg.maxTokens),
-      )
-    )
-
-  private def parseProvider(value: String): Option[AIProvider] =
-    value.trim match
-      case "GeminiCli" => Some(AIProvider.GeminiCli)
-      case "GeminiApi" => Some(AIProvider.GeminiApi)
-      case "OpenAi"    => Some(AIProvider.OpenAi)
-      case "Anthropic" => Some(AIProvider.Anthropic)
-      case _           => None
 
   private def ensureIssueConversation(issue: AgentIssue, agentName: String): IO[PersistenceError, AgentIssue] =
     issue.conversationId match
