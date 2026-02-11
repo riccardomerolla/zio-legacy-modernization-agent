@@ -445,26 +445,27 @@ final case class MigrationRepositoryLive(
 
   private def ensureAgentIssueColumns(conn: Connection): IO[PersistenceError, Unit] =
     for
-      info <- readAgentIssueColumns(conn)
-      _    <- if info.exists(c => c._1 == "run_id" && c._3 == 1) then rebuildAgentIssuesTable(conn) else ZIO.unit
-      now  <- readAgentIssueColumns(conn)
+      info          <- readAgentIssueColumns(conn)
+      _             <- if info.exists(c => c._1 == "run_id" && c._3 == 1) then rebuildAgentIssuesTable(conn) else ZIO.unit
+      now           <- readAgentIssueColumns(conn)
       missingColumns = List(
-                         "tags" -> "TEXT",
+                         "tags"            -> "TEXT",
                          "preferred_agent" -> "TEXT",
-                         "context_path" -> "TEXT",
-                         "source_folder" -> "TEXT",
+                         "context_path"    -> "TEXT",
+                         "source_folder"   -> "TEXT",
                        ).filterNot { case (name, _) => now.exists(_._1 == name) }
-      _    <- ZIO.foreachDiscard(missingColumns) { case (name, ddl) =>
-                val alterSql = s"ALTER TABLE agent_issues ADD COLUMN $name $ddl"
-                withStatement(conn, alterSql)(stmt => executeBlocking(alterSql)(stmt.execute(alterSql)).unit)
-              }
+      _             <- ZIO.foreachDiscard(missingColumns) {
+                         case (name, ddl) =>
+                           val alterSql = s"ALTER TABLE agent_issues ADD COLUMN $name $ddl"
+                           withStatement(conn, alterSql)(stmt => executeBlocking(alterSql)(stmt.execute(alterSql)).unit)
+                       }
     yield ()
 
   private def readAgentIssueColumns(conn: Connection): IO[PersistenceError, List[(String, String, Int)]] =
     val pragmaSql = "PRAGMA table_info(agent_issues)"
     withStatement(conn, pragmaSql) { stmt =>
-      ZIO.acquireReleaseWith(executeBlocking(pragmaSql)(stmt.executeQuery(pragmaSql)))(
-        rs => executeBlocking(pragmaSql)(rs.close()).ignore
+      ZIO.acquireReleaseWith(executeBlocking(pragmaSql)(stmt.executeQuery(pragmaSql)))(rs =>
+        executeBlocking(pragmaSql)(rs.close()).ignore
       ) { rs =>
         def loop(acc: List[(String, String, Int)]): IO[PersistenceError, List[(String, String, Int)]] =
           executeBlocking(pragmaSql)(rs.next()).flatMap {

@@ -89,6 +89,7 @@ object ApplicationDI:
   def webServerLayer(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
     ZLayer.make[WebServer](
       commonLayers(config, dbPath),
+      ZLayer.succeed(config.resolvedProviderConfig),
       MigrationOrchestrator.live,
       RunsController.live,
       AnalysisController.live,
@@ -96,6 +97,7 @@ object ApplicationDI:
       DashboardController.live,
       SettingsController.live,
       ChatRepository.live.mapError(_ => new RuntimeException("chat repository initialization failed")).orDie,
+      IssueAssignmentOrchestrator.live,
       ChatController.live,
       WebServer.live,
     )

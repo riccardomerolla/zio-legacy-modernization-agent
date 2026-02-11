@@ -47,84 +47,84 @@ object ChatView:
       case None        => "/issues"
 
     Layout.page(s"Chat — ${conversation.title}", s"/chat/${conversation.id.get}")(
-      div(cls := "mb-6")(
-        a(
-          href := "/chat",
-          cls  := "text-indigo-400 hover:text-indigo-300 text-sm font-medium mb-4 inline-flex items-center gap-2",
-        )("← Back to Chats"),
-        h1(cls := "text-2xl font-bold text-white mt-2")(conversation.title),
-        if conversation.description.isDefined then
-          p(cls := "text-gray-400 text-sm mt-2")(conversation.description.get)
-        else (),
-      ),
-      div(cls := "grid grid-cols-1 lg:grid-cols-3 gap-6")(
-        // Chat messages area
-        div(cls := "lg:col-span-2")(
-          div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg overflow-hidden flex flex-col h-96")(
-            // Messages list
-            div(
-              id                  := s"messages-${conversation.id.get}",
-              cls                 := "flex-1 overflow-y-auto p-6 space-y-4",
-              attr("hx-get")      := s"/chat/${conversation.id.get}/messages",
-              attr("hx-trigger")  := "load, every 2s",
-              attr("hx-swap")     := "innerHTML",
-            )(
-              raw(messagesFragment(conversation.messages))
-            ),
-            // Message input
-            div(cls := "border-t border-white/10 p-4 bg-white/2")(
-              form(
-                method                           := "post",
-                action                           := s"/chat/${conversation.id.get}/messages",
-                attr("hx-post")                  := s"/chat/${conversation.id.get}/messages",
-                attr("hx-target")                := s"#messages-${conversation.id.get}",
-                attr("hx-swap")                  := "innerHTML",
-                attr("hx-disabled-elt")          := "button[type='submit']",
-                attr("hx-on::after-request")     := "this.reset()",
-                cls                              := "flex gap-2",
-              )(
-                input(`type` := "hidden", name := "fragment", value := "true"),
-                input(
-                  name        := "content",
-                  placeholder := "Type your message...",
-                  cls         := "flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500",
-                  required,
-                ),
-                button(
-                  `type` := "submit",
-                  cls := "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors"
-                )("Send"),
-              )
-            ),
-          )
-        ),
-        // Sidebar with details
-        div(cls := "lg:col-span-1")(
-          div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg p-6 space-y-4")(
-            h3(cls := "text-lg font-semibold text-white")("Conversation Details"),
-            div(
-              div(cls := "text-sm text-gray-400")("Status"),
-              p(cls := "text-white font-medium capitalize")(conversation.status),
-            ),
-            div(
-              div(cls := "text-sm text-gray-400")("Created"),
-              p(cls := "text-white font-medium text-sm")(conversation.createdAt.toString),
-            ),
-            if conversation.messages.nonEmpty then
-              div(
-                div(cls := "text-sm text-gray-400")("Messages"),
-                p(cls := "text-white font-medium")(conversation.messages.length.toString),
-              )
+      div(cls := "flex flex-col min-h-[calc(100vh-9rem)]")(
+        div(cls := "flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-4")(
+          div(cls := "min-w-0")(
+            a(
+              href := "/chat",
+              cls  := "text-indigo-400 hover:text-indigo-300 text-sm font-medium mb-3 inline-flex items-center gap-2",
+            )("← Back to Chats"),
+            h1(cls := "text-2xl font-bold text-white")(conversation.title),
+            if conversation.description.isDefined then
+              p(cls := "text-gray-400 text-sm mt-2")(conversation.description.get)
             else (),
-            div(cls := "pt-4 border-t border-white/10")(
-              a(
-                href := issuesHref,
-                cls  := "inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors w-full justify-center",
-              )("View Related Issues")
+          ),
+          div(cls := "inline-flex flex-wrap items-center gap-2 text-xs self-start lg:justify-end")(
+            span(
+              cls := "inline-flex items-center rounded-md bg-white/5 ring-1 ring-white/10 px-3 py-1.5 text-gray-200"
+            )(
+              span(cls := "text-gray-400 mr-1")("Status:"),
+              span(cls := "font-semibold capitalize")(conversation.status),
             ),
+            span(
+              cls := "inline-flex items-center rounded-md bg-white/5 ring-1 ring-white/10 px-3 py-1.5 text-gray-200"
+            )(
+              span(cls := "text-gray-400 mr-1")("Messages:"),
+              span(cls := "font-semibold")(conversation.messages.length.toString),
+            ),
+            span(
+              cls := "inline-flex items-center rounded-md bg-white/5 ring-1 ring-white/10 px-3 py-1.5 text-gray-200"
+            )(
+              span(cls := "text-gray-400 mr-1")("Created:"),
+              span(cls := "font-semibold")(conversation.createdAt.toString.take(19)),
+            ),
+            a(
+              href := issuesHref,
+              cls  := "inline-flex items-center rounded-md bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 font-semibold transition-colors",
+            )("View Related Issues"),
+          ),
+        ),
+        div(cls := "flex-1 min-h-0 bg-white/5 ring-1 ring-white/10 rounded-lg overflow-hidden flex flex-col")(
+          // Messages list
+          div(
+            id                 := s"messages-${conversation.id.get}",
+            cls                := "flex-1 min-h-0 overflow-y-auto p-6 space-y-4",
+            attr("hx-get")     := s"/chat/${conversation.id.get}/messages",
+            attr("hx-trigger") := "load, every 2s",
+            attr("hx-swap")    := "innerHTML",
+          )(
+            raw(messagesFragment(conversation.messages))
           )
         ),
-      ),
+        // Sticky composer
+        div(
+          cls := "sticky bottom-0 mt-3 rounded-lg bg-gray-900/95 ring-1 ring-white/10 p-3 backdrop-blur"
+        )(
+          form(
+            method                       := "post",
+            action                       := s"/chat/${conversation.id.get}/messages",
+            attr("hx-post")              := s"/chat/${conversation.id.get}/messages",
+            attr("hx-target")            := s"#messages-${conversation.id.get}",
+            attr("hx-swap")              := "innerHTML",
+            attr("hx-disabled-elt")      := "button[type='submit']",
+            attr("hx-on::after-request") := "this.reset()",
+            attr("onsubmit")             := "const i=this.querySelector(\"input[name='content']\");if(i){setTimeout(()=>{i.value='';i.focus();},0);}",
+            cls                          := "flex gap-2",
+          )(
+            input(`type`  := "hidden", name := "fragment", value := "true"),
+            input(
+              name        := "content",
+              placeholder := "Type your message...",
+              cls         := "flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500",
+              required,
+            ),
+            button(
+              `type` := "submit",
+              cls    := "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors",
+            )("Send"),
+          )
+        ),
+      )
     )
 
   def messagesFragment(messages: List[ConversationMessage]): String =
@@ -133,7 +133,7 @@ object ChatView:
     ).render
 
   private def messageCard(message: ConversationMessage): Frag =
-    val isUser = message.senderType == SenderType.User
+    val isUser                                           = message.senderType == SenderType.User
     val (containerClasses, bubbleClasses, senderClasses) =
       if isUser then
         (
@@ -153,13 +153,31 @@ object ChatView:
         div(cls := s"text-xs font-semibold mb-2 $senderClasses")(
           message.sender
         ),
-        pre(
-          cls := "whitespace-pre-wrap break-words text-sm leading-6 text-gray-50 font-sans m-0"
-        )(
-          message.content
-        ),
+        if !isUser && looksLikeMarkdown(message.content) then
+          div(
+            cls := "text-sm leading-6 text-gray-50 [&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_h1]:mt-2 [&_h2]:mt-2 [&_h3]:mt-2"
+          )(
+            IssuesView.markdownFragment(message.content)
+          )
+        else
+          pre(
+            cls := "whitespace-pre-wrap break-words text-sm leading-6 text-gray-50 font-sans m-0"
+          )(
+            message.content
+          ),
       )
     )
+
+  private def looksLikeMarkdown(text: String): Boolean =
+    val lines = text.split("\n").toList
+    lines.exists(_.trim.startsWith("```")) ||
+    lines.exists(line => line.trim.matches("^#{1,6}\\s+.*$")) ||
+    lines.exists(line => line.trim.matches("^[-*+]\\s+.*$")) ||
+    lines.exists(line => line.trim.matches("^\\d+\\.\\s+.*$")) ||
+    lines.exists(_.trim.startsWith(">")) ||
+    text.contains("**") ||
+    text.contains("`") ||
+    text.matches("(?s).*\\[[^\\]]+\\]\\((https?://|/|#)[^)]+\\).*")
 
   private def conversationCard(conv: ChatConversation) =
     a(

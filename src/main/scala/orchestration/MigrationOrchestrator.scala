@@ -893,36 +893,38 @@ object MigrationOrchestrator:
                               dependencyGraph = Some(dependencyGraph),
                             )
 
-          _ <- (if config.dryRun && config.enableBusinessLogicExtractor then
-                  for
-                    _ <- onProgress(
-                           PipelineProgressUpdate(
-                             MigrationStep.Mapping,
-                             "Starting phase: Business Logic Extraction",
-                             50,
-                           )
-                         )
-                    _ <- Logger.info("Starting phase: Business Logic Extraction")
-                    _ <- businessLogicAgent
-                           .extractAll(analyses)
-                           .foldZIO(
-                             err =>
-                               for
-                                 ts <- Clock.instant
-                                 _  <- errorsRef.update(_ :+ MigrationError(MigrationStep.Mapping, err.message, ts))
-                                 _  <- Logger.warn(s"Business Logic Extraction failed: ${err.message}")
-                               yield (),
-                             _ => Logger.info("Completed phase: Business Logic Extraction"),
-                           )
-                    _ <- onProgress(
-                           PipelineProgressUpdate(
-                             MigrationStep.Mapping,
-                             "Completed phase: Business Logic Extraction",
-                             55,
-                           )
-                         )
-                  yield ()
-                else ZIO.unit)
+          _ <- {
+            if config.dryRun && config.enableBusinessLogicExtractor then
+              for
+                _ <- onProgress(
+                       PipelineProgressUpdate(
+                         MigrationStep.Mapping,
+                         "Starting phase: Business Logic Extraction",
+                         50,
+                       )
+                     )
+                _ <- Logger.info("Starting phase: Business Logic Extraction")
+                _ <- businessLogicAgent
+                       .extractAll(analyses)
+                       .foldZIO(
+                         err =>
+                           for
+                             ts <- Clock.instant
+                             _  <- errorsRef.update(_ :+ MigrationError(MigrationStep.Mapping, err.message, ts))
+                             _  <- Logger.warn(s"Business Logic Extraction failed: ${err.message}")
+                           yield (),
+                         _ => Logger.info("Completed phase: Business Logic Extraction"),
+                       )
+                _ <- onProgress(
+                       PipelineProgressUpdate(
+                         MigrationStep.Mapping,
+                         "Completed phase: Business Logic Extraction",
+                         55,
+                       )
+                     )
+              yield ()
+            else ZIO.unit
+          }
 
           // 4) Transformation (skip in dry-run)
           transformed <- runPhase(

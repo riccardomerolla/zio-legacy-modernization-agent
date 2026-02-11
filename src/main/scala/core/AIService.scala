@@ -9,6 +9,9 @@ trait AIService:
 
   def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse]
 
+  def executeWithConfig(prompt: String, config: AIProviderConfig): ZIO[Any, AIError, AIResponse] =
+    execute(prompt)
+
   def isAvailable: ZIO[Any, Nothing, Boolean]
 
 object AIService:
@@ -18,18 +21,36 @@ object AIService:
   def executeWithContext(prompt: String, context: String): ZIO[AIService, AIError, AIResponse] =
     ZIO.serviceWithZIO[AIService](_.executeWithContext(prompt, context))
 
+  def executeWithConfig(prompt: String, config: AIProviderConfig): ZIO[AIService, AIError, AIResponse] =
+    ZIO.serviceWithZIO[AIService](_.executeWithConfig(prompt, config))
+
   def isAvailable: ZIO[AIService, Nothing, Boolean] =
     ZIO.serviceWithZIO[AIService](_.isAvailable)
 
   val fromConfig: ZLayer[AIProviderConfig & RateLimiter & HttpAIClient, AIError, AIService] =
     ZLayer.fromZIO {
       for
-        providerConfig <- ZIO.service[AIProviderConfig]
-        rateLimiter    <- ZIO.service[RateLimiter]
-        httpClient     <- ZIO.service[HttpAIClient]
-      yield providerConfig.provider match
-        case AIProvider.GeminiCli => GeminiCliAIService.make(providerConfig, rateLimiter, GeminiCliExecutor.default)
-        case AIProvider.GeminiApi => GeminiApiAIService.make(providerConfig, rateLimiter, httpClient)
-        case AIProvider.OpenAi    => OpenAICompatAIService(providerConfig, rateLimiter, httpClient)
-        case AIProvider.Anthropic => AnthropicCompatAIService(providerConfig, rateLimiter, httpClient)
+        defaultProviderConfig <- ZIO.service[AIProviderConfig]
+        rateLimiter           <- ZIO.service[RateLimiter]
+        httpClient            <- ZIO.service[HttpAIClient]
+      yield new AIService {
+        private def build(config: AIProviderConfig): AIService =
+          config.provider match
+            case AIProvider.GeminiCli => GeminiCliAIService.make(config, rateLimiter, GeminiCliExecutor.default)
+            case AIProvider.GeminiApi => GeminiApiAIService.make(config, rateLimiter, httpClient)
+            case AIProvider.OpenAi    => OpenAICompatAIService(config, rateLimiter, httpClient)
+            case AIProvider.Anthropic => AnthropicCompatAIService(config, rateLimiter, httpClient)
+
+        override def execute(prompt: String): ZIO[Any, AIError, AIResponse] =
+          build(defaultProviderConfig).execute(prompt)
+
+        override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] =
+          build(defaultProviderConfig).executeWithContext(prompt, context)
+
+        override def executeWithConfig(prompt: String, config: AIProviderConfig): ZIO[Any, AIError, AIResponse] =
+          build(AIProviderConfig.withDefaults(config)).execute(prompt)
+
+        override def isAvailable: ZIO[Any, Nothing, Boolean] =
+          build(defaultProviderConfig).isAvailable
+      }
     }

@@ -14,6 +14,7 @@ import zio.json.*
 import core.AIService
 import db.{ ChatRepository, MigrationRepository, PersistenceError }
 import models.*
+import orchestration.IssueAssignmentOrchestrator
 import web.ErrorHandlingMiddleware
 import web.views.HtmlViews
 
@@ -25,13 +26,16 @@ object ChatController:
   def routes: ZIO[ChatController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[ChatController](_.routes)
 
-  val live: ZLayer[ChatRepository & AIService & MigrationRepository, Nothing, ChatController] =
+  val live
+    : ZLayer[ChatRepository & AIService & MigrationRepository & IssueAssignmentOrchestrator & AIProviderConfig, Nothing, ChatController] =
     ZLayer.fromFunction(ChatControllerLive.apply)
 
 final case class ChatControllerLive(
   chatRepository: ChatRepository,
   aiService: AIService,
   migrationRepository: MigrationRepository,
+  issueAssignmentOrchestrator: IssueAssignmentOrchestrator,
+  defaultProviderCfg: AIProviderConfig,
 ) extends ChatController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -76,24 +80,25 @@ final case class ChatControllerLive(
         yield html(HtmlViews.chatDetail(conversation))
       }
     },
-    Method.GET / "chat" / long("id") / "messages"               -> handler { (id: Long, _: Request) =>
+    Method.GET / "chat" / long("id") / "messages"                -> handler { (id: Long, _: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           messages <- chatRepository.getMessages(id)
         yield html(HtmlViews.chatMessagesFragment(messages))
       }
     },
-    Method.POST / "chat" / long("id") / "messages"              -> handler { (id: Long, req: Request) =>
+    Method.POST / "chat" / long("id") / "messages"               -> handler { (id: Long, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          form          <- parseForm(req)
-          content       <- ZIO
-                             .fromOption(form.get("content").map(_.trim).filter(_.nonEmpty))
-                             .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
-          _             <- addUserAndAssistantMessage(id, content, MessageType.Text, None)
-          htmlRequested  = form.get("fragment").exists(_.equalsIgnoreCase("true"))
-          messages      <- chatRepository.getMessages(id)
-        yield if htmlRequested then html(HtmlViews.chatMessagesFragment(messages))
+          form         <- parseForm(req)
+          content      <- ZIO
+                            .fromOption(form.get("content").map(_.trim).filter(_.nonEmpty))
+                            .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
+          _            <- addUserAndAssistantMessage(id, content, MessageType.Text, None)
+          htmlRequested = form.get("fragment").exists(_.equalsIgnoreCase("true"))
+          messages     <- chatRepository.getMessages(id)
+        yield
+          if htmlRequested then html(HtmlViews.chatMessagesFragment(messages))
           else
             Response(
               status = Status.SeeOther,
@@ -167,12 +172,12 @@ final case class ChatControllerLive(
 
       ErrorHandlingMiddleware.fromPersistence {
         for
-          issues <- loadIssues(runId, statusFilter)
+          issues  <- loadIssues(runId, statusFilter)
           filtered = filterIssues(issues, query, tagFilter)
         yield html(HtmlViews.issuesView(runId, filtered, statusFilter, query, tagFilter))
       }
     },
-    Method.GET / "issues" / "new"                               -> handler { (req: Request) =>
+    Method.GET / "issues" / "new"                                -> handler { (req: Request) =>
       val runId = req.queryParam("run_id").flatMap(_.toLongOption)
       ZIO.succeed(html(HtmlViews.issueCreateForm(runId)))
     },
@@ -224,10 +229,10 @@ final case class ChatControllerLive(
     Method.POST / "issues" / long("id") / "assign"               -> handler { (id: Long, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          form       <- parseForm(req)
-          agentName  <- required(form, "agentName")
-          updated    <- assignIssueAndStartChat(id, agentName)
-          redirectTo  = updated.conversationId.map(cid => s"/chat/$cid").getOrElse(s"/issues/$id")
+          form      <- parseForm(req)
+          agentName <- required(form, "agentName")
+          updated   <- issueAssignmentOrchestrator.assignIssue(id, agentName)
+          redirectTo = updated.conversationId.map(cid => s"/chat/$cid").getOrElse(s"/issues/$id")
         yield Response(
           status = Status.SeeOther,
           headers = Headers(Header.Custom("Location", redirectTo)),
@@ -293,7 +298,7 @@ final case class ChatControllerLive(
           assignRequest <- ZIO
                              .fromEither(body.fromJson[AssignIssueRequest])
                              .mapError(err => PersistenceError.QueryFailed("json_parse", err))
-          updated       <- assignIssueAndStartChat(id, assignRequest.agentName)
+          updated       <- issueAssignmentOrchestrator.assignIssue(id, assignRequest.agentName)
         yield Response.json(updated.toJson)
       }
     },
@@ -331,8 +336,8 @@ final case class ChatControllerLive(
         val needle = term.toLowerCase
         issues.filter(issue =>
           issue.title.toLowerCase.contains(needle) ||
-            issue.description.toLowerCase.contains(needle) ||
-            issue.issueType.toLowerCase.contains(needle)
+          issue.description.toLowerCase.contains(needle) ||
+          issue.issueType.toLowerCase.contains(needle)
         )
       case None       => issues
 
@@ -369,13 +374,14 @@ final case class ChatControllerLive(
 
   private def importIssuesFromConfiguredFolder: IO[PersistenceError, Int] =
     for
-      setting <- migrationRepository
-                   .getSetting("issues.importFolder")
-                   .flatMap(opt =>
-                     ZIO
-                       .fromOption(opt.map(_.value.trim).filter(_.nonEmpty))
-                       .orElseFail(PersistenceError.QueryFailed("settings", "'issues.importFolder' is empty or missing"))
-                   )
+      setting <-
+        migrationRepository
+          .getSetting("issues.importFolder")
+          .flatMap(opt =>
+            ZIO
+              .fromOption(opt.map(_.value.trim).filter(_.nonEmpty))
+              .orElseFail(PersistenceError.QueryFailed("settings", "'issues.importFolder' is empty or missing"))
+          )
       folder  <- ZIO
                    .attempt(Paths.get(setting))
                    .mapError(e => PersistenceError.QueryFailed("issues.importFolder", e.getMessage))
@@ -387,7 +393,9 @@ final case class ChatControllerLive(
                          .list(folder)
                          .iterator()
                          .asScala
-                         .filter(path => Files.isRegularFile(path) && path.getFileName.toString.toLowerCase.endsWith(".md"))
+                         .filter(path =>
+                           Files.isRegularFile(path) && path.getFileName.toString.toLowerCase.endsWith(".md")
+                         )
                          .toList
                    }
                    .mapError(e => PersistenceError.QueryFailed("issues.importFolder", e.getMessage))
@@ -397,8 +405,8 @@ final case class ChatControllerLive(
                      markdown <- ZIO
                                    .attemptBlocking(Files.readString(file, StandardCharsets.UTF_8))
                                    .mapError(e => PersistenceError.QueryFailed(file.toString, e.getMessage))
-                     issue    = parseMarkdownIssue(file, markdown, now)
-                     _       <- chatRepository.createIssue(issue)
+                     issue     = parseMarkdownIssue(file, markdown, now)
+                     _        <- chatRepository.createIssue(issue)
                    yield ()
                  }
     yield created.size
@@ -431,151 +439,6 @@ final case class ChatControllerLive(
       updatedAt = now,
     )
 
-  private def ensureIssueConversation(issue: AgentIssue, agentName: String, now: Instant): IO[PersistenceError, AgentIssue] =
-    issue.conversationId match
-      case Some(_) =>
-        chatRepository
-          .getIssue(issue.id.getOrElse(0L))
-          .someOrFail(PersistenceError.NotFound("issue", issue.id.getOrElse(0L)))
-      case None    =>
-        for
-          issueId <- ZIO
-                       .fromOption(issue.id)
-                       .orElseFail(PersistenceError.QueryFailed("issue", "Issue ID missing during assignment"))
-          convId  <- chatRepository.createConversation(
-                       ChatConversation(
-                         runId = issue.runId,
-                         title = s"Issue #$issueId: ${issue.title}",
-                         description = Some("Auto-generated conversation from issue assignment"),
-                         createdAt = now,
-                         updatedAt = now,
-                         createdBy = Some("system"),
-                       )
-                     )
-          _       <- chatRepository.updateIssue(
-                       issue.copy(
-                         conversationId = Some(convId),
-                         assignedAgent = Some(agentName),
-                         assignedAt = Some(now),
-                         status = IssueStatus.Assigned,
-                         updatedAt = now,
-                       )
-                     )
-          updated <- chatRepository
-                       .getIssue(issueId)
-                       .someOrFail(PersistenceError.NotFound("issue", issueId))
-        yield updated
-
-  private def sendIssueContextToAgent(issue: AgentIssue, agentName: String): IO[PersistenceError, Unit] =
-    for
-      conversationId <- ZIO
-                          .fromOption(issue.conversationId)
-                          .orElseFail(PersistenceError.QueryFailed("issue", "Issue is missing linked conversation"))
-      runMetadata    <- issue.runId match
-                          case Some(runId) => migrationRepository.getRun(runId)
-                          case None        => ZIO.none
-      prompt          = buildIssueAssignmentPrompt(issue, agentName, runMetadata)
-      now            <- Clock.instant
-      _              <- chatRepository.addMessage(
-                          ConversationMessage(
-                            conversationId = conversationId,
-                            sender = "system",
-                            senderType = SenderType.System,
-                            content = prompt,
-                            messageType = MessageType.Status,
-                            createdAt = now,
-                            updatedAt = now,
-                          )
-                        )
-      aiResponse     <- aiService.execute(prompt).mapError(err => PersistenceError.QueryFailed("ai_service", err.message))
-      now2           <- Clock.instant
-      _              <- chatRepository.addMessage(
-                          ConversationMessage(
-                            conversationId = conversationId,
-                            sender = "assistant",
-                            senderType = SenderType.Assistant,
-                            content = aiResponse.output,
-                            messageType = MessageType.Text,
-                            metadata = Some(aiResponse.metadata.toJson),
-                            createdAt = now2,
-                            updatedAt = now2,
-                          )
-                        )
-      conv           <- chatRepository
-                          .getConversation(conversationId)
-                          .someOrFail(PersistenceError.NotFound("conversation", conversationId))
-      _              <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
-    yield ()
-
-  private def assignIssueAndStartChat(issueId: Long, agentName: String): IO[PersistenceError, AgentIssue] =
-    for
-      issue       <- chatRepository
-                       .getIssue(issueId)
-                       .someOrFail(PersistenceError.NotFound("issue", issueId))
-      assignments <- chatRepository.listAssignmentsByIssue(issueId)
-      inFlight     = assignments.exists(assignment =>
-                       assignment.agentName.equalsIgnoreCase(agentName) &&
-                         assignment.status.equalsIgnoreCase("processing")
-                     )
-      updated     <-
-        if inFlight then
-          chatRepository
-            .getIssue(issueId)
-            .someOrFail(PersistenceError.NotFound("issue", issueId))
-        else
-          for
-            _           <- chatRepository.assignIssueToAgent(issueId, agentName)
-            now         <- Clock.instant
-            _           <- chatRepository.createAssignment(
-                             AgentAssignment(
-                               issueId = issueId,
-                               agentName = agentName,
-                               assignedAt = now,
-                               status = "processing",
-                             )
-                           )
-            linkedIssue <- ensureIssueConversation(issue, agentName, now)
-            _           <- sendIssueContextToAgent(linkedIssue, agentName)
-            refreshed   <- chatRepository
-                             .getIssue(issueId)
-                             .someOrFail(PersistenceError.NotFound("issue", issueId))
-          yield refreshed
-    yield updated
-
-  private def buildIssueAssignmentPrompt(
-    issue: AgentIssue,
-    agentName: String,
-    run: Option[db.MigrationRunRow],
-  ): String =
-    val runContext = run match
-      case Some(value) =>
-        s"""Run metadata:
-           |- runId: ${value.id}
-           |- sourceDir: ${value.sourceDir}
-           |- outputDir: ${value.outputDir}
-           |- status: ${value.status}
-           |- currentPhase: ${value.currentPhase.getOrElse("n/a")}
-           |""".stripMargin
-      case None        => "Run metadata: not linked"
-
-    s"""Issue assignment for agent: $agentName
-       |
-       |Issue title: ${issue.title}
-       |Issue type: ${issue.issueType}
-       |Priority: ${issue.priority}
-       |Tags: ${issue.tags.getOrElse("none")}
-       |Preferred agent: ${issue.preferredAgent.getOrElse("none")}
-       |Context path: ${issue.contextPath.getOrElse("none")}
-       |Source folder: ${issue.sourceFolder.getOrElse("none")}
-       |
-       |$runContext
-       |
-       |Markdown task:
-       |${issue.description}
-       |
-       |Please execute this task and provide a concise implementation summary and next actions.
-       |""".stripMargin
-
   private def addUserAndAssistantMessage(
     conversationId: Long,
     userContent: String,
@@ -583,20 +446,26 @@ final case class ChatControllerLive(
     metadata: Option[String],
   ): IO[PersistenceError, ConversationMessage] =
     for
-      now <- Clock.instant
-      _   <- chatRepository.addMessage(
-               ConversationMessage(
-                 conversationId = conversationId,
-                 sender = "user",
-                 senderType = SenderType.User,
-                 content = userContent,
-                 messageType = messageType,
-                 metadata = metadata,
-                 createdAt = now,
-                 updatedAt = now,
-               )
-             )
-      aiResponse <- aiService.execute(userContent)
+      now        <- Clock.instant
+      _          <- chatRepository.addMessage(
+                      ConversationMessage(
+                        conversationId = conversationId,
+                        sender = "user",
+                        senderType = SenderType.User,
+                        content = userContent,
+                        messageType = messageType,
+                        metadata = metadata,
+                        createdAt = now,
+                        updatedAt = now,
+                      )
+                    )
+      settings   <- migrationRepository
+                      .getAllSettings
+                      .map(_.map(s => s.key -> s.value).toMap)
+                      .catchAll(_ => ZIO.succeed(Map.empty[String, String]))
+      aiConfig    = resolveAIProviderConfig(settings)
+      aiResponse <- aiService
+                      .executeWithConfig(userContent, aiConfig)
                       .mapError(err => PersistenceError.QueryFailed("ai_service", err.message))
       now2       <- Clock.instant
       aiMessage   = ConversationMessage(
@@ -615,6 +484,54 @@ final case class ChatControllerLive(
                       .someOrFail(PersistenceError.NotFound("conversation", conversationId))
       _          <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
     yield aiMessage
+
+  private def resolveAIProviderConfig(settings: Map[String, String]): AIProviderConfig =
+    val provider = settings
+      .get("ai.provider")
+      .flatMap(parseProvider)
+      .getOrElse(defaultProviderCfg.provider)
+
+    AIProviderConfig.withDefaults(
+      defaultProviderCfg.copy(
+        provider = provider,
+        model = settings.get("ai.model").filter(_.nonEmpty).getOrElse(defaultProviderCfg.model),
+        baseUrl = settings
+          .get("ai.baseUrl")
+          .filter(_.nonEmpty)
+          .orElse(AIProvider.defaultBaseUrl(provider))
+          .orElse(defaultProviderCfg.baseUrl),
+        apiKey = settings.get("ai.apiKey").filter(_.nonEmpty).orElse(defaultProviderCfg.apiKey),
+        timeout = settings
+          .get("ai.timeout")
+          .flatMap(_.toLongOption)
+          .map(Duration.fromSeconds)
+          .getOrElse(defaultProviderCfg.timeout),
+        maxRetries = settings
+          .get("ai.maxRetries")
+          .flatMap(_.toIntOption)
+          .getOrElse(defaultProviderCfg.maxRetries),
+        requestsPerMinute = settings
+          .get("ai.requestsPerMinute")
+          .flatMap(_.toIntOption)
+          .getOrElse(defaultProviderCfg.requestsPerMinute),
+        burstSize = settings.get("ai.burstSize").flatMap(_.toIntOption).getOrElse(defaultProviderCfg.burstSize),
+        acquireTimeout = settings
+          .get("ai.acquireTimeout")
+          .flatMap(_.toLongOption)
+          .map(Duration.fromSeconds)
+          .getOrElse(defaultProviderCfg.acquireTimeout),
+        temperature = settings.get("ai.temperature").flatMap(_.toDoubleOption).orElse(defaultProviderCfg.temperature),
+        maxTokens = settings.get("ai.maxTokens").flatMap(_.toIntOption).orElse(defaultProviderCfg.maxTokens),
+      )
+    )
+
+  private def parseProvider(value: String): Option[AIProvider] =
+    value.trim match
+      case "GeminiCli" => Some(AIProvider.GeminiCli)
+      case "GeminiApi" => Some(AIProvider.GeminiApi)
+      case "OpenAi"    => Some(AIProvider.OpenAi)
+      case "Anthropic" => Some(AIProvider.Anthropic)
+      case _           => None
 
   private def parseForm(req: Request): IO[PersistenceError, Map[String, String]] =
     req.body.asString

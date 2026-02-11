@@ -537,26 +537,27 @@ final case class ChatRepositoryLive(
 
   private def ensureAgentIssueColumns(conn: Connection): IO[PersistenceError, Unit] =
     for
-      info <- readAgentIssueColumns(conn)
-      _    <- if info.exists(c => c._1 == "run_id" && c._3 == 1) then rebuildAgentIssuesTable(conn) else ZIO.unit
-      now  <- readAgentIssueColumns(conn)
+      info          <- readAgentIssueColumns(conn)
+      _             <- if info.exists(c => c._1 == "run_id" && c._3 == 1) then rebuildAgentIssuesTable(conn) else ZIO.unit
+      now           <- readAgentIssueColumns(conn)
       missingColumns = List(
-                         "tags" -> "TEXT",
+                         "tags"            -> "TEXT",
                          "preferred_agent" -> "TEXT",
-                         "context_path" -> "TEXT",
-                         "source_folder" -> "TEXT",
+                         "context_path"    -> "TEXT",
+                         "source_folder"   -> "TEXT",
                        ).filterNot { case (name, _) => now.exists(_._1 == name) }
-      _    <- ZIO.foreachDiscard(missingColumns) { case (name, ddl) =>
-                val alterSql = s"ALTER TABLE agent_issues ADD COLUMN $name $ddl"
-                withStatement(conn, alterSql)(stmt => executeBlocking(alterSql)(stmt.execute(alterSql)).unit)
-              }
+      _             <- ZIO.foreachDiscard(missingColumns) {
+                         case (name, ddl) =>
+                           val alterSql = s"ALTER TABLE agent_issues ADD COLUMN $name $ddl"
+                           withStatement(conn, alterSql)(stmt => executeBlocking(alterSql)(stmt.execute(alterSql)).unit)
+                       }
     yield ()
 
   private def readAgentIssueColumns(conn: Connection): IO[PersistenceError, List[(String, String, Int)]] =
     val pragmaSql = "PRAGMA table_info(agent_issues)"
     withStatement(conn, pragmaSql) { stmt =>
-      ZIO.acquireReleaseWith(executeBlocking(pragmaSql)(stmt.executeQuery(pragmaSql)))(
-        rs => executeBlocking(pragmaSql)(rs.close()).ignore
+      ZIO.acquireReleaseWith(executeBlocking(pragmaSql)(stmt.executeQuery(pragmaSql)))(rs =>
+        executeBlocking(pragmaSql)(rs.close()).ignore
       ) { rs =>
         def loop(acc: List[(String, String, Int)]): IO[PersistenceError, List[(String, String, Int)]] =
           executeBlocking(pragmaSql)(rs.next()).flatMap {
@@ -647,10 +648,15 @@ object ChatRepositoryLive:
   private def executeBlocking[A](sql: String)(thunk: => A): IO[PersistenceError, A] =
     ZIO.attemptBlocking(thunk).mapError(e => PersistenceError.QueryFailed(sql, e.getMessage))
 
-  private def withStatement[A](conn: Connection, sql: String)(
+  private def withStatement[A](
+    conn: Connection,
+    sql: String,
+  )(
     use: Statement => IO[PersistenceError, A]
   ): IO[PersistenceError, A] =
-    ZIO.acquireReleaseWith(executeBlocking(sql)(conn.createStatement()))(stmt => executeBlocking(sql)(stmt.close()).ignore)(
+    ZIO.acquireReleaseWith(executeBlocking(sql)(conn.createStatement()))(stmt =>
+      executeBlocking(sql)(stmt.close()).ignore
+    )(
       use
     )
 
@@ -747,10 +753,15 @@ object ChatRepositoryLive:
       yield result
     }
 
-  private def executeQuery[A](stmt: java.sql.PreparedStatement, sql: String)(
+  private def executeQuery[A](
+    stmt: java.sql.PreparedStatement,
+    sql: String,
+  )(
     use: ResultSet => IO[PersistenceError, A]
   ): IO[PersistenceError, A] =
-    ZIO.acquireReleaseWith(executeBlocking(sql)(stmt.executeQuery()))(rs => executeBlocking(sql)(rs.close()).ignore)(use)
+    ZIO.acquireReleaseWith(
+      executeBlocking(sql)(stmt.executeQuery())
+    )(rs => executeBlocking(sql)(rs.close()).ignore)(use)
 
   private def setOptionalLong(stmt: java.sql.PreparedStatement, idx: Int, value: Option[Long]): Unit =
     value match
@@ -885,7 +896,7 @@ object ChatRepositoryLive:
       case "user"      => ZIO.succeed(SenderType.User)
       case "assistant" => ZIO.succeed(SenderType.Assistant)
       case "system"    => ZIO.succeed(SenderType.System)
-      case other        => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown sender_type: $other"))
+      case other       => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown sender_type: $other"))
 
   private def parseMessageType(sql: String, value: String): IO[PersistenceError, MessageType] =
     value.toLowerCase match
@@ -893,7 +904,7 @@ object ChatRepositoryLive:
       case "code"   => ZIO.succeed(MessageType.Code)
       case "error"  => ZIO.succeed(MessageType.Error)
       case "status" => ZIO.succeed(MessageType.Status)
-      case other     => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown message_type: $other"))
+      case other    => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown message_type: $other"))
 
   private def parseIssuePriority(sql: String, value: String): IO[PersistenceError, IssuePriority] =
     value.toLowerCase match
@@ -901,7 +912,7 @@ object ChatRepositoryLive:
       case "medium"   => ZIO.succeed(IssuePriority.Medium)
       case "high"     => ZIO.succeed(IssuePriority.High)
       case "critical" => ZIO.succeed(IssuePriority.Critical)
-      case other       => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown priority: $other"))
+      case other      => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown priority: $other"))
 
   private def parseIssueStatus(sql: String, value: String): IO[PersistenceError, IssueStatus] =
     value.toLowerCase match
@@ -911,4 +922,4 @@ object ChatRepositoryLive:
       case "completed"   => ZIO.succeed(IssueStatus.Completed)
       case "failed"      => ZIO.succeed(IssueStatus.Failed)
       case "skipped"     => ZIO.succeed(IssueStatus.Skipped)
-      case other          => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown issue status: $other"))
+      case other         => ZIO.fail(PersistenceError.QueryFailed(sql, s"Unknown issue status: $other"))

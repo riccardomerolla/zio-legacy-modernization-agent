@@ -12,7 +12,7 @@ object Layout:
       head(
         meta(charset := "utf-8"),
         meta(name    := "viewport", content := "width=device-width, initial-scale=1"),
-        titleTag(s"$pageTitleText — COBOL Modernization"),
+        titleTag(s"$pageTitleText — A-B-Normal"),
         script(src   := "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"),
         script(src   := "https://unpkg.com/htmx.org@2.0.4"),
         script(src   := "https://unpkg.com/htmx-ext-sse@2.0.0/sse.js"),
@@ -20,10 +20,9 @@ object Layout:
       body(cls := "h-full")(
         desktopSidebar(currentPath),
         div(cls := "lg:pl-72")(
-          topBar,
-          tag("main")(cls := "py-10")(
+          tag("main")(cls := "py-4")(
             div(cls := "px-4 sm:px-6 lg:px-8")(bodyContent)
-          ),
+          )
         ),
       ),
     ).render
@@ -38,7 +37,7 @@ object Layout:
     )(
       div(cls := "flex grow flex-col gap-y-5 overflow-y-auto bg-black/10 px-6 pb-4")(
         div(cls := "flex h-16 shrink-0 items-center")(
-          span(cls := "text-xl font-bold text-white")("COBOL Modernizer")
+          span(cls := "text-xl font-bold text-white")("A-B-Normal")
         ),
         nav(cls := "flex flex-1 flex-col")(
           ul(attr("role") := "list", cls := "flex flex-1 flex-col gap-y-7")(
@@ -81,21 +80,6 @@ object Layout:
       if active then "group flex gap-x-3 rounded-md bg-white/5 p-2 text-sm/6 font-semibold text-white"
       else "group flex gap-x-3 rounded-md p-2 text-sm/6 font-semibold text-gray-400 hover:bg-white/5 hover:text-white"
     li(a(attr("href") := href, cls := classes)(icon, label))
-
-  // ---------------------------------------------------------------------------
-  // Top bar
-  // ---------------------------------------------------------------------------
-
-  private def topBar: Frag =
-    div(
-      cls := "sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-4 border-b border-white/10 bg-gray-900 px-4 shadow-sm sm:gap-x-6 sm:px-6 lg:px-8"
-    )(
-      div(cls := "flex flex-1 gap-x-4 self-stretch lg:gap-x-6")(
-        div(cls := "flex items-center gap-x-4 lg:gap-x-6 ml-auto")(
-          span(cls := "text-sm text-gray-400")("ZIO Legacy Modernization Agent")
-        )
-      )
-    )
 
   // ---------------------------------------------------------------------------
   // Icons (Heroicons outline 24x24)
