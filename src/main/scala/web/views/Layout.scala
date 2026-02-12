@@ -51,6 +51,12 @@ object Layout:
                   Icons.plusCircle,
                   currentPath == "/runs/new",
                 ),
+                navItem(
+                  "/workflows",
+                  "Workflows",
+                  Icons.workflow,
+                  currentPath.startsWith("/workflows"),
+                ),
               )
             ),
             li(
@@ -110,6 +116,10 @@ object Layout:
     )
 
     val plusCircle: Frag = icon("M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z")
+
+    val workflow: Frag = icon(
+      "M4.5 6h6.75m-6.75 6h6.75m-6.75 6h6.75m3.75-10.5L18 6m0 0 2.25 1.5M18 6v4.5m0 3L18 18m0 0 2.25-1.5M18 18v-4.5"
+    )
 
     val document: Frag = icon(
       "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"

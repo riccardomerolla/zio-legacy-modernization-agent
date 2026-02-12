@@ -767,10 +767,12 @@ final case class MigrationRepositoryLive(
     yield ()
 
   private def executeSchemaStatement(stmt: java.sql.Statement, sql: String): IO[PersistenceError, Unit] =
+    val normalizedSql = sql.toLowerCase.replaceAll("\\s+", " ").trim
     executeBlocking(sql)(stmt.execute(sql)).unit.catchAll {
       case err @ PersistenceError.QueryFailed(_, cause)
-           if sql.toLowerCase.contains("alter table migration_runs add column workflow_id") &&
+           if normalizedSql.startsWith("alter table migration_runs add column workflow_id") &&
            cause.toLowerCase.contains("duplicate column name") =>
+        // Existing databases may already include workflow_id.
         ZIO.unit
       case err => ZIO.fail(err)
     }

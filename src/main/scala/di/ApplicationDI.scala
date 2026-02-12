@@ -23,6 +23,7 @@ object ApplicationDI:
       StateService &
       javax.sql.DataSource &
       MigrationRepository &
+      WorkflowService &
       ProgressTracker &
       ResultPersister &
       CobolDiscoveryAgent &
@@ -51,6 +52,7 @@ object ApplicationDI:
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       MigrationRepository.live,
+      WorkflowService.live,
       ProgressTracker.live,
       ResultPersister.live,
 
@@ -97,6 +99,7 @@ object ApplicationDI:
       DashboardController.live,
       SettingsController.live,
       AgentsController.live,
+      WorkflowsController.live,
       ChatRepository.live.mapError(_ => new RuntimeException("chat repository initialization failed")).orDie,
       AgentConfigResolver.live,
       IssueAssignmentOrchestrator.live,
