@@ -30,6 +30,12 @@ object WorkflowsView:
             p(cls := "text-sm text-emerald-300")(message)
           )
         },
+        div(
+          id  := "workflow-feedback",
+          cls := "hidden rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4",
+        )(
+          p(cls := "text-sm text-emerald-300", id := "workflow-feedback-text")()
+        ),
         div(cls := "overflow-hidden rounded-xl border border-white/10 bg-slate-900/60")(
           table(cls := "min-w-full divide-y divide-white/10")(
             thead(cls := "bg-white/5")(
@@ -69,6 +75,7 @@ object WorkflowsView:
     val orderedCsv     = workflow.steps.map(_.toString).mkString(",")
     val stepAgentsJson = stepAgentsToJson(workflow.stepAgents)
     val agentOptions   = availableAgents.filter(_.usesAI).sortBy(_.displayName.toLowerCase)
+    val stepAgentMap   = workflow.stepAgents.map(assign => assign.step -> assign.agentName).toMap
 
     Layout.page(title, "/workflows")(
       div(cls := "mx-auto max-w-6xl space-y-5")(
@@ -110,9 +117,46 @@ object WorkflowsView:
                       input(
                         `type`                   := "checkbox",
                         attr("data-step-toggle") := step.toString,
+                        name                     := s"step.${step.toString}",
+                        scalatags.Text.all.value := "on",
                         if selected then checked := "checked" else (),
                       ),
                       span(step.toString),
+                    )
+                  }
+                ),
+              ),
+              div(id := "static-step-agents", cls := "mt-4")(
+                p(cls := "mb-2 text-sm font-semibold text-slate-200")("Step Agents"),
+                p(
+                  cls := "mb-2 text-xs text-slate-400"
+                )("Optional fallback fields used when JavaScript is unavailable."),
+                div(cls := "grid grid-cols-1 gap-2 sm:grid-cols-2")(
+                  MigrationStep.values.toList.map { step =>
+                    val selectedAgent = stepAgentMap.getOrElse(step, "")
+                    div(cls := "rounded-md border border-white/10 bg-slate-800/50 px-3 py-2")(
+                      label(
+                        cls   := "mb-1 block text-xs font-semibold text-slate-200",
+                        `for` := s"agent-${step.toString}",
+                      )(
+                        step.toString
+                      ),
+                      select(
+                        id   := s"agent-${step.toString}",
+                        name := s"agent.${step.toString}",
+                        cls  := "w-full rounded-md border border-white/15 bg-slate-900/70 px-2 py-1.5 text-xs text-slate-100",
+                      )(
+                        option(
+                          value := "",
+                          if selectedAgent.isEmpty then selected := "selected" else (),
+                        )("No specific agent"),
+                        agentOptions.map { agent =>
+                          option(
+                            value := agent.name,
+                            if selectedAgent == agent.name then selected := "selected" else (),
+                          )(s"${agent.displayName} (${agent.name})")
+                        },
+                      ),
                     )
                   }
                 ),
@@ -191,7 +235,7 @@ object WorkflowsView:
     )
 
   def workflowToMermaid(steps: List[MigrationStep]): String =
-    val nodes = steps.zipWithIndex.map((step, index) => s"  step$index[${step.toString}]")
+    val nodes = steps.zipWithIndex.map((step, index) => s"""  step$index["${step.toString}"]""")
     val edges = steps.indices.sliding(2).map(pair => s"  step${pair(0)} --> step${pair(1)}").toList
     ("graph LR" :: nodes ::: edges).mkString("\n")
 
@@ -211,12 +255,14 @@ object WorkflowsView:
                 cls  := "rounded-md border border-cyan-400/30 bg-cyan-500/20 px-2 py-1 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/30",
               )("Edit"),
               button(
-                `type`             := "button",
-                attr("hx-delete")  := s"/workflows/$id",
-                attr("hx-confirm") := s"Delete workflow '${workflow.name}'?",
-                attr("hx-target")  := "closest tr",
-                attr("hx-swap")    := "delete",
-                cls                := "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-200 hover:bg-rose-500/20",
+                `type`                          := "button",
+                attr("hx-delete")               := s"/workflows/$id",
+                attr("hx-confirm")              := s"Delete workflow '${workflow.name}'?",
+                attr("hx-target")               := "closest tr",
+                attr("hx-swap")                 := "delete",
+                attr("hx-on:htmx:afterRequest") :=
+                  "if(event.detail.successful){const b=document.getElementById('workflow-feedback');const t=document.getElementById('workflow-feedback-text');if(b&&t){t.textContent='Workflow deleted';b.classList.remove('hidden');}}",
+                cls                             := "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-200 hover:bg-rose-500/20",
               )("Delete"),
             )
           case None     => span(cls := "text-xs text-slate-400")("Built-in")
@@ -271,13 +317,14 @@ object WorkflowsView:
     s"{${entries.mkString(",")}}"
 
   private def formScript(availableAgents: List[AgentInfo]): String =
-    val optionsJson = availableAgents
+    val optionsJson  = availableAgents
       .map { agent =>
         val safeName = agent.name.replace("\\", "\\\\").replace("\"", "\\\"")
         val safeDisp = agent.displayName.replace("\\", "\\\\").replace("\"", "\\\"")
-        s"{name: \"$safeName\", displayName: \"$safeDisp\"}"
+        s"""{"name":"$safeName","displayName":"$safeDisp"}"""
       }
       .mkString("[", ",", "]")
+    val optionsForJs = optionsJson.replace("\\", "\\\\").replace("\"", "\\\"")
 
     s"""
        |document.addEventListener("DOMContentLoaded", function () {
@@ -288,9 +335,11 @@ object WorkflowsView:
        |  var agentsHidden = document.getElementById("stepAgentsJson");
        |  var list = document.getElementById("ordered-step-list");
        |  var preview = document.getElementById("workflow-mermaid-preview");
+       |  var staticAgents = document.getElementById("static-step-agents");
        |  if (!hidden || !agentsHidden || !list || !preview) return;
+       |  if (staticAgents) staticAgents.classList.add("hidden");
        |
-       |  var availableAgents = $optionsJson;
+       |  var availableAgents = JSON.parse("$optionsForJs");
        |
        |  var parseCsv = function (value) {
        |    return value.split(",").map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 0; });
@@ -324,9 +373,14 @@ object WorkflowsView:
        |
        |  var toMermaid = function () {
        |    if (steps.length === 0) {
-       |      return "graph LR\n  empty[No steps selected]";
+       |      return "graph LR\n  empty[\"No steps selected\"]";
        |    }
-       |    var nodes = steps.map(function (step, idx) { return "  step" + idx + "[" + step + "]"; });
+       |    var escapeStepLabel = function (value) {
+       |      return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+       |    };
+       |    var nodes = steps.map(function (step, idx) {
+       |      return "  step" + idx + "[\"" + escapeStepLabel(step) + "\"]";
+       |    });
        |    var edges = [];
        |    for (var i = 0; i < steps.length - 1; i++) {
        |      edges.push("  step" + i + " --> step" + (i + 1));

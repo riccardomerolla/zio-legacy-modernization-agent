@@ -50,7 +50,7 @@ final case class WorkflowsControllerLive(
             action = "/workflows",
             workflow = WorkflowDefinition(
               name = "",
-              steps = WorkflowDefinition.default.steps,
+              steps = Nil,
               stepAgents = Nil,
               isBuiltin = false,
             ),
@@ -103,7 +103,7 @@ final case class WorkflowsControllerLive(
           name       <- required(form, "name")
           description = optional(form, "description")
           steps      <- parseOrderedSteps(form)
-          stepAgents <- parseStepAgents(form)
+          stepAgents <- parseStepAgents(form, steps)
           workflow    = WorkflowDefinition(
                           name = name,
                           description = description,
@@ -130,7 +130,7 @@ final case class WorkflowsControllerLive(
           form       <- parseForm(req)
           name       <- required(form, "name")
           steps      <- parseOrderedSteps(form)
-          stepAgents <- parseStepAgents(form)
+          stepAgents <- parseStepAgents(form, steps)
           workflow    = existing.copy(
                           name = name,
                           description = optional(form, "description"),
@@ -166,28 +166,50 @@ final case class WorkflowsControllerLive(
 
   private def parseOrderedSteps(form: Map[String, String]): IO[WorkflowServiceError, List[MigrationStep]] =
     val raw = form.getOrElse("orderedSteps", "")
-    if raw.trim.isEmpty then ZIO.succeed(Nil)
+    if raw.trim.isEmpty then
+      ZIO.succeed(
+        MigrationStep.values.toList.filter(step =>
+          form.get(s"step.${step.toString}").exists(_.trim.nonEmpty)
+        )
+      )
     else
       ZIO.foreach(raw.split(",").toList.map(_.trim).filter(_.nonEmpty)) { value =>
         parseStep(value)
       }
 
-  private def parseStepAgents(form: Map[String, String]): IO[WorkflowServiceError, List[WorkflowStepAgent]] =
-    form.get("stepAgentsJson").map(_.trim).filter(_.nonEmpty) match
-      case None      => ZIO.succeed(Nil)
-      case Some(raw) =>
+  private def parseStepAgents(
+    form: Map[String, String],
+    selectedSteps: List[MigrationStep],
+  ): IO[WorkflowServiceError, List[WorkflowStepAgent]] =
+    for
+      fromJson   <- parseStepAgentsJson(form.get("stepAgentsJson").map(_.trim).filter(_.nonEmpty))
+      fromFields  = MigrationStep.values.toList.flatMap { step =>
+                      form.get(s"agent.${step.toString}").map(_.trim).filter(_.nonEmpty).map(step -> _)
+                    }.toMap
+      merged      = fromJson ++ fromFields
+      selectedSet = selectedSteps.toSet
+    yield MigrationStep.values.toList.flatMap { step =>
+      if selectedSet.contains(step) then merged.get(step).map(agent => WorkflowStepAgent(step, agent)) else None
+    }
+
+  private def parseStepAgentsJson(
+    raw: Option[String]
+  ): IO[WorkflowServiceError, Map[MigrationStep, String]] =
+    raw match
+      case None      => ZIO.succeed(Map.empty)
+      case Some(txt) =>
         ZIO
-          .fromEither(raw.fromJson[Map[String, String]].left.map(error =>
+          .fromEither(txt.fromJson[Map[String, String]].left.map(error =>
             WorkflowServiceError.ValidationFailed(List(s"Invalid step agents payload: $error"))
           ))
           .flatMap { values =>
-            ZIO.foldLeft(values.toList)(List.empty[WorkflowStepAgent]) {
+            ZIO.foldLeft(values.toList)(Map.empty[MigrationStep, String]) {
               case (acc, (stepRaw, agentRaw)) =>
                 parseStep(stepRaw).map { step =>
                   val trimmed = agentRaw.trim
-                  if trimmed.nonEmpty then WorkflowStepAgent(step, trimmed) :: acc else acc
+                  if trimmed.nonEmpty then acc.updated(step, trimmed) else acc
                 }
-            }.map(_.reverse)
+            }
           }
 
   private def parseStep(raw: String): IO[WorkflowServiceError, MigrationStep] =
