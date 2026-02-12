@@ -11,7 +11,7 @@ trait WebServer:
 object WebServer:
 
   val live: ZLayer[
-    RunsController & AnalysisController & GraphController & DashboardController & SettingsController & AgentsController & ChatController,
+    RunsController & AnalysisController & GraphController & DashboardController & SettingsController & AgentsController & ChatController & WorkflowsController,
     Nothing,
     WebServer,
   ] = ZLayer {
@@ -23,10 +23,11 @@ object WebServer:
       settings    <- ZIO.service[SettingsController]
       agents      <- ZIO.service[AgentsController]
       chat        <- ZIO.service[ChatController]
+      workflows   <- ZIO.service[WorkflowsController]
       staticRoutes = Routes.serveResources(Path.empty / "static")
     yield new WebServer {
       override val routes: Routes[Any, Response] =
-        dashboard.routes ++ runs.routes ++ analysis.routes ++ graph.routes ++ settings.routes ++ agents.routes ++ chat.routes ++ staticRoutes
+        dashboard.routes ++ runs.routes ++ analysis.routes ++ graph.routes ++ settings.routes ++ agents.routes ++ chat.routes ++ workflows.routes ++ staticRoutes
     }
   }
   private val defaultShutdownTimeout = java.time.Duration.ofSeconds(3L)

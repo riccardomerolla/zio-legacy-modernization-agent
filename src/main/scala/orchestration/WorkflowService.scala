@@ -13,6 +13,11 @@ enum WorkflowServiceError derives JsonCodec:
   case PersistenceFailed(error: PersistenceError)
   case StepsDecodingFailed(workflowName: String, reason: String)
 
+private case class WorkflowStoragePayload(
+  steps: List[MigrationStep],
+  stepAgents: Map[String, String] = Map.empty,
+) derives JsonCodec
+
 trait WorkflowService:
   def createWorkflow(workflow: WorkflowDefinition): IO[WorkflowServiceError, Long]
   def getWorkflow(id: Long): IO[WorkflowServiceError, Option[WorkflowDefinition]]
@@ -111,29 +116,73 @@ final case class WorkflowServiceLive(
       )
 
   private def fromRow(row: WorkflowRow): IO[WorkflowServiceError, WorkflowDefinition] =
-    ZIO
-      .fromEither(
-        row.steps.fromJson[List[MigrationStep]].left.map(error =>
-          WorkflowServiceError.StepsDecodingFailed(row.name, error)
-        )
-      )
-      .map { parsedSteps =>
+    decodeStorage(row.name, row.steps).map {
+      case (parsedSteps, parsedAgents) =>
         WorkflowDefinition(
           id = row.id,
           name = row.name,
           description = row.description,
           steps = parsedSteps,
+          stepAgents = parsedAgents.toList.map {
+            case (step, agentName) =>
+              WorkflowStepAgent(step, agentName)
+          },
           isBuiltin = row.isBuiltin,
         )
-      }
+    }
 
   private def toRow(workflow: WorkflowDefinition, createdAt: Instant, updatedAt: Instant): WorkflowRow =
+    val payload = WorkflowStoragePayload(
+      steps = workflow.steps,
+      stepAgents = workflow.stepAgents
+        .collect {
+          case WorkflowStepAgent(step, agent) if workflow.steps.contains(step) && agent.trim.nonEmpty =>
+            step.toString -> agent.trim
+        }
+        .toMap,
+    )
     WorkflowRow(
       id = workflow.id,
       name = workflow.name,
       description = workflow.description.filter(_.trim.nonEmpty),
-      steps = workflow.steps.toJson,
+      steps = payload.toJson,
       isBuiltin = workflow.isBuiltin,
       createdAt = createdAt,
       updatedAt = updatedAt,
     )
+
+  private def decodeStorage(
+    workflowName: String,
+    raw: String,
+  ): IO[WorkflowServiceError, (List[MigrationStep], Map[MigrationStep, String])] =
+    raw.fromJson[WorkflowStoragePayload] match
+      case Right(payload) =>
+        for
+          mapped <- decodeStepAgentMap(workflowName, payload.stepAgents)
+        yield (payload.steps, mapped)
+      case Left(_)        =>
+        // Backward compatibility with rows stored as raw JSON array of steps.
+        ZIO
+          .fromEither(
+            raw.fromJson[List[MigrationStep]].left.map(error =>
+              WorkflowServiceError.StepsDecodingFailed(workflowName, error)
+            )
+          )
+          .map(steps => (steps, Map.empty[MigrationStep, String]))
+
+  private def decodeStepAgentMap(
+    workflowName: String,
+    raw: Map[String, String],
+  ): IO[WorkflowServiceError, Map[MigrationStep, String]] =
+    ZIO.foldLeft(raw.toList)(Map.empty[MigrationStep, String]) {
+      case (acc, (stepRaw, agentRaw)) =>
+        MigrationStep.values.find(_.toString == stepRaw) match
+          case Some(step) => ZIO.succeed(acc.updated(step, agentRaw))
+          case None       =>
+            ZIO.fail(
+              WorkflowServiceError.StepsDecodingFailed(
+                workflowName,
+                s"Unknown step in stepAgents payload: $stepRaw",
+              )
+            )
+    }

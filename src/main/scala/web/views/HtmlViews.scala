@@ -1,7 +1,7 @@
 package web.views
 
 import db.{ CobolAnalysisRow, CobolFileRow, DependencyRow, MigrationRunRow, PhaseProgressRow }
-import models.{ AgentAssignment, AgentInfo, AgentIssue, ChatConversation, ConversationMessage }
+import models.*
 
 object HtmlViews:
 
@@ -83,3 +83,22 @@ object HtmlViews:
     availableAgents: List[AgentInfo],
   ): String =
     IssuesView.detail(issue, assignments, availableAgents)
+
+  def workflowsList(
+    workflows: List[WorkflowDefinition],
+    availableAgents: List[AgentInfo],
+    flash: Option[String] = None,
+  ): String =
+    WorkflowsView.list(workflows, availableAgents, flash)
+
+  def workflowForm(
+    title: String,
+    action: String,
+    workflow: WorkflowDefinition,
+    availableAgents: List[AgentInfo],
+    flash: Option[String] = None,
+  ): String =
+    WorkflowsView.form(title, action, workflow, availableAgents, flash)
+
+  def workflowDetail(workflow: WorkflowDefinition): String =
+    WorkflowsView.detail(workflow)
