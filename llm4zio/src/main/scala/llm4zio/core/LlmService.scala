@@ -55,3 +55,44 @@ object LlmService:
 
   def isAvailable: ZIO[LlmService, Nothing, Boolean] =
     ZIO.serviceWithZIO[LlmService](_.isAvailable)
+
+  // Factory layer that creates LlmService based on LlmConfig
+  val fromConfig: ZLayer[LlmConfig & llm4zio.providers.HttpClient & llm4zio.providers.GeminiCliExecutor, Nothing, LlmService] =
+    ZLayer.fromZIO {
+      for
+        config   <- ZIO.service[LlmConfig]
+        http     <- ZIO.service[llm4zio.providers.HttpClient]
+        cliExec  <- ZIO.service[llm4zio.providers.GeminiCliExecutor]
+      yield new LlmService {
+        private def buildProvider(cfg: LlmConfig): LlmService =
+          import llm4zio.providers.*
+          cfg.provider match
+            case LlmProvider.GeminiCli => GeminiCliProvider.make(cfg, cliExec)
+            case LlmProvider.GeminiApi => GeminiApiProvider.make(cfg, http)
+            case LlmProvider.OpenAI    => OpenAIProvider.make(cfg, http)
+            case LlmProvider.Anthropic => AnthropicProvider.make(cfg, http)
+
+        private val provider = buildProvider(config)
+
+        override def execute(prompt: String): IO[LlmError, LlmResponse] =
+          provider.execute(prompt)
+
+        override def executeStream(prompt: String): Stream[LlmError, LlmChunk] =
+          provider.executeStream(prompt)
+
+        override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
+          provider.executeWithHistory(messages)
+
+        override def executeStreamWithHistory(messages: List[Message]): Stream[LlmError, LlmChunk] =
+          provider.executeStreamWithHistory(messages)
+
+        override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
+          provider.executeWithTools(prompt, tools)
+
+        override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
+          provider.executeStructured(prompt, schema)
+
+        override def isAvailable: UIO[Boolean] =
+          provider.isAvailable
+      }
+    }
