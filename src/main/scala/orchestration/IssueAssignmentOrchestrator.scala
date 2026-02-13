@@ -5,8 +5,8 @@ import java.time.Instant
 import zio.*
 import zio.json.*
 
-import core.AIService
 import db.{ ChatRepository, MigrationRepository, PersistenceError }
+import llm4zio.core.{ LlmError, LlmService }
 import models.*
 
 trait IssueAssignmentOrchestrator:
@@ -18,19 +18,19 @@ object IssueAssignmentOrchestrator:
     ZIO.serviceWithZIO[IssueAssignmentOrchestrator](_.assignIssue(issueId, agentName))
 
   val live
-    : ZLayer[ChatRepository & MigrationRepository & AIService & AgentConfigResolver, Nothing, IssueAssignmentOrchestrator] =
+    : ZLayer[ChatRepository & MigrationRepository & LlmService & AgentConfigResolver, Nothing, IssueAssignmentOrchestrator] =
     ZLayer.scoped {
       for
         chatRepository      <- ZIO.service[ChatRepository]
         migrationRepository <- ZIO.service[MigrationRepository]
-        aiService           <- ZIO.service[AIService]
+        llmService          <- ZIO.service[LlmService]
         configResolver      <- ZIO.service[AgentConfigResolver]
         queue               <- Queue.unbounded[AssignmentTask]
         service              =
           IssueAssignmentOrchestratorLive(
             chatRepository,
             migrationRepository,
-            aiService,
+            llmService,
             configResolver,
             queue,
           )
@@ -47,7 +47,7 @@ final private case class AssignmentTask(
 final private case class IssueAssignmentOrchestratorLive(
   chatRepository: ChatRepository,
   migrationRepository: MigrationRepository,
-  aiService: AIService,
+  llmService: LlmService,
   configResolver: AgentConfigResolver,
   queue: Queue[AssignmentTask],
 ) extends IssueAssignmentOrchestrator:
@@ -149,19 +149,16 @@ final private case class IssueAssignmentOrchestratorLive(
                             updatedAt = now,
                           )
                         )
-      aiConfig       <- configResolver.resolveConfig(agentName)
-      aiResponse     <- aiService
-                          .executeWithConfig(prompt, aiConfig)
-                          .mapError(err => PersistenceError.QueryFailed("ai_service", err.message))
+      llmResponse    <- llmService.execute(prompt).mapError(convertLlmError)
       now2           <- Clock.instant
       _              <- chatRepository.addMessage(
                           ConversationMessage(
                             conversationId = conversationId,
                             sender = "assistant",
                             senderType = SenderType.Assistant,
-                            content = aiResponse.output,
+                            content = llmResponse.content,
                             messageType = MessageType.Text,
-                            metadata = Some(aiResponse.metadata.toJson),
+                            metadata = Some(llmResponse.metadata.toJson),
                             createdAt = now2,
                             updatedAt = now2,
                           )
@@ -249,3 +246,28 @@ final private case class IssueAssignmentOrchestratorLive(
        |
        |Please execute this task and provide a concise implementation summary and next actions.
        |""".stripMargin
+
+  private def convertLlmError(error: LlmError): PersistenceError =
+    error match
+      case LlmError.ProviderError(message, cause) =>
+        PersistenceError.QueryFailed(
+          "llm_service",
+          s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
+        )
+      case LlmError.RateLimitError(retryAfter)    =>
+        PersistenceError.QueryFailed(
+          "llm_service",
+          s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
+        )
+      case LlmError.AuthenticationError(message)  =>
+        PersistenceError.QueryFailed("llm_service", s"Authentication failed: $message")
+      case LlmError.InvalidRequestError(message)  =>
+        PersistenceError.QueryFailed("llm_service", s"Invalid request: $message")
+      case LlmError.TimeoutError(duration)        =>
+        PersistenceError.QueryFailed("llm_service", s"Request timed out after ${duration.toSeconds}s")
+      case LlmError.ParseError(message, raw)      =>
+        PersistenceError.QueryFailed("llm_service", s"Parse error: $message\nRaw: ${raw.take(200)}")
+      case LlmError.ToolError(toolName, message)  =>
+        PersistenceError.QueryFailed("llm_service", s"Tool error ($toolName): $message")
+      case LlmError.ConfigError(message)          =>
+        PersistenceError.QueryFailed("llm_service", s"Configuration error: $message")

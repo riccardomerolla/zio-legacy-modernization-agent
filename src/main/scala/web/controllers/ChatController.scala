@@ -12,8 +12,8 @@ import zio.http.*
 import zio.json.*
 
 import agents.AgentRegistry
-import core.AIService
 import db.{ ChatRepository, MigrationRepository, PersistenceError }
+import llm4zio.core.{ LlmError, LlmService }
 import models.*
 import orchestration.{ AgentConfigResolver, IssueAssignmentOrchestrator }
 import web.ErrorHandlingMiddleware
@@ -28,12 +28,12 @@ object ChatController:
     ZIO.serviceWith[ChatController](_.routes)
 
   val live
-    : ZLayer[ChatRepository & AIService & MigrationRepository & IssueAssignmentOrchestrator & AgentConfigResolver, Nothing, ChatController] =
+    : ZLayer[ChatRepository & LlmService & MigrationRepository & IssueAssignmentOrchestrator & AgentConfigResolver, Nothing, ChatController] =
     ZLayer.fromFunction(ChatControllerLive.apply)
 
 final case class ChatControllerLive(
   chatRepository: ChatRepository,
-  aiService: AIService,
+  llmService: LlmService,
   migrationRepository: MigrationRepository,
   issueAssignmentOrchestrator: IssueAssignmentOrchestrator,
   configResolver: AgentConfigResolver,
@@ -450,40 +450,65 @@ final case class ChatControllerLive(
     metadata: Option[String],
   ): IO[PersistenceError, ConversationMessage] =
     for
-      now        <- Clock.instant
-      _          <- chatRepository.addMessage(
-                      ConversationMessage(
-                        conversationId = conversationId,
-                        sender = "user",
-                        senderType = SenderType.User,
-                        content = userContent,
-                        messageType = messageType,
-                        metadata = metadata,
-                        createdAt = now,
-                        updatedAt = now,
-                      )
-                    )
-      aiConfig   <- configResolver.resolveConfig("chat")
-      aiResponse <- aiService
-                      .executeWithConfig(userContent, aiConfig)
-                      .mapError(err => PersistenceError.QueryFailed("ai_service", err.message))
-      now2       <- Clock.instant
-      aiMessage   = ConversationMessage(
-                      conversationId = conversationId,
-                      sender = "assistant",
-                      senderType = SenderType.Assistant,
-                      content = aiResponse.output,
-                      messageType = MessageType.Text,
-                      metadata = Some(aiResponse.metadata.toJson),
-                      createdAt = now2,
-                      updatedAt = now2,
-                    )
-      _          <- chatRepository.addMessage(aiMessage)
-      conv       <- chatRepository
-                      .getConversation(conversationId)
-                      .someOrFail(PersistenceError.NotFound("conversation", conversationId))
-      _          <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
+      now         <- Clock.instant
+      _           <- chatRepository.addMessage(
+                       ConversationMessage(
+                         conversationId = conversationId,
+                         sender = "user",
+                         senderType = SenderType.User,
+                         content = userContent,
+                         messageType = messageType,
+                         metadata = metadata,
+                         createdAt = now,
+                         updatedAt = now,
+                       )
+                     )
+      aiConfig    <- configResolver.resolveConfig("chat")
+      llmResponse <- llmService
+                       .execute(userContent)
+                       .mapError(convertLlmError)
+      now2        <- Clock.instant
+      aiMessage    = ConversationMessage(
+                       conversationId = conversationId,
+                       sender = "assistant",
+                       senderType = SenderType.Assistant,
+                       content = llmResponse.content,
+                       messageType = MessageType.Text,
+                       metadata = Some(llmResponse.metadata.toJson),
+                       createdAt = now2,
+                       updatedAt = now2,
+                     )
+      _           <- chatRepository.addMessage(aiMessage)
+      conv        <- chatRepository
+                       .getConversation(conversationId)
+                       .someOrFail(PersistenceError.NotFound("conversation", conversationId))
+      _           <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
     yield aiMessage
+
+  private def convertLlmError(error: LlmError): PersistenceError =
+    error match
+      case LlmError.ProviderError(message, cause) =>
+        PersistenceError.QueryFailed(
+          "llm_service",
+          s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
+        )
+      case LlmError.RateLimitError(retryAfter)    =>
+        PersistenceError.QueryFailed(
+          "llm_service",
+          s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
+        )
+      case LlmError.AuthenticationError(message)  =>
+        PersistenceError.QueryFailed("llm_service", s"Authentication failed: $message")
+      case LlmError.InvalidRequestError(message)  =>
+        PersistenceError.QueryFailed("llm_service", s"Invalid request: $message")
+      case LlmError.TimeoutError(duration)        =>
+        PersistenceError.QueryFailed("llm_service", s"Request timed out after ${duration.toSeconds}s")
+      case LlmError.ParseError(message, raw)      =>
+        PersistenceError.QueryFailed("llm_service", s"Parse error: $message")
+      case LlmError.ToolError(toolName, message)  =>
+        PersistenceError.QueryFailed("llm_service", s"Tool error ($toolName): $message")
+      case LlmError.ConfigError(message)          =>
+        PersistenceError.QueryFailed("llm_service", s"Configuration error: $message")
 
   private def parseForm(req: Request): IO[PersistenceError, Map[String, String]] =
     req.body.asString

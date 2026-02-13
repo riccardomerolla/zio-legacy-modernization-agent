@@ -7,6 +7,8 @@ import zio.http.{ Client, DnsResolver, ZClient }
 import agents.*
 import core.*
 import db.*
+import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
+import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import models.*
 import orchestration.*
 import web.WebServer
@@ -17,9 +19,8 @@ object ApplicationDI:
   type CommonServices =
     FileService &
       MigrationConfig &
-      ResponseParser &
       HttpAIClient &
-      AIService &
+      LlmService &
       StateService &
       javax.sql.DataSource &
       MigrationRepository &
@@ -34,20 +35,42 @@ object ApplicationDI:
       ValidationAgent &
       DocumentationAgent
 
+  def aiProviderToLlmProvider(aiProvider: AIProvider): LlmProvider =
+    aiProvider match
+      case AIProvider.GeminiCli => LlmProvider.GeminiCli
+      case AIProvider.GeminiApi => LlmProvider.GeminiApi
+      case AIProvider.OpenAi    => LlmProvider.OpenAI
+      case AIProvider.Anthropic => LlmProvider.Anthropic
+
+  def aiConfigToLlmConfig(aiConfig: AIProviderConfig): LlmConfig =
+    LlmConfig(
+      provider = aiProviderToLlmProvider(aiConfig.provider),
+      model = aiConfig.model,
+      baseUrl = aiConfig.baseUrl,
+      apiKey = aiConfig.apiKey,
+      timeout = aiConfig.timeout,
+      maxRetries = aiConfig.maxRetries,
+      requestsPerMinute = aiConfig.requestsPerMinute,
+      burstSize = aiConfig.burstSize,
+      acquireTimeout = aiConfig.acquireTimeout,
+      temperature = aiConfig.temperature,
+      maxTokens = aiConfig.maxTokens,
+    )
+
   def commonLayers(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, CommonServices] =
+    val llmConfig = aiConfigToLlmConfig(config.resolvedProviderConfig)
     ZLayer.make[CommonServices](
       // Core services and configuration
       FileService.live,
       ZLayer.succeed(config),
-      ZLayer.succeed(config.resolvedProviderConfig),
-      ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
+      ZLayer.succeed(llmConfig),
 
       // Service implementations
-      RateLimiter.live,
-      ResponseParser.live,
       httpClientLayer(config).orDie,
       HttpAIClient.live,
-      AIService.fromConfig.mapError(e => new RuntimeException(e.message)).orDie,
+      HttpClient.live,
+      GeminiCliExecutor.live,
+      LlmService.fromConfig,
       StateService.live(config.stateDir),
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
