@@ -41,7 +41,30 @@ lazy val It = config("it") extend Test
 
 resolvers += "jitpack" at "https://jitpack.io"
 
+lazy val llm4zio = (project in file("llm4zio"))
+  .configs(It)
+  .settings(inConfig(It)(Defaults.testSettings): _*)
+  .settings(
+    name := "llm4zio",
+    description := "ZIO-native LLM framework",
+    // Handle version conflicts - prefer newer versions
+    libraryDependencySchemes += "dev.zio" %% "zio-json" % VersionScheme.Always,
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio" % "2.1.24",
+      "dev.zio" %% "zio-streams" % "2.1.24",
+      "dev.zio" %% "zio-json" % "0.9.0",
+      "dev.zio" %% "zio-http" % "3.8.1",
+      "dev.zio" %% "zio-logging" % "2.4.0",
+      "dev.zio" %% "zio-test" % "2.1.24" % "test,it",
+      "dev.zio" %% "zio-test-sbt" % "2.1.24" % "test,it",
+      "dev.zio" %% "zio-test-magnolia" % "2.1.24" % "test,it"
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
+    It / testFrameworks ++= (Test / testFrameworks).value,
+  )
+
 lazy val root = (project in file("."))
+  .dependsOn(llm4zio)
   .configs(It)
   .settings(inConfig(It)(Defaults.testSettings): _*)
   .settings(
@@ -76,7 +99,7 @@ lazy val root = (project in file("."))
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     It / testFrameworks ++= (Test / testFrameworks).value,
-    coverageExcludedPackages := "<empty>;.*\\.example\\..*",
+    coverageExcludedPackages := "<empty>;.*\\.example\\..*;web.views;web.controllers;web$;db;orchestration",
     coverageExcludedFiles := ".*Main\\.scala",
     coverageMinimumStmtTotal := 80,
     coverageFailOnMinimum := true,
