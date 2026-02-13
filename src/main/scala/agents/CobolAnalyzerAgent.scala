@@ -6,11 +6,11 @@ import zio.*
 import zio.json.*
 import zio.stream.*
 
-import llm4zio.core.{LlmService, LlmError}
+import core.{ FileService, Logger }
+import llm4zio.core.{ LlmError, LlmService }
 import llm4zio.tools.JsonSchema
-import core.{FileService, Logger}
 import models.*
-import prompts.{PromptHelpers, PromptTemplates}
+import prompts.{ PromptHelpers, PromptTemplates }
 
 /** CobolAnalyzerAgent - Deep structural analysis of COBOL programs using AI
   *
@@ -116,7 +116,7 @@ object CobolAnalyzerAgent:
                 analysis  <- llmService
                                .executeStructured[CobolAnalysis](enrichedPrompt, schema)
                                .mapError(convertError(cobolFile.name))
-                               .map(_.copy(file = cobolFile))  // Ensure file metadata is correct
+                               .map(_.copy(file = cobolFile)) // Ensure file metadata is correct
                 validated <- validateAnalysis(analysis, cobolFile, attempt, maxAttempts)
               yield validated
 
@@ -187,23 +187,23 @@ object CobolAnalyzerAgent:
           private def buildJsonSchema(): JsonSchema =
             import zio.json.ast.Json
             Json.Obj(
-              "type" -> Json.Str("object"),
+              "type"       -> Json.Str("object"),
               "properties" -> Json.Obj(
-                "file" -> Json.Obj("type" -> Json.Str("object")),
-                "divisions" -> Json.Obj("type" -> Json.Str("object")),
-                "variables" -> Json.Obj("type" -> Json.Str("array")),
+                "file"       -> Json.Obj("type" -> Json.Str("object")),
+                "divisions"  -> Json.Obj("type" -> Json.Str("object")),
+                "variables"  -> Json.Obj("type" -> Json.Str("array")),
                 "procedures" -> Json.Obj("type" -> Json.Str("array")),
-                "copybooks" -> Json.Obj("type" -> Json.Str("array")),
-                "complexity" -> Json.Obj("type" -> Json.Str("object"))
+                "copybooks"  -> Json.Obj("type" -> Json.Str("array")),
+                "complexity" -> Json.Obj("type" -> Json.Str("object")),
               ),
-              "required" -> Json.Arr(
+              "required"   -> Json.Arr(
                 Json.Str("file"),
                 Json.Str("divisions"),
                 Json.Str("variables"),
                 Json.Str("procedures"),
                 Json.Str("copybooks"),
-                Json.Str("complexity")
-              )
+                Json.Str("complexity"),
+              ),
             )
 
           private def convertError(fileName: String)(error: LlmError): AnalysisError =
@@ -211,24 +211,24 @@ object CobolAnalyzerAgent:
               case LlmError.ProviderError(message, cause) =>
                 AnalysisError.AIFailed(
                   fileName,
-                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}"
+                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
                 )
-              case LlmError.RateLimitError(retryAfter) =>
+              case LlmError.RateLimitError(retryAfter)    =>
                 AnalysisError.AIFailed(
                   fileName,
-                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}"
+                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
                 )
-              case LlmError.AuthenticationError(message) =>
+              case LlmError.AuthenticationError(message)  =>
                 AnalysisError.AIFailed(fileName, s"Authentication failed: $message")
-              case LlmError.InvalidRequestError(message) =>
+              case LlmError.InvalidRequestError(message)  =>
                 AnalysisError.AIFailed(fileName, s"Invalid request: $message")
-              case LlmError.TimeoutError(duration) =>
+              case LlmError.TimeoutError(duration)        =>
                 AnalysisError.AIFailed(fileName, s"Request timed out after ${duration.toSeconds}s")
-              case LlmError.ParseError(message, raw) =>
+              case LlmError.ParseError(message, raw)      =>
                 AnalysisError.ParseFailed(fileName, s"$message\nRaw: ${raw.take(200)}")
-              case LlmError.ToolError(toolName, message) =>
+              case LlmError.ToolError(toolName, message)  =>
                 AnalysisError.AIFailed(fileName, s"Tool error ($toolName): $message")
-              case LlmError.ConfigError(message) =>
+              case LlmError.ConfigError(message)          =>
                 AnalysisError.AIFailed(fileName, s"Configuration error: $message")
 
           private def validateAnalysis(

@@ -8,7 +8,7 @@ import zio.stream.*
 import zio.test.*
 
 import core.FileService
-import llm4zio.core.{ LlmService, LlmError, LlmResponse, LlmChunk, Message, ToolCallResponse }
+import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
 
@@ -16,7 +16,7 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
 
   class MockLlmService(
     structuredResponse: CobolAnalysis,
-    shouldFail: Boolean = false
+    shouldFail: Boolean = false,
   ) extends LlmService:
     override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
       if shouldFail then
@@ -51,13 +51,13 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
         lineCount = 2,
         lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
         encoding = "UTF-8",
-        fileType = FileType.Program
+        fileType = FileType.Program,
       ),
       divisions = CobolDivisions(
         identification = Some("PROGRAM-ID. PLACEHOLDER."),
         environment = None,
         data = Some("WORKING-STORAGE SECTION."),
-        procedure = Some("PROCEDURE DIVISION.")
+        procedure = Some("PROCEDURE DIVISION."),
       ),
       variables = List(
         Variable(name = "WS-ID", level = 1, dataType = "NUMERIC", picture = Some("9(5)"), usage = None)
@@ -66,11 +66,11 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
         Procedure(
           name = "MAIN",
           paragraphs = List("MAIN"),
-          statements = List(Statement(lineNumber = 1, statementType = "STOP", content = "STOP RUN"))
+          statements = List(Statement(lineNumber = 1, statementType = "STOP", content = "STOP RUN")),
         )
       ),
       copybooks = List("COPY1"),
-      complexity = ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 2, numberOfProcedures = 1)
+      complexity = ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 2, numberOfProcedures = 1),
     )
 
   def spec: Spec[Any, Any] = suite("CobolAnalyzerAgentSpec")(
@@ -151,61 +151,64 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
     test("analyze retries on truncated JSON and succeeds on second attempt") {
       ZIO.scoped {
         for
-          tempDir      <- ZIO.attemptBlocking(Files.createTempDirectory("analyzer-retry"))
-          cobol         = tempDir.resolve("PROG1.cbl")
-          _            <- writeFile(cobol, "IDENTIFICATION DIVISION.\nPROCEDURE DIVISION.\n")
-          file          = CobolFile(
-                            path = cobol,
-                            name = "PROG1.cbl",
-                            size = 10,
-                            lineCount = 2,
-                            lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
-                            encoding = "UTF-8",
-                            fileType = FileType.Program,
+          tempDir    <- ZIO.attemptBlocking(Files.createTempDirectory("analyzer-retry"))
+          cobol       = tempDir.resolve("PROG1.cbl")
+          _          <- writeFile(cobol, "IDENTIFICATION DIVISION.\nPROCEDURE DIVISION.\n")
+          file        = CobolFile(
+                          path = cobol,
+                          name = "PROG1.cbl",
+                          size = 10,
+                          lineCount = 2,
+                          lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
+                          encoding = "UTF-8",
+                          fileType = FileType.Program,
+                        )
+          attemptRef <- Ref.make(0)
+          llmLayer    = ZLayer.fromZIO {
+                          ZIO.succeed(new LlmService {
+                            override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema)
+                              : IO[LlmError, A] =
+                              attemptRef.updateAndGet(_ + 1).flatMap { count =>
+                                if count <= 1 then
+                                  ZIO.fail(LlmError.ParseError("Truncated JSON", "invalid json"))
+                                else
+                                  ZIO.succeed(sampleAnalysis.asInstanceOf[A])
+                              }
+
+                            override def execute(prompt: String): IO[LlmError, LlmResponse] =
+                              ZIO.succeed(LlmResponse(content = "Mock", usage = None, metadata = Map.empty))
+
+                            override def executeStream(prompt: String): ZStream[Any, LlmError, LlmChunk] =
+                              ZStream.fail(LlmError.ProviderError("Not implemented", None))
+
+                            override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
+                              execute("history")
+
+                            override def executeStreamWithHistory(messages: List[Message])
+                              : ZStream[Any, LlmError, LlmChunk] =
+                              executeStream("history")
+
+                            override def executeWithTools(prompt: String, tools: List[AnyTool])
+                              : IO[LlmError, ToolCallResponse] =
+                              ZIO.fail(LlmError.ToolError("mock", "Not implemented"))
+
+                            override def isAvailable: UIO[Boolean] =
+                              ZIO.succeed(true)
+                          })
+                        }
+          analysis   <- CobolAnalyzerAgent
+                          .analyze(file)
+                          .provide(
+                            FileService.live,
+                            llmLayer,
+                            ZLayer.succeed(MigrationConfig(
+                              sourceDir = tempDir,
+                              outputDir = tempDir,
+                              maxCompileRetries = 2,
+                            )),
+                            CobolAnalyzerAgent.live,
                           )
-          attemptRef   <- Ref.make(0)
-          llmLayer      = ZLayer.fromZIO {
-                            ZIO.succeed(new LlmService {
-                              override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
-                                attemptRef.updateAndGet(_ + 1).flatMap { count =>
-                                  if count <= 1 then
-                                    ZIO.fail(LlmError.ParseError("Truncated JSON", "invalid json"))
-                                  else
-                                    ZIO.succeed(sampleAnalysis.asInstanceOf[A])
-                                }
-
-                              override def execute(prompt: String): IO[LlmError, LlmResponse] =
-                                ZIO.succeed(LlmResponse(content = "Mock", usage = None, metadata = Map.empty))
-
-                              override def executeStream(prompt: String): ZStream[Any, LlmError, LlmChunk] =
-                                ZStream.fail(LlmError.ProviderError("Not implemented", None))
-
-                              override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
-                                execute("history")
-
-                              override def executeStreamWithHistory(messages: List[Message]): ZStream[Any, LlmError, LlmChunk] =
-                                executeStream("history")
-
-                              override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
-                                ZIO.fail(LlmError.ToolError("mock", "Not implemented"))
-
-                              override def isAvailable: UIO[Boolean] =
-                                ZIO.succeed(true)
-                            })
-                          }
-          analysis     <- CobolAnalyzerAgent
-                            .analyze(file)
-                            .provide(
-                              FileService.live,
-                              llmLayer,
-                              ZLayer.succeed(MigrationConfig(
-                                sourceDir = tempDir,
-                                outputDir = tempDir,
-                                maxCompileRetries = 2,
-                              )),
-                              CobolAnalyzerAgent.live,
-                            )
-          attempts     <- attemptRef.get
+          attempts   <- attemptRef.get
         yield assertTrue(
           analysis.file.name == "PROG1.cbl",
           attempts == 2,
@@ -240,18 +243,19 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
                                 lineCount = 2,
                                 lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
                                 encoding = "UTF-8",
-                                fileType = FileType.Program
+                                fileType = FileType.Program,
                               ),
                               divisions = CobolDivisions(
                                 identification = Some("PROGRAM-ID. ARRAYPROG."),
                                 environment = Some("INPUT-OUTPUT SECTION."),
                                 data = Some("WORKING-STORAGE SECTION."),
-                                procedure = Some("MAIN-PARA. STOP RUN.")
+                                procedure = Some("MAIN-PARA. STOP RUN."),
                               ),
                               variables = List.empty,
                               procedures = List.empty,
                               copybooks = List.empty,
-                              complexity = ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 5, numberOfProcedures = 1)
+                              complexity =
+                                ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 5, numberOfProcedures = 1),
                             )
                           )),
                           ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir)),
@@ -293,26 +297,34 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
                                 lineCount = 2,
                                 lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
                                 encoding = "UTF-8",
-                                fileType = FileType.Program
+                                fileType = FileType.Program,
                               ),
                               divisions = CobolDivisions(
                                 identification = Some("PROGRAM-ID. MISSING."),
                                 environment = None,
                                 data = None,
-                                procedure = None
+                                procedure = None,
                               ),
                               variables = List(
-                                Variable(name = "WS-AMOUNT", level = 1, dataType = "numeric", picture = Some("9(7)V99"), usage = None)
+                                Variable(
+                                  name = "WS-AMOUNT",
+                                  level = 1,
+                                  dataType = "numeric",
+                                  picture = Some("9(7)V99"),
+                                  usage = None,
+                                )
                               ),
                               procedures = List(
                                 Procedure(
                                   name = "MAIN",
                                   paragraphs = List("MAIN"),
-                                  statements = List(Statement(lineNumber = 0, statementType = "STOP", content = "STOP RUN"))
+                                  statements =
+                                    List(Statement(lineNumber = 0, statementType = "STOP", content = "STOP RUN")),
                                 )
                               ),
                               copybooks = List.empty,
-                              complexity = ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 5, numberOfProcedures = 1)
+                              complexity =
+                                ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 5, numberOfProcedures = 1),
                             )
                           )),
                           ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir)),
@@ -354,18 +366,19 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
                                 lineCount = 2,
                                 lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
                                 encoding = "UTF-8",
-                                fileType = FileType.Program
+                                fileType = FileType.Program,
                               ),
                               divisions = CobolDivisions(
                                 identification = Some("PROGRAM-ID. NOFILE."),
                                 environment = None,
                                 data = None,
-                                procedure = None
+                                procedure = None,
                               ),
                               variables = List.empty,
                               procedures = List.empty,
                               copybooks = List.empty,
-                              complexity = ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 3, numberOfProcedures = 1)
+                              complexity =
+                                ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 3, numberOfProcedures = 1),
                             )
                           )),
                           ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir)),
@@ -405,13 +418,13 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
                                 lineCount = 2,
                                 lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
                                 encoding = "UTF-8",
-                                fileType = FileType.Program
+                                fileType = FileType.Program,
                               ),
                               divisions = CobolDivisions(
                                 identification = Some("PROGRAM-ID. GARBAGE."),
                                 environment = None,
                                 data = None,
-                                procedure = None
+                                procedure = None,
                               ),
                               variables = List.empty,
                               procedures = List(
@@ -420,12 +433,13 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
                                   paragraphs = List("MAIN"),
                                   statements = List(
                                     Statement(lineNumber = 1, statementType = "MOVE", content = "MOVE 1 TO X"),
-                                    Statement(lineNumber = 5, statementType = "IF", content = "IF X > 0")
-                                  )
+                                    Statement(lineNumber = 5, statementType = "IF", content = "IF X > 0"),
+                                  ),
                                 )
                               ),
                               copybooks = List.empty,
-                              complexity = ComplexityMetrics(cyclomaticComplexity = 2, linesOfCode = 10, numberOfProcedures = 1)
+                              complexity =
+                                ComplexityMetrics(cyclomaticComplexity = 2, linesOfCode = 10, numberOfProcedures = 1),
                             )
                           )),
                           ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir)),
@@ -466,18 +480,19 @@ object CobolAnalyzerAgentSpec extends ZIOSpecDefault:
                                 lineCount = 2,
                                 lastModified = java.time.Instant.parse("2026-02-06T00:00:00Z"),
                                 encoding = "UTF-8",
-                                fileType = FileType.Program
+                                fileType = FileType.Program,
                               ),
                               divisions = CobolDivisions(
                                 identification = Some("PROGRAM-ID. COPYBK."),
                                 environment = None,
                                 data = None,
-                                procedure = None
+                                procedure = None,
                               ),
                               variables = List.empty,
                               procedures = List.empty,
                               copybooks = List("ZBNKSET", "ERRCODE", "PLAIN"),
-                              complexity = ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 5, numberOfProcedures = 1)
+                              complexity =
+                                ComplexityMetrics(cyclomaticComplexity = 1, linesOfCode = 5, numberOfProcedures = 1),
                             )
                           )),
                           ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir)),

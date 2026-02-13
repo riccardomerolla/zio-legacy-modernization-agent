@@ -8,7 +8,7 @@ import zio.stream.*
 import zio.test.*
 
 import core.FileService
-import llm4zio.core.{ LlmService, LlmError, LlmResponse, LlmChunk, Message, ToolCallResponse }
+import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
 
@@ -16,7 +16,7 @@ object ValidationAgentSpec extends ZIOSpecDefault:
 
   class MockLlmService(
     structuredResponse: SemanticValidation,
-    shouldFail: Boolean = false
+    shouldFail: Boolean = false,
   ) extends LlmService:
     override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
       if shouldFail then
@@ -47,7 +47,7 @@ object ValidationAgentSpec extends ZIOSpecDefault:
       businessLogicPreserved = true,
       confidence = 0.91,
       summary = "Equivalent mapping",
-      issues = List.empty
+      issues = List.empty,
     )
 
   private val invalidSemanticValidation: SemanticValidation =
@@ -62,9 +62,9 @@ object ValidationAgentSpec extends ZIOSpecDefault:
           message = "Unable to parse semantic validation response",
           file = None,
           line = None,
-          suggestion = None
+          suggestion = None,
         )
-      )
+      ),
     )
 
   def spec: Spec[Any, Any] = suite("ValidationAgentSpec")(

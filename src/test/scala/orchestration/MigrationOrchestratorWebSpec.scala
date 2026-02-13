@@ -84,7 +84,6 @@ object MigrationOrchestratorWebSpec extends ZIOSpecDefault:
       transformer,
       validation,
       documentation,
-      aiLayer,
       stubHttpAIClient,
       ZLayer.succeed(cfg),
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:file:$dbName?mode=memory&cache=shared")),
@@ -308,13 +307,6 @@ object MigrationOrchestratorWebSpec extends ZIOSpecDefault:
     ZLayer.succeed(new DocumentationAgent {
       override def generateDocs(result: MigrationResult): ZIO[Any, DocError, MigrationDocumentation] =
         ZIO.succeed(MigrationDocumentation.empty)
-    })
-
-  private val aiLayer: ULayer[AIService] =
-    ZLayer.succeed(new AIService {
-      override def execute(prompt: String): ZIO[Any, AIError, AIResponse]                             = ZIO.succeed(AIResponse("{}"))
-      override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] = execute(prompt)
-      override def isAvailable: ZIO[Any, Nothing, Boolean]                                            = ZIO.succeed(true)
     })
 
   private val stubHttpAIClient: ULayer[HttpAIClient] =

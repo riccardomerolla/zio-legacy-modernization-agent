@@ -5,9 +5,9 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 import zio.*
-import zio.json.*
-import zio.http.{ Client, DnsResolver, ZClient }
 import zio.http.netty.NettyConfig
+import zio.http.{ Client, DnsResolver, ZClient }
+import zio.json.*
 
 import agents.*
 import core.*
@@ -76,7 +76,6 @@ object MigrationOrchestrator:
       FileService &
       HttpAIClient &
       StateService &
-      AIService &
       MigrationConfig &
       MigrationRepository &
       ProgressTracker &
@@ -95,7 +94,6 @@ object MigrationOrchestrator:
       fileService        <- ZIO.service[FileService]
       httpAIClient       <- ZIO.service[HttpAIClient]
       stateService       <- ZIO.service[StateService]
-      _                  <- ZIO.service[AIService]
       config             <- ZIO.service[MigrationConfig]
       repository         <- ZIO.service[MigrationRepository]
       tracker            <- ZIO.service[ProgressTracker]
@@ -749,7 +747,7 @@ object MigrationOrchestrator:
         runConfig: MigrationConfig
       ): ZLayer[Any, AIError, CobolAnalyzerAgent & BusinessLogicExtractorAgent & JavaTransformerAgent & ValidationAgent] =
         val runProviderConfig = runConfig.resolvedProviderConfig
-        val llmConfig = di.ApplicationDI.aiConfigToLlmConfig(runProviderConfig)
+        val llmConfig         = di.ApplicationDI.aiConfigToLlmConfig(runProviderConfig)
         ZLayer.make[CobolAnalyzerAgent & BusinessLogicExtractorAgent & JavaTransformerAgent & ValidationAgent](
           ZLayer.succeed(runConfig),
           ZLayer.succeed(llmConfig),

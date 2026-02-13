@@ -7,12 +7,12 @@ import zio.http.{ Client, DnsResolver, ZClient }
 import agents.*
 import core.*
 import db.*
+import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
+import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import models.*
 import orchestration.*
 import web.WebServer
 import web.controllers.*
-import llm4zio.core.{LlmService, LlmConfig, LlmProvider}
-import llm4zio.providers.{HttpClient, GeminiCliExecutor}
 
 object ApplicationDI:
 
@@ -20,7 +20,6 @@ object ApplicationDI:
     FileService &
       MigrationConfig &
       HttpAIClient &
-      AIService &
       LlmService &
       StateService &
       javax.sql.DataSource &
@@ -64,15 +63,11 @@ object ApplicationDI:
       // Core services and configuration
       FileService.live,
       ZLayer.succeed(config),
-      ZLayer.succeed(config.resolvedProviderConfig),
-      ZLayer.succeed(RateLimiterConfig.fromMigrationConfig(config)),
       ZLayer.succeed(llmConfig),
 
       // Service implementations
-      RateLimiter.live,
       httpClientLayer(config).orDie,
       HttpAIClient.live,
-      AIService.fromConfig.mapError(e => new RuntimeException(e.message)).orDie,
       HttpClient.live,
       GeminiCliExecutor.live,
       LlmService.fromConfig,

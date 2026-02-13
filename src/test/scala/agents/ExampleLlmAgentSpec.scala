@@ -3,34 +3,34 @@ package agents
 import java.nio.file.Path
 
 import zio.*
-import zio.test.*
 import zio.json.*
 import zio.stream.*
+import zio.test.*
 
-import llm4zio.core.{LlmService, LlmError, LlmResponse, LlmChunk, Message, TokenUsage, ToolCallResponse}
-import llm4zio.tools.{AnyTool, JsonSchema}
-import models.*
 import core.FileService
+import llm4zio.core.*
+import llm4zio.tools.{ AnyTool, JsonSchema }
+import models.*
 
 /** Test suite for ExampleLlmAgent demonstrating testing with llm4zio
   *
   * This shows:
-  * - How to create mock LlmService for testing
-  * - How to test streaming responses
-  * - How to test conversation history
-  * - How to test error handling
+  *   - How to create mock LlmService for testing
+  *   - How to test streaming responses
+  *   - How to test conversation history
+  *   - How to test error handling
   */
 object ExampleLlmAgentSpec extends ZIOSpecDefault:
 
   /** Mock LlmService for testing
     *
-    * Returns predefined responses instead of calling real LLM providers.
-    * This allows fast, deterministic tests without network calls.
+    * Returns predefined responses instead of calling real LLM providers. This allows fast, deterministic tests without
+    * network calls.
     */
   class MockLlmService(
     structuredResponse: CobolAnalysis,
     streamingChunks: List[String] = List("Analyzing", "...", "Done"),
-    shouldFail: Boolean = false
+    shouldFail: Boolean = false,
   ) extends LlmService:
 
     override def execute(prompt: String): IO[LlmError, LlmResponse] =
@@ -39,8 +39,8 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
       else
         ZIO.succeed(LlmResponse(
           content = "Mock response",
-          usage = Some(TokenUsage(prompt = 10, completion = 5, total = 15)),
-          metadata = Map("provider" -> "mock")
+          usage = Some(llm4zio.core.TokenUsage(prompt = 10, completion = 5, total = 15)),
+          metadata = Map("provider" -> "mock"),
         ))
 
     override def executeStream(prompt: String): ZStream[Any, LlmError, LlmChunk] =
@@ -50,7 +50,7 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
         ZStream.fromIterable(streamingChunks).map { chunk =>
           LlmChunk(
             delta = chunk,
-            finishReason = if chunk == streamingChunks.last then Some("stop") else None
+            finishReason = if chunk == streamingChunks.last then Some("stop") else None,
           )
         }
 
@@ -60,8 +60,8 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
       else
         ZIO.succeed(LlmResponse(
           content = structuredResponse.toJson,
-          usage = Some(TokenUsage(prompt = 20, completion = 30, total = 50)),
-          metadata = Map("provider" -> "mock", "messages" -> messages.size.toString)
+          usage = Some(llm4zio.core.TokenUsage(prompt = 20, completion = 30, total = 50)),
+          metadata = Map("provider" -> "mock", "messages" -> messages.size.toString),
         ))
 
     override def executeStreamWithHistory(messages: List[Message]): ZStream[Any, LlmError, LlmChunk] =
@@ -123,23 +123,23 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
       ZIO.succeed(50L)
 
   // Test fixtures
-  val testFile = CobolFile(
+  val testFile: CobolFile = CobolFile(
     path = Path.of("/test/TEST.cbl"),
     name = "TEST.cbl",
     size = 1024,
     lineCount = 50,
     lastModified = java.time.Instant.now,
     encoding = "UTF-8",
-    fileType = FileType.Program
+    fileType = FileType.Program,
   )
 
-  val mockAnalysis = CobolAnalysis(
+  val mockAnalysis: CobolAnalysis = CobolAnalysis(
     file = testFile,
     divisions = CobolDivisions(
       identification = Some("PROGRAM-ID. TEST-PROGRAM."),
       environment = None,
       data = Some("01 TEST-VAR PIC X(10)."),
-      procedure = Some("DISPLAY 'Hello World'.")
+      procedure = Some("DISPLAY 'Hello World'."),
     ),
     variables = List(
       Variable(
@@ -147,7 +147,7 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
         level = 1,
         dataType = "alphanumeric",
         picture = Some("X(10)"),
-        usage = None
+        usage = None,
       )
     ),
     procedures = List(
@@ -158,20 +158,20 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           Statement(
             lineNumber = 10,
             statementType = "DISPLAY",
-            content = "DISPLAY 'Hello World'"
+            content = "DISPLAY 'Hello World'",
           )
-        )
+        ),
       )
     ),
     copybooks = List.empty,
     complexity = ComplexityMetrics(
       cyclomaticComplexity = 1,
       linesOfCode = 50,
-      numberOfProcedures = 1
-    )
+      numberOfProcedures = 1,
+    ),
   )
 
-  val mockConfig = MigrationConfig(
+  val mockConfig: MigrationConfig = MigrationConfig(
     sourceDir = Path.of("/test"),
     outputDir = Path.of("/output"),
     stateDir = Path.of("/state"),
@@ -197,12 +197,12 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
     basePackage = "test",
     projectName = None,
     projectVersion = "1.0.0",
-    maxCompileRetries = 3
+    maxCompileRetries = 3,
   )
 
-  def spec = suite("ExampleLlmAgent")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ExampleLlmAgent")(
     test("analyze should return structured analysis using LlmService") {
-      val llmService = new MockLlmService(mockAnalysis)
+      val llmService  = new MockLlmService(mockAnalysis)
       val fileService = new MockFileService()
 
       val result = ZIO.serviceWithZIO[ExampleLlmAgent](_.analyze(testFile))
@@ -210,7 +210,7 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           ExampleLlmAgent.live,
           ZLayer.succeed(llmService),
           ZLayer.succeed(fileService),
-          ZLayer.succeed(mockConfig)
+          ZLayer.succeed(mockConfig),
         )
 
       result.map { analysis =>
@@ -218,15 +218,14 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           analysis.file.name == testFile.name,
           analysis.complexity.linesOfCode == 50,
           analysis.variables.size == 1,
-          analysis.variables.head.name == "TEST-VAR"
+          analysis.variables.head.name == "TEST-VAR",
         )
       }
     },
-
     test("analyzeStreaming should stream analysis chunks") {
-      val llmService = new MockLlmService(
+      val llmService  = new MockLlmService(
         mockAnalysis,
-        streamingChunks = List("Analyzing", " program", "...", " Complete!")
+        streamingChunks = List("Analyzing", " program", "...", " Complete!"),
       )
       val fileService = new MockFileService()
 
@@ -235,19 +234,18 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           ExampleLlmAgent.live,
           ZLayer.succeed(llmService),
           ZLayer.succeed(fileService),
-          ZLayer.succeed(mockConfig)
+          ZLayer.succeed(mockConfig),
         )
 
       result.map { chunks =>
         assertTrue(
           chunks.size == 4,
-          chunks.mkString == "Analyzing program... Complete!"
+          chunks.mkString == "Analyzing program... Complete!",
         )
       }
     },
-
     test("analyzeWithContext should use conversation history") {
-      val llmService = new MockLlmService(mockAnalysis)
+      val llmService  = new MockLlmService(mockAnalysis)
       val fileService = new MockFileService()
 
       val previousAnalyses = List(
@@ -259,19 +257,51 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           ExampleLlmAgent.live,
           ZLayer.succeed(llmService),
           ZLayer.succeed(fileService),
-          ZLayer.succeed(mockConfig)
+          ZLayer.succeed(mockConfig),
         )
 
       result.map { analysis =>
         assertTrue(
           analysis.file.name == testFile.name,
-          analysis.complexity.linesOfCode == 50
+          analysis.complexity.linesOfCode == 50,
         )
       }
     },
+    test("companion accessors should delegate to service methods") {
+      val llmService  = new MockLlmService(mockAnalysis)
+      val fileService = new MockFileService()
+      val layer       =
+        (ZLayer.succeed(llmService) ++ ZLayer.succeed(fileService) ++ ZLayer.succeed(mockConfig)) >>>
+          ExampleLlmAgent.live
 
+      for
+        analysis <- ExampleLlmAgent.analyze(testFile).provideLayer(layer)
+        streamed <- ExampleLlmAgent.analyzeStreaming(testFile).runCollect.provideLayer(layer)
+        withCtx  <- ExampleLlmAgent
+                      .analyzeWithContext(testFile, List(mockAnalysis.copy(file = testFile.copy(name = "P1.cbl"))))
+                      .provideLayer(layer)
+      yield assertTrue(
+        analysis.file.name == "TEST.cbl",
+        streamed.nonEmpty,
+        withCtx.file.name == "TEST.cbl",
+      )
+    },
+    test("example basicAnalysis should run through accessor path") {
+      val llmService  = new MockLlmService(mockAnalysis)
+      val fileService = new MockFileService()
+
+      val result = ExampleLlmAgent.Example.basicAnalysis(testFile)
+        .provide(
+          ExampleLlmAgent.live,
+          ZLayer.succeed(llmService),
+          ZLayer.succeed(fileService),
+          ZLayer.succeed(mockConfig),
+        )
+
+      result.exit.map(exit => assertTrue(exit.isSuccess))
+    },
     test("analyze should handle LlmError.ProviderError") {
-      val llmService = new MockLlmService(mockAnalysis, shouldFail = true)
+      val llmService  = new MockLlmService(mockAnalysis, shouldFail = true)
       val fileService = new MockFileService()
 
       val result = ZIO.serviceWithZIO[ExampleLlmAgent](_.analyze(testFile)).exit
@@ -279,7 +309,7 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           ExampleLlmAgent.live,
           ZLayer.succeed(llmService),
           ZLayer.succeed(fileService),
-          ZLayer.succeed(mockConfig)
+          ZLayer.succeed(mockConfig),
         )
 
       result.map {
@@ -288,7 +318,7 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           val failureErrors = cause.failures.collect {
             case err: AnalysisError.AIFailed => err
           }
-          val hasFailure = failureErrors.nonEmpty &&
+          val hasFailure    = failureErrors.nonEmpty &&
             failureErrors.exists(e => e.fileName == testFile.name) &&
             failureErrors.exists(e => e.message.contains("Provider error"))
 
@@ -296,13 +326,12 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           val hasDefectOrFailure = hasFailure || cause.isFailure
 
           assertTrue(hasDefectOrFailure)
-        case Exit.Success(_) =>
+        case Exit.Success(_)     =>
           assertTrue(false) // Should have failed but succeeded
       }
     },
-
     test("analyzeStreaming should handle stream errors") {
-      val llmService = new MockLlmService(mockAnalysis, shouldFail = true)
+      val llmService  = new MockLlmService(mockAnalysis, shouldFail = true)
       val fileService = new MockFileService()
 
       val result = ZStream.serviceWithStream[ExampleLlmAgent](_.analyzeStreaming(testFile)).runCollect.exit
@@ -310,14 +339,13 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
           ExampleLlmAgent.live,
           ZLayer.succeed(llmService),
           ZLayer.succeed(fileService),
-          ZLayer.succeed(mockConfig)
+          ZLayer.succeed(mockConfig),
         )
 
       result.map(exit => assertTrue(exit.isFailure))
     },
-
     test("isAvailable should reflect service health") {
-      val healthyService = new MockLlmService(mockAnalysis, shouldFail = false)
+      val healthyService   = new MockLlmService(mockAnalysis, shouldFail = false)
       val unhealthyService = new MockLlmService(mockAnalysis, shouldFail = true)
 
       for
@@ -325,28 +353,28 @@ object ExampleLlmAgentSpec extends ZIOSpecDefault:
         unhealthy <- unhealthyService.isAvailable
       yield assertTrue(
         healthy == true,
-        unhealthy == false
+        unhealthy == false,
       )
-    }
+    },
   )
 
 /** Comparison with old AIService testing:
   *
   * OLD (AIService):
-  * - Mock AIService returns AIResponse with string content
-  * - Mock ResponseParser to parse string → domain types
-  * - Two layers of mocking required
-  * - Less type safety
+  *   - Mock AIService returns AIResponse with string content
+  *   - Mock ResponseParser to parse string → domain types
+  *   - Two layers of mocking required
+  *   - Less type safety
   *
   * NEW (LlmService):
-  * - Mock LlmService returns domain types directly
-  * - No separate parser mocking needed
-  * - One layer of mocking
-  * - Type-safe mocking (executeStructured[T] returns T)
+  *   - Mock LlmService returns domain types directly
+  *   - No separate parser mocking needed
+  *   - One layer of mocking
+  *   - Type-safe mocking (executeStructured[T] returns T)
   *
   * Benefits:
-  * - Simpler test setup
-  * - More maintainable tests
-  * - Better type safety
-  * - Easier to test new features (streaming, tools)
+  *   - Simpler test setup
+  *   - More maintainable tests
+  *   - Better type safety
+  *   - Easier to test new features (streaming, tools)
   */

@@ -5,9 +5,9 @@ import java.nio.file.Path
 import zio.*
 import zio.json.*
 
-import llm4zio.core.{LlmService, LlmError}
+import core.{ FileService, Logger }
+import llm4zio.core.{ LlmError, LlmService }
 import llm4zio.tools.JsonSchema
-import core.{FileService, Logger}
 import models.*
 import prompts.ValidationPrompts
 
@@ -273,19 +273,19 @@ object ValidationAgent:
           private def buildJsonSchema(): JsonSchema =
             import zio.json.ast.Json
             Json.Obj(
-              "type" -> Json.Str("object"),
+              "type"       -> Json.Str("object"),
               "properties" -> Json.Obj(
                 "businessLogicPreserved" -> Json.Obj("type" -> Json.Str("boolean")),
-                "confidence" -> Json.Obj("type" -> Json.Str("number")),
-                "summary" -> Json.Obj("type" -> Json.Str("string")),
-                "issues" -> Json.Obj("type" -> Json.Str("array"))
+                "confidence"             -> Json.Obj("type" -> Json.Str("number")),
+                "summary"                -> Json.Obj("type" -> Json.Str("string")),
+                "issues"                 -> Json.Obj("type" -> Json.Str("array")),
               ),
-              "required" -> Json.Arr(
+              "required"   -> Json.Arr(
                 Json.Str("businessLogicPreserved"),
                 Json.Str("confidence"),
                 Json.Str("summary"),
-                Json.Str("issues")
-              )
+                Json.Str("issues"),
+              ),
             )
 
           private def convertError(projectName: String)(error: LlmError): ValidationError =
@@ -293,24 +293,24 @@ object ValidationAgent:
               case LlmError.ProviderError(message, cause) =>
                 ValidationError.SemanticValidationFailed(
                   projectName,
-                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}"
+                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
                 )
-              case LlmError.RateLimitError(retryAfter) =>
+              case LlmError.RateLimitError(retryAfter)    =>
                 ValidationError.SemanticValidationFailed(
                   projectName,
-                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}"
+                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
                 )
-              case LlmError.AuthenticationError(message) =>
+              case LlmError.AuthenticationError(message)  =>
                 ValidationError.SemanticValidationFailed(projectName, s"Authentication failed: $message")
-              case LlmError.InvalidRequestError(message) =>
+              case LlmError.InvalidRequestError(message)  =>
                 ValidationError.SemanticValidationFailed(projectName, s"Invalid request: $message")
-              case LlmError.TimeoutError(duration) =>
+              case LlmError.TimeoutError(duration)        =>
                 ValidationError.SemanticValidationFailed(projectName, s"Request timed out after ${duration.toSeconds}s")
-              case LlmError.ParseError(message, raw) =>
+              case LlmError.ParseError(message, raw)      =>
                 ValidationError.SemanticValidationFailed(projectName, s"$message\nRaw: ${raw.take(200)}")
-              case LlmError.ToolError(toolName, message) =>
+              case LlmError.ToolError(toolName, message)  =>
                 ValidationError.SemanticValidationFailed(projectName, s"Tool error ($toolName): $message")
-              case LlmError.ConfigError(message) =>
+              case LlmError.ConfigError(message)          =>
                 ValidationError.SemanticValidationFailed(projectName, s"Configuration error: $message")
 
           private def determineStatus(compileResult: CompileResult, issues: List[ValidationIssue]): ValidationStatus =

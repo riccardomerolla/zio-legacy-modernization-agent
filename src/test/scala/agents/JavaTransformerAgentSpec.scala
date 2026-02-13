@@ -10,7 +10,7 @@ import zio.stream.*
 import zio.test.*
 
 import core.FileService
-import llm4zio.core.{ LlmService, LlmError, LlmResponse, LlmChunk, Message, ToolCallResponse }
+import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
 
@@ -20,12 +20,10 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
     private val responseQueue = new java.util.concurrent.ConcurrentLinkedQueue(responses.asJava)
 
     override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
-      ZIO.attempt {
-        val response = Option(responseQueue.poll()).getOrElse(
-          throw new RuntimeException("No more mock responses available")
-        )
-        response.asInstanceOf[A]
-      }.mapError(e => LlmError.ParseError("Mock error", e.getMessage))
+      ZIO
+        .fromOption(Option(responseQueue.poll()))
+        .orElseFail(LlmError.ParseError("Mock error", "No more mock responses available"))
+        .map(_.asInstanceOf[A])
 
     override def execute(prompt: String): IO[LlmError, LlmResponse] =
       ZIO.succeed(LlmResponse(content = "Mock", usage = None, metadata = Map.empty))
@@ -53,7 +51,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
         JavaField(name = "customerId", javaType = "Long", cobolSource = "CUSTOMER-ID", annotations = List("@Id"))
       ),
       annotations = List("@Entity", "@Table(name = \"customer\")"),
-      sourceCode = "public class Customer {}"
+      sourceCode = "public class Customer {}",
     )
 
   private val sampleService: JavaService =
@@ -61,7 +59,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
       name = "CustomerService",
       methods = List(
         JavaMethod(name = "process", returnType = "String", parameters = List.empty, body = "return \"ok\";")
-      )
+      ),
     )
 
   private val sampleController: JavaController =
@@ -70,7 +68,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
       basePath = "/api/customers",
       endpoints = List(
         RestEndpoint(path = "/process", method = HttpMethod.POST, methodName = "process")
-      )
+      ),
     )
 
   def spec: Spec[Any, Any] = suite("JavaTransformerAgentSpec")(

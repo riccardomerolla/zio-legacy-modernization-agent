@@ -5,9 +5,9 @@ import java.nio.file.Path
 import zio.*
 import zio.json.*
 
-import llm4zio.core.{LlmService, LlmError}
+import core.{ FileService, Logger }
+import llm4zio.core.{ LlmError, LlmService }
 import llm4zio.tools.JsonSchema
-import core.{FileService, Logger}
 import models.*
 import prompts.PromptTemplates
 
@@ -39,16 +39,16 @@ object BusinessLogicExtractorAgent:
           override def extract(analysis: CobolAnalysis)
             : ZIO[Any, BusinessLogicExtractionError, BusinessLogicExtraction] =
             for
-              _        <- Logger.info(s"Extracting business logic from ${analysis.file.name}")
-              prompt    = PromptTemplates.BusinessLogicExtractor.extractBusinessLogic(analysis)
-              schema    = buildJsonSchema()
-              parsed   <- llmService
-                            .executeStructured[BusinessLogicExtraction](prompt, schema)
-                            .mapError(convertError(analysis.file.name))
-              enriched  = parsed.copy(
-                            fileName = if parsed.fileName.trim.nonEmpty then parsed.fileName else analysis.file.name
-                          )
-              _        <- writeReport(enriched).tapError(err => Logger.warn(err.message))
+              _       <- Logger.info(s"Extracting business logic from ${analysis.file.name}")
+              prompt   = PromptTemplates.BusinessLogicExtractor.extractBusinessLogic(analysis)
+              schema   = buildJsonSchema()
+              parsed  <- llmService
+                           .executeStructured[BusinessLogicExtraction](prompt, schema)
+                           .mapError(convertError(analysis.file.name))
+              enriched = parsed.copy(
+                           fileName = if parsed.fileName.trim.nonEmpty then parsed.fileName else analysis.file.name
+                         )
+              _       <- writeReport(enriched).tapError(err => Logger.warn(err.message))
             yield enriched
 
           override def extractAll(
@@ -88,19 +88,19 @@ object BusinessLogicExtractorAgent:
           private def buildJsonSchema(): JsonSchema =
             import zio.json.ast.Json
             Json.Obj(
-              "type" -> Json.Str("object"),
+              "type"       -> Json.Str("object"),
               "properties" -> Json.Obj(
-                "fileName" -> Json.Obj("type" -> Json.Str("string")),
-                "purpose" -> Json.Obj("type" -> Json.Str("string")),
-                "useCases" -> Json.Obj("type" -> Json.Str("array")),
-                "businessRules" -> Json.Obj("type" -> Json.Str("array"))
+                "fileName"      -> Json.Obj("type" -> Json.Str("string")),
+                "purpose"       -> Json.Obj("type" -> Json.Str("string")),
+                "useCases"      -> Json.Obj("type" -> Json.Str("array")),
+                "businessRules" -> Json.Obj("type" -> Json.Str("array")),
               ),
-              "required" -> Json.Arr(
+              "required"   -> Json.Arr(
                 Json.Str("fileName"),
                 Json.Str("purpose"),
                 Json.Str("useCases"),
-                Json.Str("businessRules")
-              )
+                Json.Str("businessRules"),
+              ),
             )
 
           private def convertError(fileName: String)(error: LlmError): BusinessLogicExtractionError =
@@ -108,24 +108,24 @@ object BusinessLogicExtractorAgent:
               case LlmError.ProviderError(message, cause) =>
                 BusinessLogicExtractionError.AIFailed(
                   fileName,
-                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}"
+                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
                 )
-              case LlmError.RateLimitError(retryAfter) =>
+              case LlmError.RateLimitError(retryAfter)    =>
                 BusinessLogicExtractionError.AIFailed(
                   fileName,
-                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}"
+                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
                 )
-              case LlmError.AuthenticationError(message) =>
+              case LlmError.AuthenticationError(message)  =>
                 BusinessLogicExtractionError.AIFailed(fileName, s"Authentication failed: $message")
-              case LlmError.InvalidRequestError(message) =>
+              case LlmError.InvalidRequestError(message)  =>
                 BusinessLogicExtractionError.AIFailed(fileName, s"Invalid request: $message")
-              case LlmError.TimeoutError(duration) =>
+              case LlmError.TimeoutError(duration)        =>
                 BusinessLogicExtractionError.AIFailed(fileName, s"Request timed out after ${duration.toSeconds}s")
-              case LlmError.ParseError(message, raw) =>
+              case LlmError.ParseError(message, raw)      =>
                 BusinessLogicExtractionError.ParseFailed(fileName, s"$message\nRaw: ${raw.take(200)}")
-              case LlmError.ToolError(toolName, message) =>
+              case LlmError.ToolError(toolName, message)  =>
                 BusinessLogicExtractionError.AIFailed(fileName, s"Tool error ($toolName): $message")
-              case LlmError.ConfigError(message) =>
+              case LlmError.ConfigError(message)          =>
                 BusinessLogicExtractionError.AIFailed(fileName, s"Configuration error: $message")
 
           private def safeName(fileName: String): String =

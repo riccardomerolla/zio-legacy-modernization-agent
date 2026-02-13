@@ -8,7 +8,7 @@ import zio.stream.*
 import zio.test.*
 
 import core.FileService
-import llm4zio.core.{ LlmService, LlmError, LlmResponse, LlmChunk, Message, ToolCallResponse }
+import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
 
@@ -16,7 +16,7 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
 
   class MockLlmService(
     structuredResponse: BusinessLogicExtraction,
-    shouldFail: Boolean = false
+    shouldFail: Boolean = false,
   ) extends LlmService:
     override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
       if shouldFail then
@@ -51,7 +51,7 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
           name = "Lookup customer",
           trigger = "Inquiry request",
           description = "Fetches customer details by identifier.",
-          keySteps = List("Validate request", "Read record", "Return result")
+          keySteps = List("Validate request", "Read record", "Return result"),
         )
       ),
       rules = List(
@@ -60,10 +60,10 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
           description = "Customer id is required.",
           condition = Some("Before read"),
           errorCode = Some("CUST-001"),
-          suggestion = Some("Provide customer id")
+          suggestion = Some("Provide customer id"),
         )
       ),
-      summary = "Customer inquiry flow with input validation."
+      summary = "Customer inquiry flow with input validation.",
     )
 
   def spec: Spec[Any, Any] = suite("BusinessLogicExtractorAgentSpec")(

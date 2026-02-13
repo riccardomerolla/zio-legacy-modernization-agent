@@ -5,9 +5,9 @@ import java.nio.file.Path
 import zio.*
 import zio.json.*
 
-import llm4zio.core.{LlmService, LlmError}
-import llm4zio.tools.JsonSchema
 import core.{ FileService, Logger }
+import llm4zio.core.{ LlmError, LlmService }
+import llm4zio.tools.JsonSchema
 import models.*
 import prompts.PromptTemplates
 
@@ -109,10 +109,10 @@ object JavaTransformerAgent:
             val prompt = PromptTemplates.JavaTransformer.generateEntity(analysis)
             val schema = buildJsonSchema()
             for
-              entity   <- llmService
-                            .executeStructured[JavaEntity](prompt, schema)
-                            .mapError(convertError(analysis.file.name))
-              enriched  = ensureEntityDefaults(entity, analysis)
+              entity  <- llmService
+                           .executeStructured[JavaEntity](prompt, schema)
+                           .mapError(convertError(analysis.file.name))
+              enriched = ensureEntityDefaults(entity, analysis)
             yield enriched
 
           private def generateService(
@@ -123,9 +123,9 @@ object JavaTransformerAgent:
             val prompt = PromptTemplates.JavaTransformer.generateService(analysis, deps)
             val schema = buildJsonSchema()
             for
-              service  <- llmService
-                            .executeStructured[JavaService](prompt, schema)
-                            .mapError(convertError(analysis.file.name))
+              service <- llmService
+                           .executeStructured[JavaService](prompt, schema)
+                           .mapError(convertError(analysis.file.name))
             yield service
 
           private def generateController(
@@ -155,24 +155,24 @@ object JavaTransformerAgent:
               case LlmError.ProviderError(message, cause) =>
                 TransformError.AIFailed(
                   fileName,
-                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}"
+                  s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
                 )
-              case LlmError.RateLimitError(retryAfter) =>
+              case LlmError.RateLimitError(retryAfter)    =>
                 TransformError.AIFailed(
                   fileName,
-                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}"
+                  s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
                 )
-              case LlmError.AuthenticationError(message) =>
+              case LlmError.AuthenticationError(message)  =>
                 TransformError.AIFailed(fileName, s"Authentication failed: $message")
-              case LlmError.InvalidRequestError(message) =>
+              case LlmError.InvalidRequestError(message)  =>
                 TransformError.AIFailed(fileName, s"Invalid request: $message")
-              case LlmError.TimeoutError(duration) =>
+              case LlmError.TimeoutError(duration)        =>
                 TransformError.AIFailed(fileName, s"Request timed out after ${duration.toSeconds}s")
-              case LlmError.ParseError(message, raw) =>
+              case LlmError.ParseError(message, raw)      =>
                 TransformError.ParseFailed(fileName, s"$message\nRaw: ${raw.take(200)}")
-              case LlmError.ToolError(toolName, message) =>
+              case LlmError.ToolError(toolName, message)  =>
                 TransformError.AIFailed(fileName, s"Tool error ($toolName): $message")
-              case LlmError.ConfigError(message) =>
+              case LlmError.ConfigError(message)          =>
                 TransformError.AIFailed(fileName, s"Configuration error: $message")
 
           // ---------------------------------------------------------------------------
