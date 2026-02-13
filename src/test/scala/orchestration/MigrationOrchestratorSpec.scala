@@ -34,7 +34,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                            mockValidationAgent,
                            mockDocumentationAgent,
                            mockAI,
-                           ResponseParser.live,
                            stubHttpAIClient,
                            ZLayer.succeed(MigrationConfig(
                              sourceDir = sourceDir,
@@ -73,7 +72,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                            mockValidationAgent,
                            mockDocumentationAgent,
                            mockAI,
-                           ResponseParser.live,
                            stubHttpAIClient,
                            ZLayer.succeed(MigrationConfig(
                              sourceDir = sourceDir,
@@ -126,7 +124,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                mockValidationAgent,
                                mockDocumentationAgent,
                                mockAI,
-                               ResponseParser.live,
                                stubHttpAIClient,
                                ZLayer.succeed(MigrationConfig(
                                  sourceDir = sourceDir,
@@ -177,7 +174,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                mockValidationAgent,
                                mockDocumentationAgent,
                                mockAI,
-                               ResponseParser.live,
                                stubHttpAIClient,
                                ZLayer.succeed(MigrationConfig(
                                  sourceDir = sourceDir,
@@ -226,7 +222,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                 mockValidationAgent,
                                 mockDocumentationAgent,
                                 mockAI,
-                                ResponseParser.live,
                                 stubHttpAIClient,
                                 ZLayer.succeed(MigrationConfig(
                                   sourceDir = sourceDir,
@@ -271,7 +266,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                  mockValidationAgent,
                                  mockDocumentationAgent,
                                  mockAI,
-                                 ResponseParser.live,
                                  stubHttpAIClient,
                                  ZLayer.succeed(MigrationConfig(
                                    sourceDir = sourceDir,
@@ -327,7 +321,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   mockValidationAgent,
                                   mockDocumentationAgent,
                                   mockAI,
-                                  ResponseParser.live,
                                   stubHttpAIClient,
                                   ZLayer.succeed(MigrationConfig(
                                     sourceDir = sourceDir,
@@ -388,7 +381,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   mockValidationAgent,
                                   mockDocumentationAgent,
                                   mockAI,
-                                  ResponseParser.live,
                                   stubHttpAIClient,
                                   ZLayer.succeed(MigrationConfig(
                                     sourceDir = sourceDir,
@@ -413,7 +405,6 @@ object MigrationOrchestratorSpec extends ZIOSpecDefault:
                                   mockValidationAgent,
                                   mockDocumentationAgent,
                                   mockAI,
-                                  ResponseParser.live,
                                   stubHttpAIClient,
                                   ZLayer.succeed(MigrationConfig(
                                     sourceDir = sourceDir,

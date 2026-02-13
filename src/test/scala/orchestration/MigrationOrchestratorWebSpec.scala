@@ -85,7 +85,6 @@ object MigrationOrchestratorWebSpec extends ZIOSpecDefault:
       validation,
       documentation,
       aiLayer,
-      ResponseParser.live,
       stubHttpAIClient,
       ZLayer.succeed(cfg),
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:file:$dbName?mode=memory&cache=shared")),

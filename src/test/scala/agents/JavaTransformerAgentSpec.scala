@@ -2,41 +2,76 @@ package agents
 
 import java.nio.file.{ Files, Path }
 
+import scala.jdk.CollectionConverters.*
+
 import zio.*
+import zio.json.*
+import zio.stream.*
 import zio.test.*
 
-import core.{ AIService, FileService, ResponseParser }
+import core.FileService
+import llm4zio.core.{ LlmService, LlmError, LlmResponse, LlmChunk, Message, ToolCallResponse }
+import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
 
 object JavaTransformerAgentSpec extends ZIOSpecDefault:
 
-  private val entityJson: String =
-    """{
-      |  "className": "Customer",
-      |  "packageName": "com.example.custprog.entity",
-      |  "fields": [
-      |    { "name": "customerId", "javaType": "Long", "cobolSource": "CUSTOMER-ID", "annotations": ["@Id"] }
-      |  ],
-      |  "annotations": ["@Entity", "@Table(name = \"customer\")"],
-      |  "sourceCode": "public class Customer {}"
-      |}""".stripMargin
+  class MockLlmService(responses: List[Any]) extends LlmService:
+    private val responseQueue = new java.util.concurrent.ConcurrentLinkedQueue(responses.asJava)
 
-  private val serviceJson: String =
-    """{
-      |  "name": "CustomerService",
-      |  "methods": [
-      |    { "name": "process", "returnType": "String", "parameters": [], "body": "return \"ok\";" }
-      |  ]
-      |}""".stripMargin
+    override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
+      ZIO.attempt {
+        val response = Option(responseQueue.poll()).getOrElse(
+          throw new RuntimeException("No more mock responses available")
+        )
+        response.asInstanceOf[A]
+      }.mapError(e => LlmError.ParseError("Mock error", e.getMessage))
 
-  private val controllerJson: String =
-    """{
-      |  "name": "CustomerController",
-      |  "basePath": "/api/customers",
-      |  "endpoints": [
-      |    { "path": "/process", "method": "POST", "methodName": "process" }
-      |  ]
-      |}""".stripMargin
+    override def execute(prompt: String): IO[LlmError, LlmResponse] =
+      ZIO.succeed(LlmResponse(content = "Mock", usage = None, metadata = Map.empty))
+
+    override def executeStream(prompt: String): ZStream[Any, LlmError, LlmChunk] =
+      ZStream.fail(LlmError.ProviderError("Not implemented in mock", None))
+
+    override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
+      execute("history")
+
+    override def executeStreamWithHistory(messages: List[Message]): ZStream[Any, LlmError, LlmChunk] =
+      executeStream("history")
+
+    override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
+      ZIO.fail(LlmError.ToolError("mock-tool", "Not implemented in mock"))
+
+    override def isAvailable: UIO[Boolean] =
+      ZIO.succeed(true)
+
+  private val sampleEntity: JavaEntity =
+    JavaEntity(
+      className = "Customer",
+      packageName = "com.example.custprog.entity",
+      fields = List(
+        JavaField(name = "customerId", javaType = "Long", cobolSource = "CUSTOMER-ID", annotations = List("@Id"))
+      ),
+      annotations = List("@Entity", "@Table(name = \"customer\")"),
+      sourceCode = "public class Customer {}"
+    )
+
+  private val sampleService: JavaService =
+    JavaService(
+      name = "CustomerService",
+      methods = List(
+        JavaMethod(name = "process", returnType = "String", parameters = List.empty, body = "return \"ok\";")
+      )
+    )
+
+  private val sampleController: JavaController =
+    JavaController(
+      name = "CustomerController",
+      basePath = "/api/customers",
+      endpoints = List(
+        RestEndpoint(path = "/process", method = HttpMethod.POST, methodName = "process")
+      )
+    )
 
   def spec: Spec[Any, Any] = suite("JavaTransformerAgentSpec")(
     test("transform generates Spring Boot project structure") {
@@ -49,8 +84,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
                              .transform(List(analysis), graph)
                              .provide(
                                FileService.live,
-                               ResponseParser.live,
-                               mockAIService(List(entityJson, serviceJson, controllerJson)),
+                               ZLayer.succeed(new MockLlmService(List(sampleEntity, sampleService, sampleController))),
                                ZLayer.succeed(
                                  MigrationConfig(sourceDir = tempDir, outputDir = tempDir, maxCompileRetries = 0)
                                ),
@@ -110,8 +144,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
                        .transform(List(analysis), graph)
                        .provide(
                          FileService.live,
-                         ResponseParser.live,
-                         mockAIService(List(entityJson, serviceJson, controllerJson)),
+                         ZLayer.succeed(new MockLlmService(List(sampleEntity, sampleService, sampleController))),
                          ZLayer.succeed(
                            MigrationConfig(sourceDir = tempDir, outputDir = tempDir, maxCompileRetries = 0)
                          ),
@@ -133,8 +166,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
                        .transform(List(analysis), graph)
                        .provide(
                          FileService.live,
-                         ResponseParser.live,
-                         mockAIService(List(entityJson, serviceJson, controllerJson)),
+                         ZLayer.succeed(new MockLlmService(List(sampleEntity, sampleService, sampleController))),
                          ZLayer.succeed(
                            MigrationConfig(
                              sourceDir = tempDir,
@@ -160,8 +192,7 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
                        .transform(List(analysis), graph)
                        .provide(
                          FileService.live,
-                         ResponseParser.live,
-                         mockAIService(List(entityJson, serviceJson, controllerJson)),
+                         ZLayer.succeed(new MockLlmService(List(sampleEntity, sampleService, sampleController))),
                          ZLayer.succeed(
                            MigrationConfig(
                              sourceDir = tempDir,
@@ -179,25 +210,6 @@ object JavaTransformerAgentSpec extends ZIOSpecDefault:
       }
     },
   )
-
-  private def mockAIService(outputs: List[String]): ULayer[AIService] =
-    ZLayer.fromZIO {
-      for
-        ref <- Ref.make(outputs)
-      yield new AIService {
-        override def execute(prompt: String): ZIO[Any, AIError, AIResponse] =
-          ref.modify {
-            case head :: tail => (AIResponse(head), tail)
-            case Nil          => (AIResponse("{}"), Nil)
-          }
-
-        override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] =
-          execute(prompt)
-
-        override def isAvailable: ZIO[Any, Nothing, Boolean] =
-          ZIO.succeed(true)
-      }
-    }
 
   private def sampleAnalysis(name: String): CobolAnalysis =
     CobolAnalysis(

@@ -4,36 +4,67 @@ import java.nio.file.{ Files, Path }
 
 import zio.*
 import zio.json.*
+import zio.stream.*
 import zio.test.*
 
-import core.{ AIService, FileService, ResponseParser }
+import core.FileService
+import llm4zio.core.{ LlmService, LlmError, LlmResponse, LlmChunk, Message, ToolCallResponse }
+import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
 
 object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
 
-  private val sampleExtractionJson: String =
-    """{
-      |  "fileName": "PLACEHOLDER.cbl",
-      |  "businessPurpose": "Manages customer lookup requests.",
-      |  "useCases": [
-      |    {
-      |      "name": "Lookup customer",
-      |      "trigger": "Inquiry request",
-      |      "description": "Fetches customer details by identifier.",
-      |      "keySteps": ["Validate request", "Read record", "Return result"]
-      |    }
-      |  ],
-      |  "rules": [
-      |    {
-      |      "category": "DataValidation",
-      |      "description": "Customer id is required.",
-      |      "condition": "Before read",
-      |      "errorCode": "CUST-001",
-      |      "suggestion": "Provide customer id"
-      |    }
-      |  ],
-      |  "summary": "Customer inquiry flow with input validation."
-      |}""".stripMargin
+  class MockLlmService(
+    structuredResponse: BusinessLogicExtraction,
+    shouldFail: Boolean = false
+  ) extends LlmService:
+    override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
+      if shouldFail then
+        ZIO.fail(LlmError.ParseError("Mock parse error", "invalid json"))
+      else
+        ZIO.succeed(structuredResponse.asInstanceOf[A])
+
+    override def execute(prompt: String): IO[LlmError, LlmResponse] =
+      ZIO.succeed(LlmResponse(content = "Mock", usage = None, metadata = Map.empty))
+
+    override def executeStream(prompt: String): ZStream[Any, LlmError, LlmChunk] =
+      ZStream.fail(LlmError.ProviderError("Not implemented in mock", None))
+
+    override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
+      execute("history")
+
+    override def executeStreamWithHistory(messages: List[Message]): ZStream[Any, LlmError, LlmChunk] =
+      executeStream("history")
+
+    override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
+      ZIO.fail(LlmError.ToolError("mock-tool", "Not implemented in mock"))
+
+    override def isAvailable: UIO[Boolean] =
+      ZIO.succeed(!shouldFail)
+
+  private val sampleExtraction: BusinessLogicExtraction =
+    BusinessLogicExtraction(
+      fileName = "PLACEHOLDER.cbl",
+      businessPurpose = "Manages customer lookup requests.",
+      useCases = List(
+        BusinessUseCase(
+          name = "Lookup customer",
+          trigger = "Inquiry request",
+          description = "Fetches customer details by identifier.",
+          keySteps = List("Validate request", "Read record", "Return result")
+        )
+      ),
+      rules = List(
+        BusinessRule(
+          category = "DataValidation",
+          description = "Customer id is required.",
+          condition = Some("Before read"),
+          errorCode = Some("CUST-001"),
+          suggestion = Some("Provide customer id")
+        )
+      ),
+      summary = "Customer inquiry flow with input validation."
+    )
 
   def spec: Spec[Any, Any] = suite("BusinessLogicExtractorAgentSpec")(
     test("extract parses JSON and writes report") {
@@ -45,8 +76,7 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
                           .extract(analysis)
                           .provide(
                             FileService.live,
-                            ResponseParser.live,
-                            mockAIService(sampleExtractionJson),
+                            ZLayer.succeed(new MockLlmService(sampleExtraction)),
                             ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir)),
                             BusinessLogicExtractorAgent.live,
                           )
@@ -69,8 +99,7 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
                        .extractAll(List(a1, a2))
                        .provide(
                          FileService.live,
-                         ResponseParser.live,
-                         mockAIService(sampleExtractionJson),
+                         ZLayer.succeed(new MockLlmService(sampleExtraction)),
                          ZLayer.succeed(MigrationConfig(sourceDir = tempDir, outputDir = tempDir, parallelism = 2)),
                          BusinessLogicExtractorAgent.live,
                        )
@@ -107,15 +136,3 @@ object BusinessLogicExtractorAgentSpec extends ZIOSpecDefault:
       copybooks = List("CUSTOMER-DATA"),
       complexity = ComplexityMetrics(1, 10, 1),
     )
-
-  private def mockAIService(json: String): ULayer[AIService] =
-    ZLayer.succeed(new AIService {
-      override def execute(prompt: String): ZIO[Any, AIError, AIResponse] =
-        ZIO.succeed(AIResponse(json))
-
-      override def executeWithContext(prompt: String, context: String): ZIO[Any, AIError, AIResponse] =
-        execute(prompt)
-
-      override def isAvailable: ZIO[Any, Nothing, Boolean] =
-        ZIO.succeed(true)
-    })
