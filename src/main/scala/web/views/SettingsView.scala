@@ -50,10 +50,20 @@ object SettingsView:
             providerOption("GeminiApi", "Gemini API", s.get("ai.provider")),
             providerOption("OpenAi", "OpenAI", s.get("ai.provider")),
             providerOption("Anthropic", "Anthropic", s.get("ai.provider")),
+            providerOption("LmStudio", "LM Studio (Local)", s.get("ai.provider")),
+            providerOption("Ollama", "Ollama (Local)", s.get("ai.provider")),
+          ),
+          p(cls := "text-xs text-gray-400 mt-1")(
+            "LM Studio and Ollama run locally. Cloud providers require API keys."
           ),
         ),
-        textField("ai.model", "Model", s, placeholder = "gemini-2.5-flash"),
-        textField("ai.baseUrl", "Base URL", s, placeholder = "https://api.example.com (optional)"),
+        textField("ai.model", "Model", s, placeholder = "gemini-2.5-flash (or llama3 for local)"),
+        textField(
+          "ai.baseUrl",
+          "Base URL",
+          s,
+          placeholder = "Optional: http://localhost:1234 (LM Studio), http://localhost:11434 (Ollama)",
+        ),
         div(
           label(cls := labelCls, `for` := "ai.apiKey")("API Key"),
           input(

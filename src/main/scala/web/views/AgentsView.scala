@@ -320,6 +320,8 @@ object AgentsView:
         providerOption("GeminiApi", "Gemini API", currentProvider),
         providerOption("OpenAi", "OpenAI", currentProvider),
         providerOption("Anthropic", "Anthropic", currentProvider),
+        providerOption("LmStudio", "LM Studio (Local)", currentProvider),
+        providerOption("Ollama", "Ollama (Local)", currentProvider),
       ),
     )
 

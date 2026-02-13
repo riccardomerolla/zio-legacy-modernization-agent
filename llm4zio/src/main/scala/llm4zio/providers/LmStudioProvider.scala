@@ -6,22 +6,27 @@ import zio.stream.ZStream
 import llm4zio.core.*
 import llm4zio.tools.{AnyTool, JsonSchema}
 
-/** LM Studio Provider - OpenAI-compatible local LLM server
+/** LM Studio Provider - Native API v1
   *
-  * LM Studio provides an OpenAI-compatible API for local model execution.
-  * It uses the same request/response format as OpenAI but runs locally
-  * and doesn't require an API key.
+  * LM Studio provides a native API at /api/v1/chat with enhanced features:
+  * - Stateful chat conversations
+  * - Model load/unload management
+  * - MCP (Model Context Protocol) support
+  * - Enhanced streaming events
   *
-  * Default endpoint: http://localhost:1234/v1
+  * Default endpoint: http://localhost:1234
+  * 
+  * Note: This uses the native LM Studio API, not the OpenAI-compatible endpoint.
+  * For OpenAI compatibility, use the OpenAI provider with LM Studio's /v1 endpoint.
   */
 object LmStudioProvider:
   def make(config: LlmConfig, httpClient: HttpClient): LlmService =
     new LlmService:
       override def execute(prompt: String): IO[LlmError, LlmResponse] =
-        executeRequest(List(ChatMessage(role = "user", content = prompt)), None)
+        executeRequest(List(LmStudioMessage(role = "user", content = prompt)))
 
       override def executeStream(prompt: String): ZStream[Any, LlmError, LlmChunk] =
-        // LM Studio supports streaming, but not implemented in this basic version
+        // LM Studio native API supports streaming, but not implemented in this basic version
         ZStream.fromZIO(execute(prompt)).map { response =>
           LlmChunk(
             delta = response.content,
@@ -32,8 +37,8 @@ object LmStudioProvider:
         }
 
       override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
-        val chatMessages = messages.map { msg =>
-          ChatMessage(
+        val lmStudioMessages = messages.map { msg =>
+          LmStudioMessage(
             role = msg.role match
               case MessageRole.System    => "system"
               case MessageRole.User      => "user"
@@ -43,7 +48,7 @@ object LmStudioProvider:
             content = msg.content
           )
         }
-        executeRequest(chatMessages, None)
+        executeRequest(lmStudioMessages)
 
       override def executeStreamWithHistory(messages: List[Message]): ZStream[Any, LlmError, LlmChunk] =
         ZStream.fromZIO(executeWithHistory(messages)).map { response =>
@@ -61,17 +66,11 @@ object LmStudioProvider:
         ZIO.fail(LlmError.InvalidRequestError("LmStudio provider does not yet support tool calling in this implementation"))
 
       override def executeStructured[A: JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
-        // LM Studio supports JSON mode similar to OpenAI
-        val responseFormat = Some(ResponseFormat(
-          `type` = "json_schema",
-          json_schema = Some(JsonSchemaSpec(
-            name = "response",
-            schema = schema
-          ))
-        ))
+        // LM Studio native API can use JSON instructions in the prompt
+        val jsonPrompt = s"$prompt\n\nPlease respond with valid JSON only, no additional text or markdown formatting."
 
         for
-          response <- executeRequest(List(ChatMessage(role = "user", content = prompt)), responseFormat)
+          response <- executeRequest(List(LmStudioMessage(role = "user", content = jsonPrompt)))
           parsed   <- ZIO.fromEither(response.content.fromJson[A])
                         .mapError(err => LlmError.ParseError(s"Failed to parse structured response: $err", response.content))
         yield parsed
@@ -80,9 +79,10 @@ object LmStudioProvider:
         config.baseUrl match
           case None          => ZIO.succeed(false)
           case Some(baseUrl) =>
+            val normalized = normalizeBaseUrl(baseUrl)
             httpClient
               .get(
-                url = s"${baseUrl.stripSuffix("/")}/models",
+                url = s"${normalized}/api/v1/models",
                 headers = Map.empty,
                 timeout = config.timeout,
               )
@@ -90,32 +90,33 @@ object LmStudioProvider:
               .catchAll(_ => ZIO.succeed(false))
 
       private def executeRequest(
-        messages: List[ChatMessage],
-        responseFormat: Option[ResponseFormat],
+        messages: List[LmStudioMessage]
       ): IO[LlmError, LlmResponse] =
         for
           baseUrl <- ZIO.fromOption(config.baseUrl).orElseFail(
                        LlmError.ConfigError("Missing baseUrl for LmStudio provider")
                      )
-          request  = ChatCompletionRequest(
+          normalized = normalizeBaseUrl(baseUrl)
+          inputPayload = renderInputPayload(messages)
+          systemPrompt = renderSystemPrompt(messages)
+          request  = LmStudioChatRequest(
                        model = config.model,
-                       messages = messages,
+                       input = inputPayload,
+                       system_prompt = systemPrompt,
                        temperature = config.temperature.orElse(Some(0.7)),
-                       max_tokens = config.maxTokens,
-                       max_completion_tokens = None,
+                       max_output_tokens = config.maxTokens,
                        stream = Some(false),
-                       response_format = responseFormat,
                      )
-          url      = s"${baseUrl.stripSuffix("/")}/chat/completions"
+          url      = s"${normalized}/api/v1/chat"
           body    <- httpClient.postJson(
                        url = url,
                        body = request.toJson,
-                       headers = authHeaders, // May be empty for local LM Studio
+                       headers = authHeaders,
                        timeout = config.timeout,
                      )
           parsed  <- ZIO
-                       .fromEither(body.fromJson[ChatCompletionResponse])
-                       .mapError(err => LlmError.ParseError(s"Failed to decode LmStudio response: $err", body))
+                       .fromEither(body.fromJson[LmStudioChatResponse])
+                       .mapError(err => LlmError.ParseError(s"Failed to decode LmStudio native API response: $err", body))
           content <- extractContent(parsed)
           usage    = extractUsage(parsed)
         yield LlmResponse(
@@ -128,14 +129,30 @@ object LmStudioProvider:
         // LM Studio doesn't require API key, but if provided, use it
         config.apiKey.map(key => Map("Authorization" -> s"Bearer $key")).getOrElse(Map.empty)
 
-      private def extractContent(response: ChatCompletionResponse): IO[LlmError, String] =
+      private def renderInputPayload(messages: List[LmStudioMessage]): LmStudioInputPayload =
+        val nonSystem = messages.filterNot(_.role == "system")
+        val text = renderInputText(if nonSystem.nonEmpty then nonSystem else messages)
+        LmStudioInputPayload.Text(text)
+
+      private def renderSystemPrompt(messages: List[LmStudioMessage]): Option[String] =
+        val systemText = messages.filter(_.role == "system").map(_.content.trim).filter(_.nonEmpty)
+        if systemText.isEmpty then None else Some(systemText.mkString("\n"))
+
+      private def renderInputText(messages: List[LmStudioMessage]): String =
+        messages.map(m => s"${m.role}: ${m.content}").mkString("\n")
+
+      private def normalizeBaseUrl(raw: String): String =
+        val trimmed = raw.trim.stripSuffix("/")
+        if trimmed.endsWith("/v1") then trimmed.stripSuffix("/v1") else trimmed
+
+      private def extractContent(response: LmStudioChatResponse): IO[LlmError, String] =
         val content =
           for
-            choice  <- response.choices.headOption
-            message <- choice.message
-            text     = message.content.trim
-            if text.nonEmpty
-          yield text
+            item <- response.output.find(item => item.`type` == "message" && item.content.exists(_.trim.nonEmpty))
+            text <- item.content
+            trimmed = text.trim
+            if trimmed.nonEmpty
+          yield trimmed
 
         ZIO.fromOption(content)
           .orElseFail(LlmError.ParseError(
@@ -143,25 +160,33 @@ object LmStudioProvider:
             response.toJson
           ))
 
-      private def extractUsage(response: ChatCompletionResponse): Option[TokenUsage] =
-        response.usage.map { u =>
+      private def extractUsage(response: LmStudioChatResponse): Option[TokenUsage] =
+        response.stats.map { stats =>
+          val prompt = stats.input_tokens.getOrElse(0)
+          val completion = stats.total_output_tokens.getOrElse(0)
           TokenUsage(
-            prompt = u.prompt_tokens.getOrElse(0),
-            completion = u.completion_tokens.getOrElse(0),
-            total = u.total_tokens.getOrElse(0)
+            prompt = prompt,
+            completion = completion,
+            total = prompt + completion
           )
         }
 
-      private def baseMetadata(response: ChatCompletionResponse): Map[String, String] =
+      private def baseMetadata(response: LmStudioChatResponse): Map[String, String] =
         val base = Map(
           "provider" -> "lmstudio",
           "model"    -> config.model,
+          "model_instance_id" -> response.model_instance_id,
         )
 
-        val idMeta = response.id.map(id => Map("id" -> id)).getOrElse(Map.empty)
-        val modelMeta = response.model.map(m => Map("response_model" -> m)).getOrElse(Map.empty)
+        val statsMeta = response.stats.map { stats =>
+          Map(
+            "tokens_per_second" -> stats.tokens_per_second.map(_.toString).getOrElse(""),
+            "time_to_first_token_seconds" -> stats.time_to_first_token_seconds.map(_.toString).getOrElse(""),
+            "model_load_time_seconds" -> stats.model_load_time_seconds.map(_.toString).getOrElse(""),
+          ).filter(_._2.nonEmpty)
+        }.getOrElse(Map.empty)
 
-        base ++ idMeta ++ modelMeta
+        base ++ statsMeta ++ response.response_id.map(id => Map("response_id" -> id)).getOrElse(Map.empty)
 
   val layer: ZLayer[LlmConfig & HttpClient, Nothing, LlmService] =
     ZLayer.fromFunction { (config: LlmConfig, httpClient: HttpClient) =>

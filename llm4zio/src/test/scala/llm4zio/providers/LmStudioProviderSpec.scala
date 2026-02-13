@@ -9,26 +9,23 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
   // Mock HTTP client for testing
   class MockHttpClient(shouldSucceed: Boolean = true) extends HttpClient:
     override def get(url: String, headers: Map[String, String], timeout: Duration): IO[LlmError, String] =
-      if shouldSucceed then ZIO.succeed("""{"data":[{"id":"llama-2-7b","object":"model"}]}""")
+      if shouldSucceed then ZIO.succeed("""{"models":[{"id":"llama-2-7b","path":"/models/llama-2-7b","type":"llama","loaded":true}]}""")
       else ZIO.fail(LlmError.ProviderError("HTTP GET failed", None))
 
     override def postJson(url: String, body: String, headers: Map[String, String], timeout: Duration): IO[LlmError, String] =
       if shouldSucceed then
-        val response = ChatCompletionResponse(
-          id = Some("chatcmpl-local-123"),
-          choices = List(
-            ChatChoice(
-              index = 0,
-              message = Some(ChatMessage(role = "assistant", content = "Test LM Studio response")),
-              finish_reason = Some("stop")
+        val response = LmStudioChatResponse(
+          model_instance_id = "inst-local-123",
+          output = List(
+            LmStudioOutputItem(
+              `type` = "message",
+              content = Some("Test LM Studio native response")
             )
           ),
-          usage = Some(OpenAITokenUsage(
-            prompt_tokens = Some(10),
-            completion_tokens = Some(5),
-            total_tokens = Some(15)
-          )),
-          model = Some("llama-2-7b")
+          stats = Some(LmStudioStats(
+            input_tokens = Some(10),
+            total_output_tokens = Some(5)
+          ))
         )
         ZIO.succeed(response.toJson)
       else
@@ -39,7 +36,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1")
+        baseUrl = Some("http://localhost:1234")
       )
       val httpClient = new MockHttpClient()
       val provider = LmStudioProvider.make(config, httpClient)
@@ -47,7 +44,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       for {
         response <- provider.execute("test prompt")
       } yield assertTrue(
-        response.content == "Test LM Studio response",
+        response.content == "Test LM Studio native response",
         response.usage.isDefined,
         response.usage.get.total == 15,
         response.metadata("provider") == "lmstudio"
@@ -57,7 +54,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1"),
+        baseUrl = Some("http://localhost:1234"),
         apiKey = None // No API key required for local LM Studio
       )
       val httpClient = new MockHttpClient()
@@ -66,7 +63,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       for {
         response <- provider.execute("test prompt")
       } yield assertTrue(
-        response.content == "Test LM Studio response"
+        response.content == "Test LM Studio native response"
       )
     },
     test("execute should fail with missing baseUrl") {
@@ -86,7 +83,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1")
+        baseUrl = Some("http://localhost:1234")
       )
       val httpClient = new MockHttpClient()
       val provider = LmStudioProvider.make(config, httpClient)
@@ -100,7 +97,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       for {
         response <- provider.executeWithHistory(messages)
       } yield assertTrue(
-        response.content == "Test LM Studio response",
+        response.content == "Test LM Studio native response",
         response.usage.isDefined
       )
     },
@@ -108,26 +105,27 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1")
+        baseUrl = Some("http://localhost:1234")
       )
       
       // Custom mock that returns valid JSON
       class JsonMockHttpClient extends HttpClient:
         override def get(url: String, headers: Map[String, String], timeout: Duration): IO[LlmError, String] =
-          ZIO.succeed("""{"data":[]}""")
+          ZIO.succeed("""{"models":[]}""")
         
         override def postJson(url: String, body: String, headers: Map[String, String], timeout: Duration): IO[LlmError, String] =
-          val response = ChatCompletionResponse(
-            id = Some("chatcmpl-local-123"),
-            choices = List(
-              ChatChoice(
-                index = 0,
-                message = Some(ChatMessage(role = "assistant", content = """{"name":"Alice","age":25}""")),
-                finish_reason = Some("stop")
+          val response = LmStudioChatResponse(
+            model_instance_id = "inst-local-123",
+            output = List(
+              LmStudioOutputItem(
+                `type` = "message",
+                content = Some("""{"name":"Alice","age":25}""")
               )
             ),
-            usage = Some(OpenAITokenUsage(Some(10), Some(5), Some(15))),
-            model = Some("llama-2-7b")
+            stats = Some(LmStudioStats(
+              input_tokens = Some(10),
+              total_output_tokens = Some(5)
+            ))
           )
           ZIO.succeed(response.toJson)
 
@@ -147,7 +145,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1")
+        baseUrl = Some("http://localhost:1234")
       )
       val httpClient = new MockHttpClient(shouldSucceed = true)
       val provider = LmStudioProvider.make(config, httpClient)
@@ -160,7 +158,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1")
+        baseUrl = Some("http://localhost:1234")
       )
       val httpClient = new MockHttpClient(shouldSucceed = false)
       val provider = LmStudioProvider.make(config, httpClient)
@@ -173,7 +171,7 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1")
+        baseUrl = Some("http://localhost:1234")
       )
       val httpClient = new MockHttpClient()
       val provider = LmStudioProvider.make(config, httpClient)
@@ -186,27 +184,25 @@ object LmStudioProviderSpec extends ZIOSpecDefault:
       val config = LlmConfig(
         provider = LlmProvider.LmStudio,
         model = "llama-2-7b",
-        baseUrl = Some("http://localhost:1234/v1"),
+        baseUrl = Some("http://localhost:1234"),
         apiKey = Some("optional-key")
       )
       
       class HeaderCheckingHttpClient extends HttpClient:
         override def get(url: String, headers: Map[String, String], timeout: Duration): IO[LlmError, String] =
-          ZIO.succeed("""{"data":[]}""")
+          ZIO.succeed("""{"models":[]}""")
         
         override def postJson(url: String, body: String, headers: Map[String, String], timeout: Duration): IO[LlmError, String] =
           val hasAuthHeader = headers.get("Authorization").contains("Bearer optional-key")
           if hasAuthHeader then
-            val response = ChatCompletionResponse(
-              id = Some("chatcmpl-local-123"),
-              choices = List(
-                ChatChoice(
-                  index = 0,
-                  message = Some(ChatMessage(role = "assistant", content = "Authenticated")),
-                  finish_reason = Some("stop")
+            val response = LmStudioChatResponse(
+              model_instance_id = "inst-local-123",
+              output = List(
+                LmStudioOutputItem(
+                  `type` = "message",
+                  content = Some("Authenticated")
                 )
-              ),
-              model = Some("llama-2-7b")
+              )
             )
             ZIO.succeed(response.toJson)
           else

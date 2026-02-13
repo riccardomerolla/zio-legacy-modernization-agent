@@ -307,6 +307,8 @@ final case class RunsControllerLive(
       case "GeminiApi" => Some(AIProvider.GeminiApi)
       case "OpenAi"    => Some(AIProvider.OpenAi)
       case "Anthropic" => Some(AIProvider.Anthropic)
+      case "LmStudio"  => Some(AIProvider.LmStudio)
+      case "Ollama"    => Some(AIProvider.Ollama)
       case _           => None
 
   private def latestFailedStep(phases: List[PhaseProgressRow], run: MigrationRunRow): Option[MigrationStep] =

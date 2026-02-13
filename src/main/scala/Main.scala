@@ -423,8 +423,12 @@ object Main extends ZIOAppDefault:
           case "gemini-api" => ZIO.succeed(Some(AIProvider.GeminiApi))
           case "openai"     => ZIO.succeed(Some(AIProvider.OpenAi))
           case "anthropic"  => ZIO.succeed(Some(AIProvider.Anthropic))
+          case "lmstudio"   => ZIO.succeed(Some(AIProvider.LmStudio))
+          case "ollama"     => ZIO.succeed(Some(AIProvider.Ollama))
           case other        =>
-            ZIO.fail(s"Invalid --ai-provider '$other'. Expected: gemini-cli|gemini-api|openai|anthropic")
+            ZIO.fail(
+              s"Invalid --ai-provider '$other'. Expected: gemini-cli|gemini-api|openai|anthropic|lmstudio|ollama"
+            )
 
   private def parseTemperatureOption(value: Option[String]): IO[String, Option[Double]] =
     value match

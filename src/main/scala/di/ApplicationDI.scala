@@ -41,6 +41,8 @@ object ApplicationDI:
       case AIProvider.GeminiApi => LlmProvider.GeminiApi
       case AIProvider.OpenAi    => LlmProvider.OpenAI
       case AIProvider.Anthropic => LlmProvider.Anthropic
+      case AIProvider.LmStudio  => LlmProvider.LmStudio
+      case AIProvider.Ollama    => LlmProvider.Ollama
 
   def aiConfigToLlmConfig(aiConfig: AIProviderConfig): LlmConfig =
     LlmConfig(
