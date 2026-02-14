@@ -594,6 +594,8 @@ object Main extends ZIOAppDefault:
         s"State management failed: ${inner.message}"
       case OrchestratorError.Interrupted(message)              =>
         s"Migration interrupted: $message"
+      case OrchestratorError.ControlPlaneFailed(message)       =>
+        s"Control plane failed: $message"
 
   private def printBanner: ZIO[Any, Nothing, Unit] =
     printLine(banner).orDie

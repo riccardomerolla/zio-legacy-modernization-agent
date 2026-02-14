@@ -152,6 +152,25 @@ enum OrchestratorError derives JsonCodec:
   case DocumentationFailed(error: DocError)
   case StateFailed(error: StateError)
   case Interrupted(message: String)
+  case ControlPlaneFailed(message: String)
+
+enum ControlPlaneError derives JsonCodec:
+  case ResourceAllocationFailed(runId: String, msg: String)
+  case WorkflowRoutingFailed(step: String, msg: String)
+  case EventBroadcastFailed(msg: String)
+  case ActiveRunNotFound(runId: String)
+  case InvalidWorkflowTransition(runId: String, from: String, to: String)
+  case AgentCapabilityMismatch(step: String, agent: String)
+
+  def message: String = this match
+    case ResourceAllocationFailed(runId, msg)       => s"Resource allocation failed for $runId: $msg"
+    case WorkflowRoutingFailed(step, msg)           => s"Workflow routing failed for $step: $msg"
+    case EventBroadcastFailed(msg)                  => s"Event broadcast failed: $msg"
+    case ActiveRunNotFound(runId)                   => s"Active run not found: $runId"
+    case InvalidWorkflowTransition(runId, from, to) =>
+      s"Invalid workflow transition for $runId: $from -> $to"
+    case AgentCapabilityMismatch(step, agent)       =>
+      s"Agent capability mismatch for $step: $agent"
 
 object OrchestratorError:
   extension (error: OrchestratorError)
@@ -172,3 +191,5 @@ object OrchestratorError:
         s"State operation failed: ${inner.message}"
       case OrchestratorError.Interrupted(msg)                  =>
         s"Migration interrupted: $msg"
+      case OrchestratorError.ControlPlaneFailed(msg)           =>
+        s"Control plane error: $msg"
