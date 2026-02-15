@@ -16,7 +16,11 @@ import db.*
 import models.*
 import orchestration.WorkflowOrchestrator.*
 
-private case class WorkflowStepsPayload(steps: List[MigrationStep]) derives JsonCodec
+private case class WorkflowStepsPayload(
+  steps: List[MigrationStep],
+  stepAgents: Map[String, String] = Map.empty,
+  dynamicGraph: Option[WorkflowGraph] = None,
+) derives JsonCodec
 
 /** MigrationOrchestrator - Main workflow orchestrator using ZIO effects.
   */
@@ -517,16 +521,35 @@ object MigrationOrchestrator:
               .mapError(persistenceAsOrchestrator("getWorkflow", workflowId.toString))
               .flatMap {
                 case Some(workflow) =>
-                  decodeWorkflowSteps(workflow.id.map(_.toString).getOrElse(workflow.name), workflow.steps).map(_.toSet)
+                  decodeWorkflowSteps(
+                    runConfig = runConfig,
+                    workflowRef = workflow.id.map(_.toString).getOrElse(workflow.name),
+                    raw = workflow.steps,
+                  ).map(_.toSet)
                 case None           =>
                   ZIO.fail(
                     OrchestratorError.StateFailed(StateError.StateNotFound(s"workflow-$workflowId"))
                   )
               }
 
-      private def decodeWorkflowSteps(workflowRef: String, raw: String): IO[OrchestratorError, List[MigrationStep]] =
+      private def decodeWorkflowSteps(
+        runConfig: MigrationConfig,
+        workflowRef: String,
+        raw: String,
+      ): IO[OrchestratorError, List[MigrationStep]] =
         raw.fromJson[WorkflowStepsPayload] match
-          case Right(payload) => ZIO.succeed(payload.steps)
+          case Right(payload) =>
+            payload.dynamicGraph match
+              case Some(graph) =>
+                WorkflowEngine
+                  .planFromGraph(
+                    graph = graph,
+                    context = WorkflowContext(dryRun = runConfig.dryRun),
+                    candidates = Nil,
+                  )
+                  .map(plan => plan.orderedSteps.distinct)
+                  .orElseSucceed(payload.steps)
+              case None        => ZIO.succeed(payload.steps)
           case Left(_)        =>
             ZIO
               .fromEither(raw.fromJson[List[MigrationStep]])

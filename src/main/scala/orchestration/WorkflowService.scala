@@ -16,6 +16,7 @@ enum WorkflowServiceError derives JsonCodec:
 private case class WorkflowStoragePayload(
   steps: List[MigrationStep],
   stepAgents: Map[String, String] = Map.empty,
+  dynamicGraph: Option[WorkflowGraph] = None,
 ) derives JsonCodec
 
 trait WorkflowService:
@@ -117,7 +118,7 @@ final case class WorkflowServiceLive(
 
   private def fromRow(row: WorkflowRow): IO[WorkflowServiceError, WorkflowDefinition] =
     decodeStorage(row.name, row.steps).map {
-      case (parsedSteps, parsedAgents) =>
+      case (parsedSteps, parsedAgents, parsedGraph) =>
         WorkflowDefinition(
           id = row.id,
           name = row.name,
@@ -128,6 +129,7 @@ final case class WorkflowServiceLive(
               WorkflowStepAgent(step, agentName)
           },
           isBuiltin = row.isBuiltin,
+          dynamicGraph = parsedGraph,
         )
     }
 
@@ -140,6 +142,7 @@ final case class WorkflowServiceLive(
             step.toString -> agent.trim
         }
         .toMap,
+      dynamicGraph = workflow.dynamicGraph,
     )
     WorkflowRow(
       id = workflow.id,
@@ -154,12 +157,12 @@ final case class WorkflowServiceLive(
   private def decodeStorage(
     workflowName: String,
     raw: String,
-  ): IO[WorkflowServiceError, (List[MigrationStep], Map[MigrationStep, String])] =
+  ): IO[WorkflowServiceError, (List[MigrationStep], Map[MigrationStep, String], Option[WorkflowGraph])] =
     raw.fromJson[WorkflowStoragePayload] match
       case Right(payload) =>
         for
           mapped <- decodeStepAgentMap(workflowName, payload.stepAgents)
-        yield (payload.steps, mapped)
+        yield (payload.steps, mapped, payload.dynamicGraph)
       case Left(_)        =>
         // Backward compatibility with rows stored as raw JSON array of steps.
         ZIO
@@ -168,7 +171,7 @@ final case class WorkflowServiceLive(
               WorkflowServiceError.StepsDecodingFailed(workflowName, error)
             )
           )
-          .map(steps => (steps, Map.empty[MigrationStep, String]))
+          .map(steps => (steps, Map.empty[MigrationStep, String], Option.empty[WorkflowGraph]))
 
   private def decodeStepAgentMap(
     workflowName: String,

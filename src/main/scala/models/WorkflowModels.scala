@@ -2,6 +2,62 @@ package models
 
 import zio.json.*
 
+enum WorkflowCondition derives JsonCodec:
+  case Always
+  case DryRun
+  case NotDryRun
+  case ContextFlag(flag: String)
+  case MetadataEquals(key: String, value: String)
+  case StepSucceeded(step: MigrationStep)
+  case StepFailed(step: MigrationStep)
+
+enum AgentSelectionStrategy derives JsonCodec:
+  case CapabilityMatch
+  case LoadBalanced
+  case CostOptimized
+  case PerformanceHistory
+
+case class WorkflowAgentPolicy(
+  strategy: AgentSelectionStrategy = AgentSelectionStrategy.CapabilityMatch,
+  fallbackAgents: List[String] = Nil,
+  forcedAgent: Option[String] = None,
+) derives JsonCodec
+
+case class WorkflowNode(
+  id: String,
+  step: MigrationStep,
+  dependsOn: List[String] = Nil,
+  condition: WorkflowCondition = WorkflowCondition.Always,
+  retryLimit: Int = 0,
+  parallelGroup: Option[String] = None,
+  agentPolicy: Option[WorkflowAgentPolicy] = None,
+) derives JsonCodec
+
+case class WorkflowGraph(
+  nodes: List[WorkflowNode]
+) derives JsonCodec
+
+object WorkflowGraph:
+  def fromSequentialSteps(steps: List[MigrationStep]): WorkflowGraph =
+    WorkflowGraph(
+      steps.zipWithIndex.map {
+        case (step, index) =>
+          WorkflowNode(
+            id = s"${step.toString.toLowerCase}-$index",
+            step = step,
+            dependsOn = if index == 0 then Nil else List(s"${steps(index - 1).toString.toLowerCase}-${index - 1}"),
+          )
+      }
+    )
+
+case class WorkflowContext(
+  dryRun: Boolean = false,
+  flags: Set[String] = Set.empty,
+  metadata: Map[String, String] = Map.empty,
+  completedSteps: Set[MigrationStep] = Set.empty,
+  failedSteps: Set[MigrationStep] = Set.empty,
+) derives JsonCodec
+
 case class WorkflowStepAgent(
   step: MigrationStep,
   agentName: String,
@@ -14,6 +70,7 @@ case class WorkflowDefinition(
   steps: List[MigrationStep],
   stepAgents: List[WorkflowStepAgent] = Nil,
   isBuiltin: Boolean,
+  dynamicGraph: Option[WorkflowGraph] = None,
 ) derives JsonCodec
 
 object WorkflowDefinition:
@@ -32,6 +89,23 @@ object WorkflowDefinition:
       ),
       stepAgents = Nil,
       isBuiltin = true,
+      dynamicGraph = Some(
+        WorkflowGraph(
+          List(
+            WorkflowNode(id = "discovery", step = MigrationStep.Discovery),
+            WorkflowNode(id = "analysis", step = MigrationStep.Analysis, dependsOn = List("discovery")),
+            WorkflowNode(id = "mapping", step = MigrationStep.Mapping, dependsOn = List("analysis")),
+            WorkflowNode(id = "transformation", step = MigrationStep.Transformation, dependsOn = List("mapping")),
+            WorkflowNode(
+              id = "validation",
+              step = MigrationStep.Validation,
+              dependsOn = List("transformation"),
+              condition = WorkflowCondition.NotDryRun,
+            ),
+            WorkflowNode(id = "documentation", step = MigrationStep.Documentation, dependsOn = List("discovery")),
+          )
+        )
+      ),
     )
 
 object WorkflowValidator:
@@ -49,13 +123,17 @@ object WorkflowValidator:
       if normalizedName.nonEmpty then Nil
       else List("Workflow name cannot be empty")
     val stepPresenceErrors =
-      if workflow.steps.nonEmpty then Nil
+      if workflow.steps.nonEmpty || workflow.dynamicGraph.exists(_.nodes.nonEmpty) then Nil
       else List("Workflow steps cannot be empty")
     val duplicateErrors    = duplicateStepErrors(workflow.steps)
     val dependencyErrors   = dependencyOrderingErrors(workflow.steps)
-    val stepAgentErrors    = invalidStepAgents(workflow.steps, workflow.stepAgents)
+    val graphErrors        = invalidGraph(workflow.dynamicGraph)
+    val stepAgentErrors    = invalidStepAgents(
+      workflow.steps ++ workflow.dynamicGraph.toList.flatMap(_.nodes.map(_.step)),
+      workflow.stepAgents,
+    )
     val allErrors          =
-      (nameErrors ++ stepPresenceErrors ++ duplicateErrors ++ dependencyErrors ++ stepAgentErrors).distinct
+      (nameErrors ++ stepPresenceErrors ++ duplicateErrors ++ dependencyErrors ++ graphErrors ++ stepAgentErrors).distinct
 
     if allErrors.isEmpty then Right(workflow.copy(name = normalizedName))
     else Left(allErrors)
@@ -101,3 +179,56 @@ object WorkflowValidator:
         None
     }
     (duplicateAssignments ++ invalidAssignments).distinct
+
+  private def invalidGraph(dynamicGraph: Option[WorkflowGraph]): List[String] =
+    dynamicGraph match
+      case None        => Nil
+      case Some(graph) =>
+        val ids               = graph.nodes.map(_.id.trim)
+        val emptyIdErrors     = graph.nodes.collect {
+          case node if node.id.trim.isEmpty =>
+            "Workflow graph node id cannot be empty"
+        }
+        val duplicateIdErrors = ids
+          .groupBy(identity)
+          .collect { case (id, nodes) if nodes.size > 1 => s"Duplicate workflow graph node id: $id" }
+          .toList
+        val idsSet            = ids.toSet
+        val dependencyErrors  = graph.nodes.flatMap { node =>
+          node.dependsOn.flatMap { dep =>
+            if dep == node.id then Some(s"Workflow graph node ${node.id} cannot depend on itself")
+            else if !idsSet.contains(dep) then Some(s"Workflow graph node ${node.id} depends on unknown node $dep")
+            else None
+          }
+        }
+        val cycleErrors       =
+          if hasCycle(graph) then List("Workflow graph contains a dependency cycle")
+          else Nil
+
+        (emptyIdErrors ++ duplicateIdErrors ++ dependencyErrors ++ cycleErrors).distinct
+
+  private def hasCycle(graph: WorkflowGraph): Boolean =
+    val deps = graph.nodes.map(node => node.id -> node.dependsOn.toSet).toMap
+
+    enum VisitState:
+      case Visiting
+      case Visited
+
+    def visit(nodeId: String, seen: Map[String, VisitState]): (Boolean, Map[String, VisitState]) =
+      seen.get(nodeId) match
+        case Some(VisitState.Visiting) => (true, seen)
+        case Some(VisitState.Visited)  => (false, seen)
+        case None                      =>
+          val withVisiting            = seen.updated(nodeId, VisitState.Visiting)
+          val (foundCycle, afterDeps) = deps.getOrElse(nodeId, Set.empty).foldLeft((false, withVisiting)) {
+            case ((true, state), _)      => (true, state)
+            case ((false, state), depId) =>
+              visit(depId, state)
+          }
+          if foundCycle then (true, afterDeps)
+          else (false, afterDeps.updated(nodeId, VisitState.Visited))
+
+    graph.nodes.foldLeft((false, Map.empty[String, VisitState])) {
+      case ((true, seen), _)     => (true, seen)
+      case ((false, seen), node) => visit(node.id, seen)
+    }._1
