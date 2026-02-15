@@ -4,12 +4,13 @@ import zio.*
 import zio.http.netty.NettyConfig
 import zio.http.{ Client, DnsResolver, ZClient }
 
+import _root_.models.*
 import agents.*
 import core.*
 import db.*
+import gateway.*
 import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
-import models.*
 import orchestration.*
 import web.WebServer
 import web.controllers.*
@@ -27,6 +28,10 @@ object ApplicationDI:
       WorkflowService &
       ProgressTracker &
       ResultPersister &
+      ChatRepository &
+      ChannelRegistry &
+      MessageRouter &
+      GatewayService &
       CobolDiscoveryAgent &
       CobolAnalyzerAgent &
       BusinessLogicExtractorAgent &
@@ -81,6 +86,10 @@ object ApplicationDI:
       WorkflowService.live,
       ProgressTracker.live,
       ResultPersister.live,
+      ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      channelRegistryLayer,
+      MessageRouter.live,
+      GatewayService.live,
 
       // Agent implementations
       CobolDiscoveryAgent.live,
@@ -130,9 +139,18 @@ object ApplicationDI:
       SettingsController.live,
       AgentsController.live,
       WorkflowsController.live,
-      ChatRepository.live.mapError(_ => new RuntimeException("chat repository initialization failed")).orDie,
       AgentConfigResolver.live,
       IssueAssignmentOrchestrator.live,
       ChatController.live,
       WebServer.live,
     )
+
+  private val channelRegistryLayer: ULayer[ChannelRegistry] =
+    ZLayer.fromZIO {
+      for
+        ref       <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
+        registry   = ChannelRegistryLive(ref)
+        websocket <- WebSocketChannel.make()
+        _         <- registry.register(websocket)
+      yield registry
+    }
