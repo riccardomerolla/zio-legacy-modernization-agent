@@ -8,11 +8,13 @@ import zio.*
 import zio.http.netty.NettyConfig
 import zio.http.{ Client, DnsResolver, ZClient }
 import zio.json.*
+import zio.stream.*
 
 import agents.*
 import core.*
 import db.*
 import models.*
+import orchestration.WorkflowOrchestrator.*
 
 private case class WorkflowStepsPayload(steps: List[MigrationStep]) derives JsonCodec
 
@@ -26,6 +28,7 @@ trait MigrationOrchestrator:
     onProgress: PipelineProgressUpdate => UIO[Unit],
   ): ZIO[Any, OrchestratorError, MigrationResult]
   def runStep(step: MigrationStep): ZIO[Any, OrchestratorError, StepResult]
+  def runStepStreaming(step: MigrationStep): ZStream[Any, OrchestratorError, StepProgressEvent]
   def startMigration(config: MigrationConfig): IO[OrchestratorError, Long]
   def cancelMigration(runId: Long): IO[OrchestratorError, Unit]
   def getRunStatus(runId: Long): IO[PersistenceError, Option[MigrationRunRow]]
@@ -49,6 +52,11 @@ object MigrationOrchestrator:
 
   def runStep(step: MigrationStep): ZIO[MigrationOrchestrator, OrchestratorError, StepResult] =
     ZIO.serviceWithZIO[MigrationOrchestrator](_.runStep(step))
+
+  def runStepStreaming(
+    step: MigrationStep
+  ): ZStream[MigrationOrchestrator, OrchestratorError, StepProgressEvent] =
+    ZStream.serviceWithStream[MigrationOrchestrator](_.runStepStreaming(step))
 
   def startMigration(config: MigrationConfig): ZIO[MigrationOrchestrator, OrchestratorError, Long] =
     ZIO.serviceWithZIO[MigrationOrchestrator](_.startMigration(config))
@@ -126,6 +134,118 @@ object MigrationOrchestrator:
               if success then None else Some(result.errors.map(_.message).mkString("; ")),
             )
           }
+
+      override def runStepStreaming(step: MigrationStep): ZStream[Any, OrchestratorError, StepProgressEvent] =
+        step match
+          case MigrationStep.Discovery =>
+            // Discovery doesn't have item-level progress yet, emit basic events
+            ZStream.fromZIO {
+              for
+                started   <- Clock.instant
+                inventory <- discoveryAgent
+                               .discover(config.sourceDir)
+                               .mapError(OrchestratorError.DiscoveryFailed.apply)
+                completed <- Clock.instant
+                durationMs = java.time.Duration.between(started, completed).toMillis
+              yield StepProgressEvent.StepCompleted(
+                "Discovery",
+                StepMetrics(
+                  tokensUsed = 0,
+                  latencyMs = durationMs,
+                  cost = 0.0,
+                  itemsProcessed = inventory.files.size,
+                  itemsFailed = 0,
+                ),
+                Some(s"Discovered ${inventory.files.size} files"),
+              )
+            }
+
+          case MigrationStep.Analysis =>
+            // Use the streaming analyzer
+            ZStream.unwrap {
+              for
+                inventory   <- discoveryAgent
+                                 .discover(config.sourceDir)
+                                 .mapError(OrchestratorError.DiscoveryFailed.apply)
+                programFiles = inventory.files.filter(_.fileType == models.FileType.Program)
+              yield analyzerAgent
+                .analyzeAllWithProgress(programFiles, "Analysis")
+                .mapError { err =>
+                  val fileName = err match
+                    case AnalysisError.AIFailed(name, _)          => name
+                    case AnalysisError.ParseFailed(name, _)       => name
+                    case AnalysisError.ValidationFailed(name, _)  => name
+                    case AnalysisError.FileReadFailed(path, _)    => path.toString
+                    case AnalysisError.ReportWriteFailed(path, _) => path.toString
+                  OrchestratorError.AnalysisFailed(fileName, err)
+                }
+            }
+
+          case MigrationStep.Mapping =>
+            // Mapping doesn't have item-level progress yet, emit basic events
+            ZStream.fromZIO {
+              for
+                started     <- Clock.instant
+                inventory   <- discoveryAgent
+                                 .discover(config.sourceDir)
+                                 .mapError(OrchestratorError.DiscoveryFailed.apply)
+                programFiles = inventory.files.filter(_.fileType == models.FileType.Program)
+                analyses    <- ZIO.foreach(programFiles) { file =>
+                                 analyzerAgent
+                                   .analyze(file)
+                                   .mapError(OrchestratorError.AnalysisFailed(file.name, _))
+                               }
+                graph       <- mapperAgent.mapDependencies(analyses).mapError(OrchestratorError.MappingFailed.apply)
+                completed   <- Clock.instant
+                durationMs   = java.time.Duration.between(started, completed).toMillis
+              yield StepProgressEvent.StepCompleted(
+                "Mapping",
+                StepMetrics(
+                  tokensUsed = 0,
+                  latencyMs = durationMs,
+                  cost = 0.0,
+                  itemsProcessed = analyses.size,
+                  itemsFailed = 0,
+                ),
+                Some(s"Mapped ${graph.nodes.size} modules with ${graph.edges.size} dependencies"),
+              )
+            }
+
+          case MigrationStep.Transformation =>
+            // Transformation doesn't have item-level progress yet, emit basic event
+            ZStream.fromZIO {
+              ZIO.succeed(
+                StepProgressEvent.StepCompleted(
+                  "Transformation",
+                  StepMetrics(tokensUsed = 0, latencyMs = 0, cost = 0.0, itemsProcessed = 0, itemsFailed = 0),
+                  Some("Transformation step not yet streamable"),
+                )
+              )
+            }
+
+          case MigrationStep.Validation =>
+            // Validation doesn't have item-level progress yet, emit basic event
+            ZStream.fromZIO {
+              ZIO.succeed(
+                StepProgressEvent.StepCompleted(
+                  "Validation",
+                  StepMetrics(tokensUsed = 0, latencyMs = 0, cost = 0.0, itemsProcessed = 0, itemsFailed = 0),
+                  Some("Validation step not yet streamable"),
+                )
+              )
+            }
+
+          case MigrationStep.Documentation =>
+            // Documentation doesn't have item-level progress yet, emit basic event
+            ZStream.fromZIO {
+              ZIO.succeed(
+                StepProgressEvent.StepCompleted(
+                  "Documentation",
+                  StepMetrics(tokensUsed = 0, latencyMs = 0, cost = 0.0, itemsProcessed = 0, itemsFailed = 0),
+                  Some("Documentation step not yet streamable"),
+                )
+              )
+            }
 
       override def startMigration(requestConfig: MigrationConfig): IO[OrchestratorError, Long] =
         for
@@ -507,16 +627,7 @@ object MigrationOrchestrator:
                    persister.saveValidationResult(runId, aggregateValidation(bootstrap.validationReports)),
                  ))
 
-      private def shouldExecuteFrom(startStep: MigrationStep, phase: MigrationStep): Boolean =
-        resumeStepOrder(phase) >= resumeStepOrder(startStep)
-
-      private def shouldRunStep(
-        startStep: MigrationStep,
-        phase: MigrationStep,
-        stepsToRun: Set[MigrationStep],
-      ): Boolean =
-        stepsToRun.contains(phase) && shouldExecuteFrom(startStep, phase)
-
+      /** Phase ordering for runTrackedMigration (resume-based) workflow. */
       private def resumeStepOrder(step: MigrationStep): Int = step match
         case MigrationStep.Discovery      => 0
         case MigrationStep.Analysis       => 1
@@ -524,6 +635,16 @@ object MigrationOrchestrator:
         case MigrationStep.Transformation => 3
         case MigrationStep.Validation     => 4
         case MigrationStep.Documentation  => 5
+
+      private def shouldExecuteFrom(startStep: MigrationStep, phase: MigrationStep): Boolean =
+        PhaseOrdering.shouldRunFrom(phase, startStep, resumeStepOrder)
+
+      private def shouldRunStep(
+        startStep: MigrationStep,
+        phase: MigrationStep,
+        stepsToRun: Set[MigrationStep],
+      ): Boolean =
+        PhaseOrdering.shouldRunPhase(phase, startStep, stepsToRun, resumeStepOrder)
 
       private def emptyInventory(sourceDir: Path): FileInventory =
         FileInventory(
@@ -1149,9 +1270,7 @@ object MigrationOrchestrator:
                           yield None
           yield result
 
-      private def shouldRunStep(step: MigrationStep, start: MigrationStep): Boolean =
-        stepOrder(step) >= stepOrder(start)
-
+      /** Phase ordering for runPipeline workflow execution. */
       private def stepOrder(step: MigrationStep): Int = step match
         case MigrationStep.Discovery      => 1
         case MigrationStep.Analysis       => 2
@@ -1159,6 +1278,9 @@ object MigrationOrchestrator:
         case MigrationStep.Transformation => 4
         case MigrationStep.Validation     => 5
         case MigrationStep.Documentation  => 6
+
+      private def shouldRunStep(step: MigrationStep, start: MigrationStep): Boolean =
+        PhaseOrdering.shouldRunFrom(step, start, stepOrder)
 
       private def aggregateValidation(reports: List[ValidationReport]): ValidationReport =
         if reports.isEmpty then ValidationReport.empty
@@ -1205,13 +1327,20 @@ object MigrationOrchestrator:
         dryRun: Boolean,
         validationReport: ValidationReport,
       ): MigrationStatus =
-        if errors.isEmpty then
-          if dryRun || !validationReport.semanticValidation.businessLogicPreserved || validationReport.issues.nonEmpty
-          then
-            MigrationStatus.CompletedWithWarnings
-          else MigrationStatus.Completed
-        else if projects.nonEmpty then MigrationStatus.PartialFailure
-        else MigrationStatus.Failed
+        val hasErrors    = errors.nonEmpty
+        val hasArtifacts = projects.nonEmpty
+        val hasWarnings  =
+          dryRun || !validationReport.semanticValidation.businessLogicPreserved || validationReport.issues.nonEmpty
+
+        StatusDetermination.determineStatus(
+          hasErrors,
+          hasArtifacts,
+          hasWarnings,
+          MigrationStatus.Completed,
+          MigrationStatus.CompletedWithWarnings,
+          MigrationStatus.PartialFailure,
+          MigrationStatus.Failed,
+        )
 
       private def loadResumeState(
         resumeRunId: Option[String]
@@ -1272,15 +1401,26 @@ object MigrationOrchestrator:
     }
   }
 
+/** Migration-specific workflow status.
+  */
 enum MigrationStatus derives JsonCodec:
   case Completed, CompletedWithWarnings, PartialFailure, Failed
 
-case class PipelineProgressUpdate(
-  step: MigrationStep,
-  message: String,
-  percent: Int,
-) derives JsonCodec
+/** Type aliases for backward compatibility and domain-specific naming.
+  */
+type PipelineProgressUpdate = PhaseProgressUpdate[MigrationStep]
+type StepResult             = PhaseResult[MigrationStep]
 
+object PipelineProgressUpdate:
+  def apply(step: MigrationStep, message: String, percent: Int): PhaseProgressUpdate[MigrationStep] =
+    PhaseProgressUpdate(step, message, percent)
+
+object StepResult:
+  def apply(step: MigrationStep, success: Boolean, error: Option[String]): PhaseResult[MigrationStep] =
+    PhaseResult(step, success, error)
+
+/** Result of a complete migration workflow execution.
+  */
 case class MigrationResult(
   runId: String,
   startedAt: java.time.Instant,
@@ -1297,9 +1437,3 @@ case class MigrationResult(
   status: MigrationStatus,
 ) derives JsonCodec:
   def success: Boolean = status == MigrationStatus.Completed || status == MigrationStatus.CompletedWithWarnings
-
-case class StepResult(
-  step: MigrationStep,
-  success: Boolean,
-  error: Option[String],
-)
