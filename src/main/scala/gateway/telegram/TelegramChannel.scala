@@ -95,6 +95,11 @@ final case class TelegramChannel(
   override def activeSessions: UIO[Set[SessionKey]] = sessionsRef.get
 
   def ingestUpdate(update: TelegramUpdate): IO[MessageChannelError, Option[NormalizedMessage]] =
+    update.callback_query match
+      case Some(callback) => handleCallbackQuery(update, callback).as(None)
+      case None           => ingestMessageUpdate(update)
+
+  private def ingestMessageUpdate(update: TelegramUpdate): IO[MessageChannelError, Option[NormalizedMessage]] =
     extractMessage(update) match
       case None          => ZIO.none
       case Some(message) =>
@@ -202,12 +207,13 @@ final case class TelegramChannel(
   ): IO[MessageChannelError, Option[NormalizedMessage]] =
     CommandParser.parse(content) match
       case Right(command)                         =>
-        workflowNotifier
-          .notifyCommand(
-            chatId = message.chat.id,
-            replyToMessageId = Some(message.message_id),
-            command = command,
-          )
+        (sendInlineControlsIfNeeded(message.chat.id, message.message_id, command) *>
+          workflowNotifier
+            .notifyCommand(
+              chatId = message.chat.id,
+              replyToMessageId = Some(message.message_id),
+              command = command,
+            ))
           .catchAll(err => ZIO.logWarning(s"telegram command handling failed: $err"))
           .as(None)
       case Left(CommandParseError.NotACommand(_)) =>
@@ -231,6 +237,125 @@ final case class TelegramChannel(
           )
           .catchAll(err => ZIO.logWarning(s"telegram parse error notification failed: $err"))
           .as(None)
+
+  private def handleCallbackQuery(
+    update: TelegramUpdate,
+    callback: TelegramCallbackQuery,
+  ): IO[MessageChannelError, Unit] =
+    callback.message match
+      case None          =>
+        ZIO.logWarning(s"telegram callback query has no message (update_id=${update.update_id})")
+      case Some(message) =>
+        val sessionKey = sessionForChat(message.chat.id)
+        val data       = callback.data.map(_.trim).filter(_.nonEmpty).getOrElse("")
+        for
+          _ <- open(sessionKey)
+          _ <- InlineKeyboards.parseCallbackData(data) match
+                 case Left(error)      =>
+                   sendCallbackFeedback(
+                     chatId = message.chat.id,
+                     replyToMessageId = message.message_id,
+                     text = s"Invalid callback payload: $error",
+                     markup = None,
+                   )
+                 case Right(keyAction) =>
+                   routeCallbackAction(
+                     chatId = message.chat.id,
+                     replyToMessageId = message.message_id,
+                     action = keyAction,
+                   )
+        yield ()
+
+  private def routeCallbackAction(
+    chatId: Long,
+    replyToMessageId: Long,
+    action: InlineKeyboardAction,
+  ): IO[MessageChannelError, Unit] =
+    action.action.toLowerCase match
+      case "details" =>
+        sendInlineControls(chatId, replyToMessageId, action.runId, action.paused) *>
+          workflowNotifier
+            .notifyCommand(chatId, Some(replyToMessageId), BotCommand.Status(action.runId))
+            .mapError(notifierError)
+      case "cancel"  =>
+        sendInlineControls(chatId, replyToMessageId, action.runId, action.paused) *>
+          workflowNotifier
+            .notifyCommand(chatId, Some(replyToMessageId), BotCommand.Cancel(action.runId))
+            .mapError(notifierError)
+      case "retry"   =>
+        sendCallbackFeedback(
+          chatId = chatId,
+          replyToMessageId = replyToMessageId,
+          text = s"Retry requested for run ${action.runId}. Use /status ${action.runId} for latest updates.",
+          markup = Some(InlineKeyboards.workflowControls(action.runId, paused = false)),
+        )
+      case "toggle"  =>
+        val nextPaused = !action.paused
+        sendCallbackFeedback(
+          chatId = chatId,
+          replyToMessageId = replyToMessageId,
+          text =
+            s"${if nextPaused then "Pause" else "Resume"} requested for run ${action.runId}. " +
+              "Pause/Resume is not available yet.",
+          markup = Some(InlineKeyboards.workflowControls(action.runId, paused = nextPaused)),
+        )
+      case other     =>
+        sendCallbackFeedback(
+          chatId = chatId,
+          replyToMessageId = replyToMessageId,
+          text = s"Unsupported action '$other'.",
+          markup = None,
+        )
+
+  private def sendInlineControlsIfNeeded(
+    chatId: Long,
+    replyToMessageId: Long,
+    command: BotCommand,
+  ): IO[MessageChannelError, Unit] =
+    command match
+      case BotCommand.Status(runId) =>
+        sendInlineControls(chatId, replyToMessageId, runId, paused = false)
+      case BotCommand.Logs(runId)   =>
+        sendInlineControls(chatId, replyToMessageId, runId, paused = false)
+      case _                        =>
+        ZIO.unit
+
+  private def sendInlineControls(
+    chatId: Long,
+    replyToMessageId: Long,
+    runId: Long,
+    paused: Boolean,
+  ): IO[MessageChannelError, Unit] =
+    sendCallbackFeedback(
+      chatId = chatId,
+      replyToMessageId = replyToMessageId,
+      text = s"Workflow controls for run $runId:",
+      markup = Some(InlineKeyboards.workflowControls(runId, paused)),
+    )
+
+  private def sendCallbackFeedback(
+    chatId: Long,
+    replyToMessageId: Long,
+    text: String,
+    markup: Option[TelegramInlineKeyboardMarkup],
+  ): IO[MessageChannelError, Unit] =
+    client
+      .sendMessage(
+        TelegramSendMessage(
+          chat_id = chatId,
+          text = text,
+          reply_to_message_id = Some(replyToMessageId),
+          reply_markup = markup,
+        )
+      )
+      .unit
+      .mapError(sendError)
+
+  private def sendError(error: TelegramClientError): MessageChannelError =
+    MessageChannelError.InvalidMessage(s"telegram send failed: $error")
+
+  private def notifierError(error: WorkflowNotifierError): MessageChannelError =
+    MessageChannelError.InvalidMessage(s"telegram workflow notifier failed: $error")
 
 object TelegramChannel:
   def make(

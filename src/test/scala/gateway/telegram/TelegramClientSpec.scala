@@ -55,6 +55,23 @@ object TelegramClientSpec extends ZIOSpecDefault:
       | }
       |}""".stripMargin
 
+  private val sampleCallbackUpdateJson =
+    """{
+      | "updateId": 100,
+      | "callbackQuery": {
+      |   "id": "cb-1",
+      |   "from": {"id": 1, "isBot": false, "firstName": "Alice"},
+      |   "message": {
+      |     "messageId": 10,
+      |     "date": 1710000000,
+      |     "chat": {"id": 123, "type": "Private"},
+      |     "text": "hello"
+      |   },
+      |   "chatInstance": "instance-1",
+      |   "data": "wf:details:10:running"
+      | }
+      |}""".stripMargin
+
   def spec: Spec[TestEnvironment, Any] = suite("TelegramClientSpec")(
     test("sendMessage maps bot4s message to local model") {
       for
@@ -88,6 +105,22 @@ object TelegramClientSpec extends ZIOSpecDefault:
         result.length == 1,
         result.head.update_id == 99L,
         result.head.message.flatMap(_.text).contains("hello"),
+      )
+    },
+    test("getUpdates maps callback query updates to local model") {
+      for
+        sampleMsg            <- decodeEffect[Message](sampleMessageJson).orDie
+        sampleCallbackUpdate <- decodeEffect[Update](sampleCallbackUpdateJson).orDie
+        sampleParsedUpdate    = ParsedUpdate.Success(sampleCallbackUpdate)
+        client                = TelegramClient.fromRequestHandler(
+                                  requestHandler(
+                                    sendMessageResult = Future.successful(sampleMsg),
+                                    getUpdatesResult = Future.successful(Seq(sampleParsedUpdate)),
+                                  )
+                                )
+        result               <- client.getUpdates()
+      yield assertTrue(
+        result.headOption.flatMap(_.callback_query.flatMap(_.data)).contains("wf:details:10:running")
       )
     },
     test("rate-limit message is mapped to RateLimited") {

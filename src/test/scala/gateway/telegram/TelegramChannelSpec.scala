@@ -66,6 +66,32 @@ object TelegramChannelSpec extends ZIOSpecDefault:
       ),
     )
 
+  private def callbackUpdate(
+    updateId: Long,
+    chatId: Long,
+    messageId: Long,
+    data: String,
+  ): TelegramUpdate =
+    TelegramUpdate(
+      update_id = updateId,
+      callback_query = Some(
+        TelegramCallbackQuery(
+          id = s"cb-$updateId",
+          from = TelegramUser(id = 1L, is_bot = false, first_name = "Alice", username = Some("alice")),
+          message = Some(
+            TelegramMessage(
+              message_id = messageId,
+              date = 1710000000L,
+              chat = TelegramChat(id = chatId, `type` = "private"),
+              text = Some("controls"),
+              from = Some(TelegramUser(id = 1L, is_bot = false, first_name = "Alice", username = Some("alice"))),
+            )
+          ),
+          data = Some(data),
+        )
+      ),
+    )
+
   private def outboundMessage(
     session: SessionKey,
     content: String,
@@ -193,10 +219,46 @@ object TelegramChannelSpec extends ZIOSpecDefault:
           channel.ingestUpdate(update(updateId = 20L, chatId = 55L, messageId = 701L, text = Some("/status 12")))
         commands       <- commandsRef.get
         parseErrors    <- parseErrorsRef.get
+        sent           <- sentRef.get
       yield assertTrue(
         normalized.isEmpty,
         commands == List((55L, Some(701L), BotCommand.Status(12L))),
         parseErrors.isEmpty,
+        sent.exists(_.reply_markup.nonEmpty),
+        sent.exists(_.text.contains("Workflow controls for run 12")),
+      )
+    },
+    test("callback query actions route to notifier and update keyboard state") {
+      for
+        updatesRef     <- Ref.make(List.empty[TelegramUpdate])
+        sentRef        <- Ref.make(List.empty[TelegramSendMessage])
+        commandsRef    <- Ref.make(List.empty[(Long, Option[Long], BotCommand)])
+        parseErrorsRef <- Ref.make(List.empty[(Long, Option[Long], CommandParseError)])
+        notifier        = CapturingNotifier(commandsRef, parseErrorsRef)
+        client          = StubTelegramClient(
+                            updatesRef = updatesRef,
+                            sentRef = sentRef,
+                            response = req =>
+                              TelegramMessage(
+                                message_id = 901L,
+                                date = 1710000000L,
+                                chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                                text = Some(req.text),
+                              ),
+                          )
+        channel        <- TelegramChannel.make(client, workflowNotifier = notifier)
+        _              <- channel.ingestUpdate(callbackUpdate(30L, 77L, 801L, "wf:details:90:running"))
+        _              <- channel.ingestUpdate(callbackUpdate(31L, 77L, 802L, "wf:cancel:90:running"))
+        _              <- channel.ingestUpdate(callbackUpdate(32L, 77L, 803L, "wf:toggle:90:running"))
+        _              <- channel.ingestUpdate(callbackUpdate(33L, 77L, 804L, "wf:retry:90:paused"))
+        commands       <- commandsRef.get
+        sent           <- sentRef.get
+      yield assertTrue(
+        commands.contains((77L, Some(801L), BotCommand.Status(90L))),
+        commands.contains((77L, Some(802L), BotCommand.Cancel(90L))),
+        sent.exists(_.text.contains("Pause requested for run 90")),
+        sent.exists(_.text.contains("Retry requested for run 90")),
+        sent.exists(msg => msg.reply_markup.exists(_.inline_keyboard.flatten.exists(_.text == "Resume"))),
       )
     },
   ) @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds)
