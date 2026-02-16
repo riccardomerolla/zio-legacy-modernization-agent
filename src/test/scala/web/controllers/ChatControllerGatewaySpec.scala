@@ -14,6 +14,7 @@ import gateway.models.*
 import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import orchestration.*
+import web.StreamAbortRegistryLive
 
 object ChatControllerGatewaySpec extends ZIOSpecDefault:
 
@@ -94,6 +95,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         gateway   <- ZIO.service[GatewayService]
         registry  <- ZIO.service[ChannelRegistry]
         convId    <- newConversation(chatRepo)
+        abortReg  <- Ref.make(Map.empty[Long, UIO[Unit]]).map(StreamAbortRegistryLive.apply)
         controller = ChatControllerLive(
                        chatRepository = chatRepo,
                        llmService = llm,
@@ -102,6 +104,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        configResolver = testConfigResolver,
                        gatewayService = gateway,
                        channelRegistry = registry,
+                       streamAbortRegistry = abortReg,
                      )
         request    = Request.post(
                        s"/api/chat/$convId/messages",
@@ -122,7 +125,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         persisted.count(_.senderType == SenderType.Assistant) == 1,
       )).provideSomeLayer[Scope](appLayer(dbName))
     },
-    test("POST /chat/:id/messages (fragment) still returns HTML fragment") {
+    test("POST /chat/:id/messages (fragment) returns HTML with user message and streams in background") {
       val dbName = s"chat-gateway-web-${UUID.randomUUID()}"
       (for
         chatRepo  <- ZIO.service[ChatRepository]
@@ -131,6 +134,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         gateway   <- ZIO.service[GatewayService]
         registry  <- ZIO.service[ChannelRegistry]
         convId    <- newConversation(chatRepo)
+        abortReg  <- Ref.make(Map.empty[Long, UIO[Unit]]).map(StreamAbortRegistryLive.apply)
         controller = ChatControllerLive(
                        chatRepository = chatRepo,
                        llmService = llm,
@@ -139,6 +143,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        configResolver = testConfigResolver,
                        gatewayService = gateway,
                        channelRegistry = registry,
+                       streamAbortRegistry = abortReg,
                      )
         request    = Request.post(
                        s"/chat/$convId/messages",
@@ -146,9 +151,18 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                      )
         response  <- controller.routes.runZIO(request)
         body      <- response.body.asString
+        // Poll for daemon-streamed assistant message (uses live clock via withLiveClock)
+        persisted <- chatRepo
+                       .getMessages(convId)
+                       .repeatUntil(_.count(_.senderType == SenderType.Assistant) >= 1)
+                       .timeoutFail(PersistenceError.QueryFailed("timeout", "assistant message not persisted"))(
+                         10.seconds
+                       )
       yield assertTrue(
         response.status == Status.Ok,
-        body.contains("assistant"),
+        body.contains("user"),
+        persisted.count(_.senderType == SenderType.User) == 1,
+        persisted.count(_.senderType == SenderType.Assistant) == 1,
       )).provideSomeLayer[Scope](appLayer(dbName))
-    },
+    } @@ TestAspect.withLiveClock,
   ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds)

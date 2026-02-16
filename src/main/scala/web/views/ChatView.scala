@@ -85,13 +85,12 @@ object ChatView:
           ),
         ),
         div(cls := "flex-1 min-h-0 bg-white/5 ring-1 ring-white/10 rounded-lg overflow-hidden flex flex-col")(
-          // Messages list
-          div(
-            id                 := s"messages-${conversation.id.get}",
-            cls                := "flex-1 min-h-0 overflow-y-auto p-6 space-y-4",
-            attr("hx-get")     := s"/chat/${conversation.id.get}/messages",
-            attr("hx-trigger") := "load, every 2s",
-            attr("hx-swap")    := "innerHTML",
+          // Messages list — Lit web component for streaming
+          tag("chat-message-stream")(
+            id                      := s"messages-${conversation.id.get}",
+            cls                     := "flex-1 min-h-0 overflow-y-auto p-6 space-y-4 block",
+            attr("conversation-id") := conversation.id.get.toString,
+            attr("ws-url")          := "/ws/console",
           )(
             raw(messagesFragment(conversation.messages))
           )
@@ -122,9 +121,16 @@ object ChatView:
               `type` := "submit",
               cls    := "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors",
             )("Send"),
+            button(
+              id              := s"abort-btn-${conversation.id.get}",
+              `type`          := "button",
+              cls             := "hidden px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors",
+              attr("onclick") := s"document.getElementById('messages-${conversation.id.get}').abort()",
+            )("Stop"),
           )
         ),
-      )
+      ),
+      streamingScript(conversation.id.get),
     )
 
   def messagesFragment(messages: List[ConversationMessage]): String =
@@ -178,6 +184,163 @@ object ChatView:
     text.contains("**") ||
     text.contains("`") ||
     text.matches("(?s).*\\[[^\\]]+\\]\\((https?://|/|#)[^)]+\\).*")
+
+  // scalafmt: { maxColumn = 500 }
+  private def streamingScript(conversationId: Long): Frag =
+    script(attr("type") := "module")(raw(s"""
+import {LitElement} from 'https://cdn.jsdelivr.net/npm/lit@3/+esm';
+
+class ChatMessageStream extends LitElement {
+  static properties = {
+    conversationId: {type: Number, attribute: 'conversation-id'},
+    wsUrl: {type: String, attribute: 'ws-url'},
+  };
+
+  constructor() {
+    super();
+    this._streaming = false;
+    this._streamBuffer = '';
+    this._ws = null;
+    this._reconnectTimer = null;
+  }
+
+  createRenderRoot() { return this; }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._connect();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+    if (this._ws) this._ws.close();
+  }
+
+  _connect() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    this._ws = new WebSocket(protocol + '//' + location.host + this.wsUrl);
+    this._ws.onopen = () => {
+      this._ws.send(JSON.stringify({Subscribe:{topic:'chat:'+this.conversationId+':stream',params:{}}}));
+    };
+    this._ws.onmessage = (e) => {
+      try { this._handleMessage(JSON.parse(e.data)); } catch(ignored) {}
+    };
+    this._ws.onclose = () => {
+      this._reconnectTimer = setTimeout(() => this._connect(), 3000);
+    };
+  }
+
+  _handleMessage(msg) {
+    if (!msg.Event) return;
+    const {eventType, payload} = msg.Event;
+    let parsed = {};
+    try { parsed = JSON.parse(payload); } catch(ignored) { parsed = {type: eventType, delta: payload}; }
+    const evtType = parsed.type || eventType;
+
+    switch (evtType) {
+      case 'chat-stream-start':
+        this._streaming = true;
+        this._streamBuffer = '';
+        this._appendStreamBubble();
+        this._toggleAbortButton(true);
+        break;
+      case 'chat-chunk':
+        this._streamBuffer += (parsed.delta || '');
+        this._updateStreamBubble();
+        break;
+      case 'chat-stream-end':
+      case 'chat-aborted':
+        this._streaming = false;
+        this._removeStreamBubble();
+        this._toggleAbortButton(false);
+        this._refreshMessages();
+        break;
+      case 'chat-message':
+        if (!this._streaming) this._refreshMessages();
+        break;
+    }
+  }
+
+  _appendStreamBubble() {
+    const existing = this.querySelector('#stream-bubble');
+    if (existing) existing.remove();
+    const bubble = document.createElement('div');
+    bubble.id = 'stream-bubble';
+    bubble.className = 'flex justify-start';
+    const inner = document.createElement('div');
+    inner.className = 'max-w-[85%] lg:max-w-[72%] rounded-2xl rounded-bl-md border border-white/15 bg-slate-800/80 px-4 py-3 shadow-lg shadow-black/20';
+    const senderEl = document.createElement('div');
+    senderEl.className = 'text-xs font-semibold mb-2 text-slate-300';
+    senderEl.textContent = 'assistant';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex items-center gap-2';
+    const dot = document.createElement('div');
+    dot.className = 'w-2 h-2 rounded-full bg-indigo-400 animate-pulse';
+    const contentEl = document.createElement('pre');
+    contentEl.id = 'stream-content';
+    contentEl.className = 'whitespace-pre-wrap break-words text-sm leading-6 text-gray-50 font-sans m-0';
+    wrapper.appendChild(dot);
+    wrapper.appendChild(contentEl);
+    inner.appendChild(senderEl);
+    inner.appendChild(wrapper);
+    bubble.appendChild(inner);
+    this.appendChild(bubble);
+    this._scrollToBottom();
+  }
+
+  _updateStreamBubble() {
+    const el = this.querySelector('#stream-content');
+    if (el) {
+      el.textContent = this._streamBuffer;
+      this._scrollToBottom();
+    }
+  }
+
+  _removeStreamBubble() {
+    const bubble = this.querySelector('#stream-bubble');
+    if (bubble) bubble.remove();
+  }
+
+  _scrollToBottom() {
+    this.scrollTop = this.scrollHeight;
+  }
+
+  _toggleAbortButton(show) {
+    const btn = document.getElementById('abort-btn-$conversationId');
+    if (btn) btn.classList.toggle('hidden', !show);
+  }
+
+  _refreshMessages() {
+    fetch('/chat/$conversationId/messages')
+      .then(r => r.text())
+      .then(t => {
+        const streamBubble = this.querySelector('#stream-bubble');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'space-y-4 text-gray-100';
+        const tmpl = document.createElement('template');
+        tmpl.innerHTML = t;
+        wrapper.appendChild(tmpl.content);
+        while (this.firstChild) this.removeChild(this.firstChild);
+        this.appendChild(wrapper);
+        if (streamBubble && this._streaming) this.appendChild(streamBubble);
+        this._scrollToBottom();
+      });
+  }
+
+  abort() {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify({AbortChat:{conversationId:$conversationId}}));
+    }
+    fetch('/api/chat/$conversationId/abort', {method:'POST'});
+  }
+}
+
+if (!customElements.get('chat-message-stream')) {
+  customElements.define('chat-message-stream', ChatMessageStream);
+}
+"""))
+  // scalafmt: { maxColumn = 120 }
 
   private def conversationCard(conv: ChatConversation) =
     a(

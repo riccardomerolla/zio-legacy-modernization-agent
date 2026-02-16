@@ -66,6 +66,11 @@ object WebSocketServerSpec extends ZIOSpecDefault:
     override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]                       = ZIO.none
     override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]                   = ZIO.unit
 
+  private val stubAbortRegistry: StreamAbortRegistry = new StreamAbortRegistry:
+    override def register(conversationId: Long, cancel: UIO[Unit]): UIO[Unit] = ZIO.unit
+    override def abort(conversationId: Long): UIO[Boolean]                    = ZIO.succeed(false)
+    override def unregister(conversationId: Long): UIO[Unit]                  = ZIO.unit
+
   def spec: Spec[TestEnvironment, Any] = suite("WebSocketServerSpec")(
     test("WebSocketServer creates routes at ws/console") {
       for
@@ -73,7 +78,8 @@ object WebSocketServerSpec extends ZIOSpecDefault:
         registry     = ChannelRegistryLive(channelsRef)
         wsChannel   <- WebSocketChannel.make()
         _           <- registry.register(wsChannel)
-        server       = WebSocketServerLive(stubOrchestrator, stubRepository, stubWorkflowService, registry)
+        server       =
+          WebSocketServerLive(stubOrchestrator, stubRepository, stubWorkflowService, registry, stubAbortRegistry)
       yield assertTrue(server.routes.routes.nonEmpty)
     },
     test("ClientMessage Subscribe round-trips through JSON") {

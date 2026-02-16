@@ -24,7 +24,7 @@ object WebSocketServer:
     ZIO.serviceWith[WebSocketServer](_.routes)
 
   val live: ZLayer[
-    MigrationOrchestrator & MigrationRepository & WorkflowService & ChannelRegistry,
+    MigrationOrchestrator & MigrationRepository & WorkflowService & ChannelRegistry & StreamAbortRegistry,
     Nothing,
     WebSocketServer,
   ] = ZLayer.fromFunction(WebSocketServerLive.apply)
@@ -34,6 +34,7 @@ final case class WebSocketServerLive(
   repository: MigrationRepository,
   workflowService: WorkflowService,
   channelRegistry: ChannelRegistry,
+  streamAbortRegistry: StreamAbortRegistry,
 ) extends WebSocketServer:
 
   private val HeartbeatInterval = 30.seconds
@@ -87,6 +88,14 @@ final case class WebSocketServerLive(
             handleUnsubscribe(channel, subscriptions, activeFeeds, topic)
           case ClientMessage.Ping(ts)            =>
             sendRaw(channel, ServerMessage.Pong(ts))
+          case ClientMessage.AbortChat(convId)   =>
+            handleAbortChat(channel, convId)
+
+  private def handleAbortChat(channel: WebSocketChannel, conversationId: Long): UIO[Unit] =
+    streamAbortRegistry.abort(conversationId).flatMap { aborted =>
+      if aborted then sendEvent(channel, s"chat:$conversationId:stream", "chat-aborted", "")
+      else sendError(channel, "no_active_stream", s"No active stream for conversation $conversationId")
+    }
 
   private def handleSubscribe(
     channel: WebSocketChannel,
@@ -146,6 +155,7 @@ final case class WebSocketServerLive(
       case SubscriptionTopic.RunProgress(runId)           => runProgressFeed(channel, topic, runId)
       case SubscriptionTopic.DashboardRecentRuns          => recentRunsFeed(channel, topic)
       case SubscriptionTopic.ChatMessages(conversationId) => chatMessagesFeed(channel, topic, conversationId)
+      case SubscriptionTopic.ChatStream(conversationId)   => chatStreamFeed(channel, topic, conversationId)
     feed.catchAll(err => Logger.warn(s"Feed error for $topic: $err")).unit
 
   private def runProgressFeed(channel: WebSocketChannel, topic: String, runId: Long): IO[Any, Unit] =
@@ -202,6 +212,32 @@ final case class WebSocketServerLive(
             .runDrain
       }
       .catchAll(err => Logger.warn(s"chat feed error: $err"))
+      .unit
+
+  private def chatStreamFeed(
+    channel: WebSocketChannel,
+    topic: String,
+    conversationId: Long,
+  ): IO[Any, Unit] =
+    val sessionKey = SessionScopeStrategy.PerConversation.build("websocket", conversationId.toString)
+    channelRegistry
+      .get("websocket")
+      .flatMap { wsChannel =>
+        wsChannel.open(sessionKey).catchAll(_ => ZIO.unit) *>
+          wsChannel
+            .outbound(sessionKey)
+            .filter(_.metadata.contains("streamEventType"))
+            .mapZIO { normalized =>
+              sendEvent(
+                channel,
+                topic,
+                normalized.metadata.getOrElse("streamEventType", "chat-chunk"),
+                normalized.content,
+              )
+            }
+            .runDrain
+      }
+      .catchAll(err => Logger.warn(s"chat stream feed error: $err"))
       .unit
 
   // --- Utilities ---

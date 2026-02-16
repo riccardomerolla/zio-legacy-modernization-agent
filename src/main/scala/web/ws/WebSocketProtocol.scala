@@ -7,6 +7,7 @@ enum ClientMessage derives JsonCodec:
   case Subscribe(topic: String, params: Map[String, String] = Map.empty)
   case Unsubscribe(topic: String)
   case Ping(ts: Long)
+  case AbortChat(conversationId: Long)
 
 // Server -> Client
 enum ServerMessage derives JsonCodec:
@@ -21,6 +22,7 @@ enum SubscriptionTopic:
   case RunProgress(runId: Long)
   case DashboardRecentRuns
   case ChatMessages(conversationId: Long)
+  case ChatStream(conversationId: Long)
 
 object SubscriptionTopic:
 
@@ -32,5 +34,7 @@ object SubscriptionTopic:
         Right(DashboardRecentRuns)
       case "chat" :: convId :: "messages" :: Nil =>
         convId.toLongOption.toRight(s"Invalid conversationId: $convId").map(ChatMessages.apply)
+      case "chat" :: convId :: "stream" :: Nil   =>
+        convId.toLongOption.toRight(s"Invalid conversationId: $convId").map(ChatStream.apply)
       case _                                     =>
         Left(s"Unknown topic: $raw")

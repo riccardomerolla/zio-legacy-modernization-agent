@@ -14,7 +14,7 @@ import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import orchestration.*
 import web.controllers.*
-import web.{ WebServer, WebSocketServer }
+import web.{ StreamAbortRegistry, WebServer, WebSocketServer }
 
 object ApplicationDI:
 
@@ -144,6 +144,7 @@ object ApplicationDI:
       WorkflowsController.live,
       AgentConfigResolver.live,
       IssueAssignmentOrchestrator.live,
+      StreamAbortRegistry.live,
       ChatController.live,
       TelegramController.live,
       WebSocketServer.live,

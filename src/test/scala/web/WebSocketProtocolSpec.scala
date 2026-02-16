@@ -27,6 +27,12 @@ object WebSocketProtocolSpec extends ZIOSpecDefault:
         val decoded = json.fromJson[ClientMessage]
         assertTrue(decoded == Right(msg))
       },
+      test("round-trips AbortChat") {
+        val msg     = ClientMessage.AbortChat(42L)
+        val json    = msg.toJson
+        val decoded = json.fromJson[ClientMessage]
+        assertTrue(decoded == Right(msg))
+      },
     ),
     suite("ServerMessage JSON codec")(
       test("round-trips Event") {
@@ -69,6 +75,12 @@ object WebSocketProtocolSpec extends ZIOSpecDefault:
       },
       test("parses chat messages topic") {
         assertTrue(SubscriptionTopic.parse("chat:7:messages") == Right(SubscriptionTopic.ChatMessages(7L)))
+      },
+      test("parses chat stream topic") {
+        assertTrue(SubscriptionTopic.parse("chat:7:stream") == Right(SubscriptionTopic.ChatStream(7L)))
+      },
+      test("rejects invalid chat stream id") {
+        assertTrue(SubscriptionTopic.parse("chat:abc:stream").isLeft)
       },
       test("rejects unknown topics") {
         assertTrue(SubscriptionTopic.parse("unknown:topic").isLeft)
