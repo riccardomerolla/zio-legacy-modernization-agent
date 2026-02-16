@@ -81,6 +81,7 @@ final case class TelegramClientLive(
       parseMode = request.parse_mode.flatMap(parseModeFromString),
       disableWebPagePreview = request.disable_web_page_preview,
       replyToMessageId = request.reply_to_message_id.flatMap(longToInt),
+      replyMarkup = request.reply_markup.map(toBotReplyMarkup),
     )
     executeFuture(requestHandler.sendRequest(method), timeout).map(fromBotMessage)
 
@@ -109,6 +110,7 @@ final case class TelegramClientLive(
       update_id = update.updateId,
       message = update.message.map(fromBotMessage),
       edited_message = update.editedMessage.map(fromBotMessage),
+      callback_query = update.callbackQuery.map(fromBotCallbackQuery),
     )
 
   private def fromBotMessage(message: BotMessage): TelegramMessage =
@@ -134,6 +136,25 @@ final case class TelegramClientLive(
       is_bot = user.isBot,
       first_name = user.firstName,
       username = user.username,
+    )
+
+  private def fromBotCallbackQuery(callback: CallbackQuery): TelegramCallbackQuery =
+    TelegramCallbackQuery(
+      id = callback.id,
+      from = fromBotUser(callback.from),
+      message = callback.message.map(fromBotMessage),
+      data = callback.data,
+    )
+
+  private def toBotReplyMarkup(markup: TelegramInlineKeyboardMarkup): InlineKeyboardMarkup =
+    InlineKeyboardMarkup(
+      inlineKeyboard = markup.inline_keyboard.map(_.map(toBotInlineKeyboardButton))
+    )
+
+  private def toBotInlineKeyboardButton(button: TelegramInlineKeyboardButton): InlineKeyboardButton =
+    InlineKeyboardButton(
+      text = button.text,
+      callbackData = Some(button.callback_data),
     )
 
   private def parseModeFromString(raw: String): Option[ParseMode.Value] =
