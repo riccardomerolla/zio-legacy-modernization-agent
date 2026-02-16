@@ -15,11 +15,11 @@ import agents.AgentRegistry
 import db.{ ChatRepository, MigrationRepository, PersistenceError }
 import gateway.models.{ MessageDirection as GatewayMessageDirection, MessageRole as GatewayMessageRole, * }
 import gateway.{ ChannelRegistry, GatewayService, GatewayServiceError, MessageChannelError }
-import llm4zio.core.{ LlmError, LlmService }
+import llm4zio.core.{ LlmError, LlmService, Streaming }
 import models.*
 import orchestration.{ AgentConfigResolver, IssueAssignmentOrchestrator }
-import web.ErrorHandlingMiddleware
 import web.views.HtmlViews
+import web.{ ErrorHandlingMiddleware, StreamAbortRegistry }
 
 trait ChatController:
   def routes: Routes[Any, Response]
@@ -32,7 +32,7 @@ object ChatController:
   val live
     : ZLayer[
       ChatRepository & LlmService & MigrationRepository & IssueAssignmentOrchestrator & AgentConfigResolver &
-        GatewayService & ChannelRegistry,
+        GatewayService & ChannelRegistry & StreamAbortRegistry,
       Nothing,
       ChatController,
     ] =
@@ -46,6 +46,7 @@ final case class ChatControllerLive(
   configResolver: AgentConfigResolver,
   gatewayService: GatewayService,
   channelRegistry: ChannelRegistry,
+  streamAbortRegistry: StreamAbortRegistry,
 ) extends ChatController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -100,20 +101,33 @@ final case class ChatControllerLive(
     Method.POST / "chat" / long("id") / "messages"               -> handler { (id: Long, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          form         <- parseForm(req)
-          content      <- ZIO
-                            .fromOption(form.get("content").map(_.trim).filter(_.nonEmpty))
-                            .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
-          _            <- addUserAndAssistantMessage(id, content, MessageType.Text, None)
-          htmlRequested = form.get("fragment").exists(_.equalsIgnoreCase("true"))
-          messages     <- chatRepository.getMessages(id)
-        yield
-          if htmlRequested then html(HtmlViews.chatMessagesFragment(messages))
-          else
-            Response(
-              status = Status.SeeOther,
-              headers = Headers(Header.Custom("Location", s"/chat/$id")),
-            )
+          form        <- parseForm(req)
+          content     <- ZIO
+                           .fromOption(form.get("content").map(_.trim).filter(_.nonEmpty))
+                           .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
+          now         <- Clock.instant
+          _           <- chatRepository.addMessage(
+                           ConversationMessage(
+                             conversationId = id,
+                             sender = "user",
+                             senderType = SenderType.User,
+                             content = content,
+                             messageType = MessageType.Text,
+                             createdAt = now,
+                             updatedAt = now,
+                           )
+                         )
+          userInbound <- toGatewayMessage(id, SenderType.User, content, None, GatewayMessageDirection.Inbound)
+          _           <- routeThroughGateway(gatewayService.processInbound(userInbound))
+          _           <- streamAssistantResponse(id, content).forkDaemon
+          messages    <- chatRepository.getMessages(id)
+        yield html(HtmlViews.chatMessagesFragment(messages))
+      }
+    },
+    // Abort streaming
+    Method.POST / "api" / "chat" / long("id") / "abort"          -> handler { (id: Long, _: Request) =>
+      streamAbortRegistry.abort(id).map { aborted =>
+        Response.json(Map("aborted" -> aborted.toString).toJson)
       }
     },
     // Chat API Endpoints
@@ -509,6 +523,71 @@ final case class ChatControllerLive(
                        .someOrFail(PersistenceError.NotFound("conversation", conversationId))
       _           <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
     yield aiMessage
+
+  private def streamAssistantResponse(
+    conversationId: Long,
+    userContent: String,
+  ): UIO[Unit] =
+    val effect =
+      for
+        _                          <- sendStreamEvent(conversationId, "chat-stream-start", "")
+        pair                       <- Streaming.cancellable(llmService.executeStream(userContent))
+        (cancellableStream, cancel) = pair
+        _                          <- streamAbortRegistry.register(conversationId, cancel)
+        accumulated                <- cancellableStream
+                                        .mapZIO { chunk =>
+                                          sendStreamEvent(conversationId, "chat-chunk", chunk.delta).as(chunk.delta)
+                                        }
+                                        .runFold("")(_ + _)
+        _                          <- streamAbortRegistry.unregister(conversationId)
+        _                          <- sendStreamEvent(conversationId, "chat-stream-end", "")
+        now                        <- Clock.instant
+        aiMessage                   = ConversationMessage(
+                                        conversationId = conversationId,
+                                        sender = "assistant",
+                                        senderType = SenderType.Assistant,
+                                        content = accumulated,
+                                        messageType = MessageType.Text,
+                                        createdAt = now,
+                                        updatedAt = now,
+                                      )
+        _                          <- chatRepository.addMessage(aiMessage)
+        aiOutbound                 <- toGatewayMessage(
+                                        conversationId = conversationId,
+                                        senderType = SenderType.Assistant,
+                                        content = accumulated,
+                                        metadata = None,
+                                        direction = GatewayMessageDirection.Outbound,
+                                      )
+        _                          <- routeThroughGateway(gatewayService.processOutbound(aiOutbound).unit)
+        conv                       <- chatRepository
+                                        .getConversation(conversationId)
+                                        .someOrFail(PersistenceError.NotFound("conversation", conversationId))
+        _                          <- chatRepository.updateConversation(conv.copy(updatedAt = now))
+      yield ()
+    effect.catchAll(err => ZIO.logWarning(s"streaming response failed for conversation $conversationId: $err"))
+
+  private def sendStreamEvent(conversationId: Long, eventType: String, payload: String): UIO[Unit] =
+    val jsonContent = Map("type" -> eventType, "delta" -> payload).toJson
+    (for
+      now       <- Clock.instant
+      sessionKey = SessionScopeStrategy.PerConversation.build("websocket", conversationId.toString)
+      msg        = NormalizedMessage(
+                     id = s"stream-$conversationId-${now.toEpochMilli}-$eventType",
+                     channelName = "websocket",
+                     sessionKey = sessionKey,
+                     direction = GatewayMessageDirection.Outbound,
+                     role = GatewayMessageRole.Assistant,
+                     content = jsonContent,
+                     metadata = Map(
+                       "conversationId"  -> conversationId.toString,
+                       "streamEventType" -> eventType,
+                     ),
+                     timestamp = now,
+                   )
+      _         <- ensureWebSocketSession(conversationId)
+      _         <- gatewayService.processOutbound(msg).unit
+    yield ()).catchAll(err => ZIO.logWarning(s"stream event send failed: $err"))
 
   private def toGatewayMessage(
     conversationId: Long,
