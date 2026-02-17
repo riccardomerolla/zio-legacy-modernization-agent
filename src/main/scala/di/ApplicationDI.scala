@@ -32,7 +32,9 @@ object ApplicationDI:
       ProgressTracker &
       ResultPersister &
       ChatRepository &
+      AgentRegistry &
       LogTailer &
+      HealthMonitor &
       ChannelRegistry &
       MessageRouter &
       GatewayService &
@@ -94,7 +96,9 @@ object ApplicationDI:
       ProgressTracker.live,
       ResultPersister.live,
       ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      AgentRegistry.live,
       LogTailer.live,
+      HealthMonitor.live,
       channelRegistryLayer,
       MessageRouter.live,
       GatewayService.live,
@@ -154,6 +158,7 @@ object ApplicationDI:
       StreamAbortRegistry.live,
       ChatController.live,
       ActivityController.live,
+      HealthController.live,
       TelegramController.live,
       WebSocketServer.live,
       WebServer.live,

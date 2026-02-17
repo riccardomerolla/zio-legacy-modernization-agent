@@ -8,7 +8,7 @@ import zio.stream.*
 import zio.test.*
 
 import _root_.models.*
-import core.{ LogEvent, LogLevel, LogTailer, LogTailerError }
+import core.*
 import db.*
 import gateway.*
 import orchestration.*
@@ -80,10 +80,20 @@ object WebSocketServerSpec extends ZIOSpecDefault:
   private val stubLogTailer: LogTailer = new LogTailer:
     override def tail(
       path: Path,
-      levels: Set[LogLevel],
+      levels: Set[core.LogLevel],
       search: Option[String],
       initialLines: Int,
     ): ZStream[Any, LogTailerError, LogEvent] =
+      ZStream.empty
+
+  private val stubHealthMonitor: HealthMonitor = new HealthMonitor:
+    override def snapshot: UIO[HealthSnapshot] =
+      ZIO.dieMessage("unused in WebSocketServerSpec")
+
+    override def history(limit: Int): UIO[List[HealthSnapshot]] =
+      ZIO.succeed(Nil)
+
+    override def stream(interval: Duration): ZStream[Any, Nothing, HealthSnapshot] =
       ZStream.empty
 
   def spec: Spec[TestEnvironment, Any] = suite("WebSocketServerSpec")(
@@ -102,6 +112,7 @@ object WebSocketServerSpec extends ZIOSpecDefault:
             stubAbortRegistry,
             stubActivityHub,
             stubLogTailer,
+            stubHealthMonitor,
           )
       yield assertTrue(server.routes.routes.nonEmpty)
     },

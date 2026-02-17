@@ -65,6 +65,20 @@ object DashboardView:
           recentRunsContent(runs.take(10))
         ),
       ),
+      div(cls := "mt-6 rounded-lg bg-emerald-500/10 ring-1 ring-emerald-400/20 p-4")(
+        div(cls := "flex items-center justify-between gap-3")(
+          div(
+            h3(cls := "text-sm font-semibold text-emerald-200")("System Health"),
+            p(cls := "text-xs text-emerald-100/80 mt-1")(
+              "Live gateway, agent, channel, and resource telemetry with trend charts."
+            ),
+          ),
+          a(
+            href := "/health",
+            cls  := "inline-flex items-center rounded-md bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100 ring-1 ring-emerald-300/30 hover:bg-emerald-500/30",
+          )("Open Health Dashboard"),
+        )
+      ),
     )
 
   def recentRunsContent(runs: List[MigrationRunRow]): Frag =

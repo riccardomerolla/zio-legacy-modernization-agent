@@ -6,7 +6,7 @@ import zio.http.ChannelEvent.{ ExceptionCaught, Read, UserEvent, UserEventTrigge
 import zio.json.*
 import zio.stream.*
 
-import core.{ LogLevel, LogTailer, LogTailerError, Logger }
+import core.{ HealthMonitor, LogLevel, LogTailer, LogTailerError, Logger }
 import db.{ MigrationRepository, MigrationRunRow, PersistenceError }
 import gateway.ChannelRegistry
 import gateway.models.SessionScopeStrategy
@@ -25,7 +25,7 @@ object WebSocketServer:
 
   val live: ZLayer[
     MigrationOrchestrator & MigrationRepository & WorkflowService & ChannelRegistry & StreamAbortRegistry &
-      ActivityHub & LogTailer,
+      ActivityHub & LogTailer & HealthMonitor,
     Nothing,
     WebSocketServer,
   ] = ZLayer.fromFunction(WebSocketServerLive.apply)
@@ -38,6 +38,7 @@ final case class WebSocketServerLive(
   streamAbortRegistry: StreamAbortRegistry,
   activityHub: ActivityHub,
   logTailer: LogTailer,
+  healthMonitor: HealthMonitor,
 ) extends WebSocketServer:
 
   private val HeartbeatInterval = 30.seconds
@@ -163,6 +164,7 @@ final case class WebSocketServerLive(
       case SubscriptionTopic.ChatMessages(conversationId) => chatMessagesFeed(channel, topic, conversationId)
       case SubscriptionTopic.ChatStream(conversationId)   => chatStreamFeed(channel, topic, conversationId)
       case SubscriptionTopic.ActivityFeed                 => activityFeed(channel, topic)
+      case SubscriptionTopic.HealthMetrics                => healthFeed(channel, topic)
     feed.catchAll(err => Logger.warn(s"Feed error for $topic: $err")).unit
 
   private def runProgressFeed(channel: WebSocketChannel, topic: String, runId: Long): IO[Any, Unit] =
@@ -256,6 +258,11 @@ final case class WebSocketServerLive(
         }
         .runDrain
     }
+
+  private def healthFeed(channel: WebSocketChannel, topic: String): IO[Any, Unit] =
+    healthMonitor.stream(2.seconds).mapZIO { snapshot =>
+      sendEvent(channel, topic, "health-snapshot", snapshot.toJson)
+    }.runDrain
 
   private def handleLogsWebSocket(req: Request): WebSocketApp[Any] =
     Handler.webSocket { channel =>

@@ -78,6 +78,7 @@ object Layout:
                 navItem("/chat", "Chat", Icons.chat, currentPath.startsWith("/chat")),
                 navItem("/issues", "Issues", Icons.flag, currentPath.startsWith("/issues")),
                 navItem("/activity", "Activity", Icons.activity, currentPath.startsWith("/activity")),
+                navItem("/health", "Health", Icons.pulse, currentPath.startsWith("/health")),
                 navItem("/logs", "Logs", Icons.logs, currentPath.startsWith("/logs")),
               ),
             ),
@@ -145,6 +146,10 @@ object Layout:
 
     val activity: Frag = icon(
       "M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+    )
+
+    val pulse: Frag = icon(
+      "M3 12h4.5l2.25-6 3.5 12 2.25-6H21"
     )
 
     val logs: Frag = icon(
