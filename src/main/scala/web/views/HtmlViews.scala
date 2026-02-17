@@ -128,3 +128,6 @@ object HtmlViews:
 
   def activityEventsFragment(events: List[ActivityEvent]): String =
     ActivityView.eventsFragment(events)
+
+  def healthPage: String =
+    HealthDashboard.page

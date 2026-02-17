@@ -94,6 +94,9 @@ object WebSocketProtocolSpec extends ZIOSpecDefault:
       test("parses activity feed topic") {
         assertTrue(SubscriptionTopic.parse("activity:feed") == Right(SubscriptionTopic.ActivityFeed))
       },
+      test("parses health metrics topic") {
+        assertTrue(SubscriptionTopic.parse("health:metrics") == Right(SubscriptionTopic.HealthMetrics))
+      },
       test("rejects empty string") {
         assertTrue(SubscriptionTopic.parse("").isLeft)
       },

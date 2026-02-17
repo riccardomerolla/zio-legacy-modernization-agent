@@ -24,6 +24,7 @@ enum SubscriptionTopic:
   case ChatMessages(conversationId: Long)
   case ChatStream(conversationId: Long)
   case ActivityFeed
+  case HealthMetrics
 
 object SubscriptionTopic:
 
@@ -39,5 +40,7 @@ object SubscriptionTopic:
         convId.toLongOption.toRight(s"Invalid conversationId: $convId").map(ChatStream.apply)
       case "activity" :: "feed" :: Nil           =>
         Right(ActivityFeed)
+      case "health" :: "metrics" :: Nil          =>
+        Right(HealthMetrics)
       case _                                     =>
         Left(s"Unknown topic: $raw")
