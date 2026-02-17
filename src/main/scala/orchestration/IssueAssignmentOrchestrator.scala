@@ -8,6 +8,7 @@ import zio.json.*
 import db.{ ChatRepository, MigrationRepository, PersistenceError }
 import llm4zio.core.{ LlmError, LlmService }
 import models.*
+import web.ActivityHub
 
 trait IssueAssignmentOrchestrator:
   def assignIssue(issueId: Long, agentName: String): IO[PersistenceError, AgentIssue]
@@ -18,13 +19,18 @@ object IssueAssignmentOrchestrator:
     ZIO.serviceWithZIO[IssueAssignmentOrchestrator](_.assignIssue(issueId, agentName))
 
   val live
-    : ZLayer[ChatRepository & MigrationRepository & LlmService & AgentConfigResolver, Nothing, IssueAssignmentOrchestrator] =
+    : ZLayer[
+      ChatRepository & MigrationRepository & LlmService & AgentConfigResolver & ActivityHub,
+      Nothing,
+      IssueAssignmentOrchestrator,
+    ] =
     ZLayer.scoped {
       for
         chatRepository      <- ZIO.service[ChatRepository]
         migrationRepository <- ZIO.service[MigrationRepository]
         llmService          <- ZIO.service[LlmService]
         configResolver      <- ZIO.service[AgentConfigResolver]
+        activityHub         <- ZIO.service[ActivityHub]
         queue               <- Queue.unbounded[AssignmentTask]
         service              =
           IssueAssignmentOrchestratorLive(
@@ -32,6 +38,7 @@ object IssueAssignmentOrchestrator:
             migrationRepository,
             llmService,
             configResolver,
+            activityHub,
             queue,
           )
         _                   <- service.processQueue.forever.forkScoped
@@ -49,6 +56,7 @@ final private case class IssueAssignmentOrchestratorLive(
   migrationRepository: MigrationRepository,
   llmService: LlmService,
   configResolver: AgentConfigResolver,
+  activityHub: ActivityHub,
   queue: Queue[AssignmentTask],
 ) extends IssueAssignmentOrchestrator:
 
@@ -78,6 +86,17 @@ final private case class IssueAssignmentOrchestratorLive(
                                                )
                                              )
                              _            <- queue.offer(AssignmentTask(assignmentId, issueId, agentName))
+                             _            <- activityHub.publish(
+                                               ActivityEvent(
+                                                 eventType = ActivityEventType.AgentAssigned,
+                                                 source = "issue-assignment",
+                                                 runId = issue.runId,
+                                                 agentName = Some(agentName),
+                                                 summary =
+                                                   s"Agent '$agentName' assigned to issue #$issueId: ${issue.title}",
+                                                 createdAt = now,
+                                               )
+                                             )
                            yield conversation
     yield result
 

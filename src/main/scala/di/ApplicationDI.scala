@@ -14,7 +14,7 @@ import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import orchestration.*
 import web.controllers.*
-import web.{ StreamAbortRegistry, WebServer, WebSocketServer }
+import web.{ ActivityHub, StreamAbortRegistry, WebServer, WebSocketServer }
 
 object ApplicationDI:
 
@@ -27,6 +27,8 @@ object ApplicationDI:
       javax.sql.DataSource &
       MigrationRepository &
       WorkflowService &
+      ActivityRepository &
+      ActivityHub &
       ProgressTracker &
       ResultPersister &
       ChatRepository &
@@ -86,6 +88,8 @@ object ApplicationDI:
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       MigrationRepository.live,
       WorkflowService.live,
+      ActivityRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      ActivityHub.live,
       ProgressTracker.live,
       ResultPersister.live,
       ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
@@ -146,6 +150,7 @@ object ApplicationDI:
       IssueAssignmentOrchestrator.live,
       StreamAbortRegistry.live,
       ChatController.live,
+      ActivityController.live,
       TelegramController.live,
       WebSocketServer.live,
       WebServer.live,

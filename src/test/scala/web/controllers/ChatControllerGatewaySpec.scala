@@ -14,7 +14,7 @@ import gateway.models.*
 import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import orchestration.*
-import web.StreamAbortRegistryLive
+import web.{ ActivityHubLive, StreamAbortRegistryLive }
 
 object ChatControllerGatewaySpec extends ZIOSpecDefault:
 
@@ -68,6 +68,14 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
       override def assignIssue(issueId: Long, agentName: String): IO[PersistenceError, AgentIssue] =
         ZIO.fail(PersistenceError.NotFound("issue", issueId))
 
+  private val stubActivityRepo: db.ActivityRepository = new db.ActivityRepository:
+    override def createEvent(event: ActivityEvent): IO[PersistenceError, Long] = ZIO.succeed(1L)
+    override def listEvents(
+      eventType: Option[ActivityEventType],
+      since: Option[java.time.Instant],
+      limit: Int,
+    ): IO[PersistenceError, List[ActivityEvent]] = ZIO.succeed(Nil)
+
   private val testConfigResolver: AgentConfigResolver =
     new AgentConfigResolver:
       override def resolveConfig(agentName: String): IO[PersistenceError, AIProviderConfig] =
@@ -96,6 +104,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         registry  <- ZIO.service[ChannelRegistry]
         convId    <- newConversation(chatRepo)
         abortReg  <- Ref.make(Map.empty[Long, UIO[Unit]]).map(StreamAbortRegistryLive.apply)
+        actHub    <- Ref.make(Set.empty[Queue[ActivityEvent]]).map(subs => ActivityHubLive(stubActivityRepo, subs))
         controller = ChatControllerLive(
                        chatRepository = chatRepo,
                        llmService = llm,
@@ -105,6 +114,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        gatewayService = gateway,
                        channelRegistry = registry,
                        streamAbortRegistry = abortReg,
+                       activityHub = actHub,
                      )
         request    = Request.post(
                        s"/api/chat/$convId/messages",
@@ -135,6 +145,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         registry  <- ZIO.service[ChannelRegistry]
         convId    <- newConversation(chatRepo)
         abortReg  <- Ref.make(Map.empty[Long, UIO[Unit]]).map(StreamAbortRegistryLive.apply)
+        actHub    <- Ref.make(Set.empty[Queue[ActivityEvent]]).map(subs => ActivityHubLive(stubActivityRepo, subs))
         controller = ChatControllerLive(
                        chatRepository = chatRepo,
                        llmService = llm,
@@ -144,6 +155,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        gatewayService = gateway,
                        channelRegistry = registry,
                        streamAbortRegistry = abortReg,
+                       activityHub = actHub,
                      )
         request    = Request.post(
                        s"/chat/$convId/messages",

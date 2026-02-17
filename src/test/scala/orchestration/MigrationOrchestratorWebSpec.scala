@@ -89,11 +89,27 @@ object MigrationOrchestratorWebSpec extends ZIOSpecDefault:
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:file:$dbName?mode=memory&cache=shared")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       MigrationRepository.live,
+      stubActivityHubLayer,
       ProgressTracker.live,
       ResultPersister.live,
       WorkspaceCoordinator.noop,
       MigrationOrchestrator.live,
     )
+
+  private val stubActivityHubLayer: ULayer[web.ActivityHub] =
+    ZLayer.fromZIO {
+      Ref.make(Set.empty[Queue[ActivityEvent]]).map { subs =>
+        web.ActivityHubLive(stubActivityRepo, subs)
+      }
+    }
+
+  private val stubActivityRepo: db.ActivityRepository = new db.ActivityRepository:
+    override def createEvent(event: ActivityEvent): IO[PersistenceError, Long] = ZIO.succeed(1L)
+    override def listEvents(
+      eventType: Option[ActivityEventType],
+      since: Option[java.time.Instant],
+      limit: Int,
+    ): IO[PersistenceError, List[ActivityEvent]] = ZIO.succeed(Nil)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("MigrationOrchestratorWebSpec")(
     test("startMigration creates run record and subscription receives progress events") {

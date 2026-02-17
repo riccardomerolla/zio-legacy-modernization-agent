@@ -19,7 +19,7 @@ import llm4zio.core.{ LlmError, LlmService, Streaming }
 import models.*
 import orchestration.{ AgentConfigResolver, IssueAssignmentOrchestrator }
 import web.views.HtmlViews
-import web.{ ErrorHandlingMiddleware, StreamAbortRegistry }
+import web.{ ActivityHub, ErrorHandlingMiddleware, StreamAbortRegistry }
 
 trait ChatController:
   def routes: Routes[Any, Response]
@@ -32,7 +32,7 @@ object ChatController:
   val live
     : ZLayer[
       ChatRepository & LlmService & MigrationRepository & IssueAssignmentOrchestrator & AgentConfigResolver &
-        GatewayService & ChannelRegistry & StreamAbortRegistry,
+        GatewayService & ChannelRegistry & StreamAbortRegistry & ActivityHub,
       Nothing,
       ChatController,
     ] =
@@ -47,6 +47,7 @@ final case class ChatControllerLive(
   gatewayService: GatewayService,
   channelRegistry: ChannelRegistry,
   streamAbortRegistry: StreamAbortRegistry,
+  activityHub: ActivityHub,
 ) extends ChatController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -115,6 +116,15 @@ final case class ChatControllerLive(
                              messageType = MessageType.Text,
                              createdAt = now,
                              updatedAt = now,
+                           )
+                         )
+          _           <- activityHub.publish(
+                           ActivityEvent(
+                             eventType = ActivityEventType.MessageSent,
+                             source = "chat",
+                             conversationId = Some(id),
+                             summary = s"Message sent in conversation #$id",
+                             createdAt = now,
                            )
                          )
           userInbound <- toGatewayMessage(id, SenderType.User, content, None, GatewayMessageDirection.Inbound)
