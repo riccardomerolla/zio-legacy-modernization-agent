@@ -8,6 +8,7 @@ import zio.stream.*
 import zio.test.*
 
 import _root_.models.*
+import core.{ LogEvent, LogLevel, LogTailer, LogTailerError }
 import db.*
 import gateway.*
 import orchestration.*
@@ -76,6 +77,15 @@ object WebSocketServerSpec extends ZIOSpecDefault:
     override def subscribe: UIO[Dequeue[_root_.models.ActivityEvent]]   =
       Queue.unbounded[_root_.models.ActivityEvent].map(identity)
 
+  private val stubLogTailer: LogTailer = new LogTailer:
+    override def tail(
+      path: Path,
+      levels: Set[LogLevel],
+      search: Option[String],
+      initialLines: Int,
+    ): ZStream[Any, LogTailerError, LogEvent] =
+      ZStream.empty
+
   def spec: Spec[TestEnvironment, Any] = suite("WebSocketServerSpec")(
     test("WebSocketServer creates routes at ws/console") {
       for
@@ -91,6 +101,7 @@ object WebSocketServerSpec extends ZIOSpecDefault:
             registry,
             stubAbortRegistry,
             stubActivityHub,
+            stubLogTailer,
           )
       yield assertTrue(server.routes.routes.nonEmpty)
     },

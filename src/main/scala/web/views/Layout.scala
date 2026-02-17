@@ -78,6 +78,7 @@ object Layout:
                 navItem("/chat", "Chat", Icons.chat, currentPath.startsWith("/chat")),
                 navItem("/issues", "Issues", Icons.flag, currentPath.startsWith("/issues")),
                 navItem("/activity", "Activity", Icons.activity, currentPath.startsWith("/activity")),
+                navItem("/logs", "Logs", Icons.logs, currentPath.startsWith("/logs")),
               ),
             ),
             li(cls := "mt-auto")(
@@ -144,6 +145,10 @@ object Layout:
 
     val activity: Frag = icon(
       "M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+    )
+
+    val logs: Frag = icon(
+      "M3.75 5.25h16.5m-16.5 6h16.5m-16.5 6h10.5"
     )
 
     val cog: Frag = icon(

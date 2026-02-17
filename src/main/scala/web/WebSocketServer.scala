@@ -6,7 +6,7 @@ import zio.http.ChannelEvent.{ ExceptionCaught, Read, UserEvent, UserEventTrigge
 import zio.json.*
 import zio.stream.*
 
-import core.Logger
+import core.{ LogLevel, LogTailer, LogTailerError, Logger }
 import db.{ MigrationRepository, MigrationRunRow, PersistenceError }
 import gateway.ChannelRegistry
 import gateway.models.SessionScopeStrategy
@@ -25,7 +25,7 @@ object WebSocketServer:
 
   val live: ZLayer[
     MigrationOrchestrator & MigrationRepository & WorkflowService & ChannelRegistry & StreamAbortRegistry &
-      ActivityHub,
+      ActivityHub & LogTailer,
     Nothing,
     WebSocketServer,
   ] = ZLayer.fromFunction(WebSocketServerLive.apply)
@@ -37,6 +37,7 @@ final case class WebSocketServerLive(
   channelRegistry: ChannelRegistry,
   streamAbortRegistry: StreamAbortRegistry,
   activityHub: ActivityHub,
+  logTailer: LogTailer,
 ) extends WebSocketServer:
 
   private val HeartbeatInterval = 30.seconds
@@ -51,7 +52,10 @@ final case class WebSocketServerLive(
   )
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / "ws" / "console" -> handler(handleWebSocket.toResponse)
+    Method.GET / "ws" / "console" -> handler(handleWebSocket.toResponse),
+    Method.GET / "ws" / "logs"    -> handler { (req: Request) =>
+      handleLogsWebSocket(req).toResponse
+    },
   )
 
   private def handleWebSocket: WebSocketApp[Any] =
@@ -253,7 +257,61 @@ final case class WebSocketServerLive(
         .runDrain
     }
 
+  private def handleLogsWebSocket(req: Request): WebSocketApp[Any] =
+    Handler.webSocket { channel =>
+      val rawPath = req.queryParam("path").filter(_.nonEmpty).getOrElse("logs/app.log")
+      val levels  = parseLevels(req.queryParam("levels"))
+      val search  = req.queryParam("search").map(_.trim).filter(_.nonEmpty)
+      val tailIO  =
+        resolveLogPath(rawPath).flatMap { path =>
+          logTailer
+            .tail(path, levels, search)
+            .mapZIO { event =>
+              channel.send(Read(WebSocketFrame.text(event.toJson))).catchAll(_ => ZIO.unit)
+            }
+            .runDrain
+        }
+
+      for
+        fiber <- tailIO.catchAll(err => sendLogError(channel, err)).forkDaemon
+        _     <- channel.receiveAll {
+                   case Read(WebSocketFrame.Close(_, _)) =>
+                     fiber.interrupt.unit
+                   case ExceptionCaught(cause)           =>
+                     Logger.warn(s"Logs websocket error: ${cause.getMessage}")
+                   case _                                =>
+                     ZIO.unit
+                 }.ensuring(fiber.interrupt)
+      yield ()
+    }
+
   // --- Utilities ---
+
+  private def parseLevels(raw: Option[String]): Set[LogLevel] =
+    raw match
+      case Some(value) =>
+        val parsed = value.split(",").toList.flatMap(LogLevel.parse).toSet
+        if parsed.nonEmpty then parsed else LogLevel.all
+      case None        =>
+        LogLevel.all
+
+  private def resolveLogPath(rawPath: String): IO[LogTailerError, java.nio.file.Path] =
+    ZIO
+      .attempt(java.nio.file.Path.of(rawPath))
+      .mapError(err =>
+        LogTailerError.InvalidPath(rawPath, Option(err.getMessage).getOrElse(err.getClass.getSimpleName))
+      )
+
+  private def sendLogError(channel: WebSocketChannel, err: LogTailerError): UIO[Unit] =
+    val payload = err match
+      case LogTailerError.InvalidPath(path, reason) =>
+        s"""{"type":"error","message":"Invalid log path '$path': ${escapeJson(reason)}"}"""
+      case LogTailerError.ReadFailed(path, reason)  =>
+        s"""{"type":"error","message":"Cannot read '$path': ${escapeJson(reason)}"}"""
+    channel.send(Read(WebSocketFrame.text(payload))).catchAll(_ => ZIO.unit)
+
+  private def escapeJson(value: String): String =
+    value.replace("\\", "\\\\").replace("\"", "\\\"")
 
   private def startHeartbeat(channel: WebSocketChannel): UIO[Unit] =
     ZStream
