@@ -30,7 +30,7 @@ final case class ActivityControllerLive(
     Method.GET / "activity"                                    -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         activityRepository.listEvents(limit = 50).map { events =>
-          Response.html(ActivityView.timeline(events))
+          htmlResponse(ActivityView.timeline(events))
         }
       }
     },
@@ -41,7 +41,7 @@ final case class ActivityControllerLive(
         val since     = req.queryParam("since").flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
         val limit     = req.queryParam("limit").flatMap(_.toIntOption).getOrElse(50)
         activityRepository.listEvents(eventType, since, limit).map { events =>
-          Response.html(ActivityView.eventsFragment(events))
+          htmlResponse(ActivityView.eventsFragment(events))
         }
       }
     },
@@ -49,12 +49,15 @@ final case class ActivityControllerLive(
     Method.GET / "api" / "activity" / "events" / "latest-card" -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         activityRepository.listEvents(limit = 1).map {
-          case event :: _ => Response.html(ActivityView.singleEventFragment(event))
-          case Nil        => Response.html("")
+          case event :: _ => htmlResponse(ActivityView.singleEventFragment(event))
+          case Nil        => htmlResponse("")
         }
       }
     },
   )
+
+  private def htmlResponse(content: String): Response =
+    Response.text(content).contentType(MediaType.text.html)
 
   private def parseEventType(raw: String): Option[ActivityEventType] = raw.toLowerCase match
     case "run_started"    => Some(ActivityEventType.RunStarted)

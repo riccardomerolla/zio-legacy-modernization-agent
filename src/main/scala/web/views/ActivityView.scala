@@ -28,14 +28,17 @@ object ActivityView:
           filterButton("config_changed", "Config Changed"),
         )
       ),
-      // Timeline container — Lit component handles live updates
-      div(id := "activity-timeline")(
-        eventsFragment(events)
+      // Timeline container — Lit component handles live updates and filtering
+      tag("activity-timeline")(id := "activity-timeline")(
+        eventsFragmentFrag(events)
       ),
       raw(timelineScript),
     )
 
   def eventsFragment(events: List[ActivityEvent]): String =
+    eventsFragmentFrag(events).render
+
+  private def eventsFragmentFrag(events: List[ActivityEvent]): Frag =
     div(id := "activity-events", cls := "space-y-3")(
       if events.isEmpty then
         Seq(
@@ -44,7 +47,7 @@ object ActivityView:
           )
         )
       else events.map(eventCard)
-    ).render
+    )
 
   def singleEventFragment(event: ActivityEvent): String =
     eventCard(event).render
