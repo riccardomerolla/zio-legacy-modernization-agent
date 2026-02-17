@@ -91,6 +91,9 @@ object WebSocketProtocolSpec extends ZIOSpecDefault:
       test("rejects invalid conversation id") {
         assertTrue(SubscriptionTopic.parse("chat:xyz:messages").isLeft)
       },
+      test("parses activity feed topic") {
+        assertTrue(SubscriptionTopic.parse("activity:feed") == Right(SubscriptionTopic.ActivityFeed))
+      },
       test("rejects empty string") {
         assertTrue(SubscriptionTopic.parse("").isLeft)
       },

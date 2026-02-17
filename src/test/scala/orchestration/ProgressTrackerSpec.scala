@@ -167,7 +167,22 @@ object ProgressTrackerSpec extends ZIOSpecDefault:
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock
 
   private def trackerLayer(repo: MigrationRepository): ZLayer[Any, Nothing, ProgressTracker] =
-    ZLayer.succeed(repo) >>> ProgressTracker.live
+    (ZLayer.succeed(repo) ++ stubActivityHubLayer) >>> ProgressTracker.live
+
+  private val stubActivityHubLayer: ULayer[web.ActivityHub] =
+    ZLayer.fromZIO {
+      Ref.make(Set.empty[Queue[_root_.models.ActivityEvent]]).map { subs =>
+        web.ActivityHubLive(stubActivityRepo, subs)
+      }
+    }
+
+  private val stubActivityRepo: db.ActivityRepository = new db.ActivityRepository:
+    override def createEvent(event: _root_.models.ActivityEvent): IO[PersistenceError, Long] = ZIO.succeed(1L)
+    override def listEvents(
+      eventType: Option[_root_.models.ActivityEventType],
+      since: Option[java.time.Instant],
+      limit: Int,
+    ): IO[PersistenceError, List[_root_.models.ActivityEvent]] = ZIO.succeed(Nil)
 
   final private case class TestMigrationRepository(
     progressRows: Ref[Map[(Long, String), PhaseProgressRow]],

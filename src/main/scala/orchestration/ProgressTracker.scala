@@ -4,7 +4,8 @@ import zio.*
 
 import core.Logger
 import db.*
-import models.ProgressUpdate
+import models.{ ActivityEvent, ActivityEventType, ProgressUpdate }
+import web.ActivityHub
 
 trait ProgressTracker:
   def startPhase(runId: Long, phase: String, total: Int): IO[PersistenceError, Unit]
@@ -29,15 +30,16 @@ object ProgressTracker:
   def subscribe(runId: Long): ZIO[ProgressTracker, Nothing, Dequeue[ProgressUpdate]] =
     ZIO.serviceWithZIO[ProgressTracker](_.subscribe(runId))
 
-  val live: ZLayer[MigrationRepository, Nothing, ProgressTracker] =
+  val live: ZLayer[MigrationRepository & ActivityHub, Nothing, ProgressTracker] =
     ZLayer.scoped {
       for
         repository  <- ZIO.service[MigrationRepository]
+        activityHub <- ZIO.service[ActivityHub]
         hub         <- Hub.bounded[ProgressUpdate](256)
         subscribers <- Ref.make(Map.empty[Long, Set[Queue[ProgressUpdate]]])
         hubQueue    <- hub.subscribe
         _           <- hubQueue.take.flatMap(publishToSubscribers(subscribers, _)).forever.forkScoped
-      yield ProgressTrackerLive(repository, hub, subscribers)
+      yield ProgressTrackerLive(repository, hub, subscribers, activityHub)
     }
 
   private def publishToSubscribers(
@@ -54,6 +56,7 @@ final case class ProgressTrackerLive(
   repository: MigrationRepository,
   hub: Hub[ProgressUpdate],
   subscribers: Ref[Map[Long, Set[Queue[ProgressUpdate]]]],
+  activityHub: ActivityHub,
 ) extends ProgressTracker:
 
   override def startPhase(runId: Long, phase: String, total: Int): IO[PersistenceError, Unit] =
@@ -81,6 +84,15 @@ final case class ProgressTrackerLive(
                  itemsTotal = total,
                  message = s"Starting phase: $phase",
                  timestamp = now,
+               )
+             )
+      _   <- activityHub.publish(
+               ActivityEvent(
+                 eventType = ActivityEventType.RunStarted,
+                 source = "progress-tracker",
+                 runId = Some(runId),
+                 summary = s"Run #$runId started phase: $phase",
+                 createdAt = now,
                )
              )
     yield ()
@@ -163,6 +175,15 @@ final case class ProgressTrackerLive(
                      timestamp = now,
                    )
                  )
+      _       <- activityHub.publish(
+                   ActivityEvent(
+                     eventType = ActivityEventType.RunCompleted,
+                     source = "progress-tracker",
+                     runId = Some(runId),
+                     summary = s"Run #$runId completed phase: $phase",
+                     createdAt = now,
+                   )
+                 )
     yield ()
 
   override def failPhase(runId: Long, phase: String, error: String): IO[PersistenceError, Unit] =
@@ -206,6 +227,15 @@ final case class ProgressTrackerLive(
                      itemsTotal = total,
                      message = error,
                      timestamp = now,
+                   )
+                 )
+      _       <- activityHub.publish(
+                   ActivityEvent(
+                     eventType = ActivityEventType.RunFailed,
+                     source = "progress-tracker",
+                     runId = Some(runId),
+                     summary = s"Run #$runId failed phase: $phase",
+                     createdAt = now,
                    )
                  )
     yield ()

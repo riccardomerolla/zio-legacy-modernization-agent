@@ -7,8 +7,9 @@ import zio.*
 import zio.http.*
 
 import db.*
-import web.ErrorHandlingMiddleware
+import models.{ ActivityEvent, ActivityEventType }
 import web.views.HtmlViews
+import web.{ ActivityHub, ErrorHandlingMiddleware }
 
 trait SettingsController:
   def routes: Routes[Any, Response]
@@ -18,11 +19,12 @@ object SettingsController:
   def routes: ZIO[SettingsController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[SettingsController](_.routes)
 
-  val live: ZLayer[MigrationRepository, Nothing, SettingsController] =
+  val live: ZLayer[MigrationRepository & ActivityHub, Nothing, SettingsController] =
     ZLayer.fromFunction(SettingsControllerLive.apply)
 
 final case class SettingsControllerLive(
-  repository: MigrationRepository
+  repository: MigrationRepository,
+  activityHub: ActivityHub,
 ) extends SettingsController:
 
   private val settingsKeys: List[String] = List(
@@ -74,6 +76,15 @@ final case class SettingsControllerLive(
                     if value.nonEmpty || key.startsWith("ai.") then repository.upsertSetting(key, value)
                     else ZIO.unit
                   }
+          now  <- Clock.instant
+          _    <- activityHub.publish(
+                    ActivityEvent(
+                      eventType = ActivityEventType.ConfigChanged,
+                      source = "settings",
+                      summary = "Application settings updated",
+                      createdAt = now,
+                    )
+                  )
           rows <- repository.getAllSettings
           saved = rows.map(r => r.key -> r.value).toMap
         yield html(HtmlViews.settingsPage(saved, Some("Settings saved successfully.")))

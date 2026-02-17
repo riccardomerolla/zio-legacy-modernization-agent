@@ -23,6 +23,7 @@ enum SubscriptionTopic:
   case DashboardRecentRuns
   case ChatMessages(conversationId: Long)
   case ChatStream(conversationId: Long)
+  case ActivityFeed
 
 object SubscriptionTopic:
 
@@ -36,5 +37,7 @@ object SubscriptionTopic:
         convId.toLongOption.toRight(s"Invalid conversationId: $convId").map(ChatMessages.apply)
       case "chat" :: convId :: "stream" :: Nil   =>
         convId.toLongOption.toRight(s"Invalid conversationId: $convId").map(ChatStream.apply)
+      case "activity" :: "feed" :: Nil           =>
+        Right(ActivityFeed)
       case _                                     =>
         Left(s"Unknown topic: $raw")

@@ -24,7 +24,8 @@ object WebSocketServer:
     ZIO.serviceWith[WebSocketServer](_.routes)
 
   val live: ZLayer[
-    MigrationOrchestrator & MigrationRepository & WorkflowService & ChannelRegistry & StreamAbortRegistry,
+    MigrationOrchestrator & MigrationRepository & WorkflowService & ChannelRegistry & StreamAbortRegistry &
+      ActivityHub,
     Nothing,
     WebSocketServer,
   ] = ZLayer.fromFunction(WebSocketServerLive.apply)
@@ -35,6 +36,7 @@ final case class WebSocketServerLive(
   workflowService: WorkflowService,
   channelRegistry: ChannelRegistry,
   streamAbortRegistry: StreamAbortRegistry,
+  activityHub: ActivityHub,
 ) extends WebSocketServer:
 
   private val HeartbeatInterval = 30.seconds
@@ -156,6 +158,7 @@ final case class WebSocketServerLive(
       case SubscriptionTopic.DashboardRecentRuns          => recentRunsFeed(channel, topic)
       case SubscriptionTopic.ChatMessages(conversationId) => chatMessagesFeed(channel, topic, conversationId)
       case SubscriptionTopic.ChatStream(conversationId)   => chatStreamFeed(channel, topic, conversationId)
+      case SubscriptionTopic.ActivityFeed                 => activityFeed(channel, topic)
     feed.catchAll(err => Logger.warn(s"Feed error for $topic: $err")).unit
 
   private def runProgressFeed(channel: WebSocketChannel, topic: String, runId: Long): IO[Any, Unit] =
@@ -239,6 +242,16 @@ final case class WebSocketServerLive(
       }
       .catchAll(err => Logger.warn(s"chat stream feed error: $err"))
       .unit
+
+  private def activityFeed(channel: WebSocketChannel, topic: String): IO[Any, Unit] =
+    activityHub.subscribe.flatMap { queue =>
+      ZStream
+        .fromQueue(queue)
+        .mapZIO { event =>
+          sendEvent(channel, topic, event.eventType.toString, event.toJson)
+        }
+        .runDrain
+    }
 
   // --- Utilities ---
 

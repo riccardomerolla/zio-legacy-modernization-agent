@@ -71,6 +71,11 @@ object WebSocketServerSpec extends ZIOSpecDefault:
     override def abort(conversationId: Long): UIO[Boolean]                    = ZIO.succeed(false)
     override def unregister(conversationId: Long): UIO[Unit]                  = ZIO.unit
 
+  private val stubActivityHub: ActivityHub = new ActivityHub:
+    override def publish(event: _root_.models.ActivityEvent): UIO[Unit] = ZIO.unit
+    override def subscribe: UIO[Dequeue[_root_.models.ActivityEvent]]   =
+      Queue.unbounded[_root_.models.ActivityEvent].map(identity)
+
   def spec: Spec[TestEnvironment, Any] = suite("WebSocketServerSpec")(
     test("WebSocketServer creates routes at ws/console") {
       for
@@ -79,7 +84,14 @@ object WebSocketServerSpec extends ZIOSpecDefault:
         wsChannel   <- WebSocketChannel.make()
         _           <- registry.register(wsChannel)
         server       =
-          WebSocketServerLive(stubOrchestrator, stubRepository, stubWorkflowService, registry, stubAbortRegistry)
+          WebSocketServerLive(
+            stubOrchestrator,
+            stubRepository,
+            stubWorkflowService,
+            registry,
+            stubAbortRegistry,
+            stubActivityHub,
+          )
       yield assertTrue(server.routes.routes.nonEmpty)
     },
     test("ClientMessage Subscribe round-trips through JSON") {

@@ -122,3 +122,9 @@ object HtmlViews:
 
   def workflowDetail(workflow: WorkflowDefinition): String =
     WorkflowsView.detail(workflow)
+
+  def activityTimeline(events: List[ActivityEvent]): String =
+    ActivityView.timeline(events)
+
+  def activityEventsFragment(events: List[ActivityEvent]): String =
+    ActivityView.eventsFragment(events)
