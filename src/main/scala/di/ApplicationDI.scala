@@ -20,7 +20,7 @@ object ApplicationDI:
 
   type CommonServices =
     FileService &
-      MigrationConfig &
+      GatewayConfig &
       HttpAIClient &
       LlmService &
       StateService &
@@ -65,7 +65,7 @@ object ApplicationDI:
       maxTokens = aiConfig.maxTokens,
     )
 
-  def commonLayers(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, CommonServices] =
+  def commonLayers(config: GatewayConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, CommonServices] =
     val llmConfig = aiConfigToLlmConfig(config.resolvedProviderConfig)
     ZLayer.make[CommonServices](
       // Core services and configuration
@@ -98,7 +98,7 @@ object ApplicationDI:
       TelegramPollingService.live,
     )
 
-  private def httpClientLayer(config: MigrationConfig): ZLayer[Any, Throwable, Client] =
+  private def httpClientLayer(config: GatewayConfig): ZLayer[Any, Throwable, Client] =
     val timeout      = config.resolvedProviderConfig.timeout
     val idleTimeout  = timeout + 300.seconds
     val clientConfig = ZClient.Config.default.copy(
@@ -108,7 +108,7 @@ object ApplicationDI:
     (ZLayer.succeed(clientConfig) ++ ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++
       DnsResolver.default) >>> Client.live
 
-  def webServerLayer(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
+  def webServerLayer(config: GatewayConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
     ZLayer.make[WebServer](
       commonLayers(config, dbPath),
       ZLayer.succeed(config.resolvedProviderConfig),
