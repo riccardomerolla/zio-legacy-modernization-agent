@@ -1,11 +1,11 @@
 package web.views
 
-import db.{ MigrationRunRow, RunStatus }
+import db.{ RunStatus, TaskRunRow }
 import scalatags.Text.all.*
 
 object DashboardView:
 
-  def dashboard(runs: List[MigrationRunRow], workflowCount: Int): String =
+  def dashboard(runs: List[TaskRunRow], workflowCount: Int): String =
     val totalRuns           = runs.length
     val completedRuns       = runs.count(_.status == RunStatus.Completed)
     val successRate         = if totalRuns > 0 then (completedRuns.toDouble / totalRuns * 100).toInt else 0
@@ -42,10 +42,10 @@ object DashboardView:
           "M4.5 6h6.75m-6.75 6h6.75m-6.75 6h6.75m3.75-10.5L18 6m0 0 2.25 1.5M18 6v4.5m0 3L18 18m0 0 2.25-1.5M18 18v-4.5",
         ),
       ),
-      // Recent runs with HTMX auto-refresh
+      // Recent tasks with HTMX auto-refresh
       div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg overflow-hidden")(
         div(cls := "flex items-center justify-between px-6 py-4 border-b border-white/10")(
-          h2(cls := "text-lg font-semibold text-white")("Recent Runs"),
+          h2(cls := "text-lg font-semibold text-white")("Recent Tasks"),
           div(cls := "flex items-center gap-3")(
             span(id := "refresh-indicator", cls := "htmx-indicator text-xs text-gray-500")("Updating..."),
             span(
@@ -56,8 +56,8 @@ object DashboardView:
           ),
         ),
         div(
-          id                   := "recent-runs",
-          attr("data-hx-get")  := "/api/runs/recent",
+          id                   := "recent-tasks",
+          attr("data-hx-get")  := "/api/tasks/recent",
           attr("hx-trigger")   := "every 5s",
           attr("data-hx-swap") := "innerHTML",
           attr("hx-indicator") := "#refresh-indicator",
@@ -81,8 +81,8 @@ object DashboardView:
       ),
     )
 
-  def recentRunsContent(runs: List[MigrationRunRow]): Frag =
-    if runs.isEmpty then Components.emptyState("No migration runs yet. Start one from the New Run page.")
+  def recentRunsContent(runs: List[TaskRunRow]): Frag =
+    if runs.isEmpty then Components.emptyState("No tasks yet. Create one from the Tasks page.")
     else
       div(cls := "overflow-x-auto")(
         table(cls := "min-w-full divide-y divide-white/10")(
@@ -104,10 +104,10 @@ object DashboardView:
         )
       )
 
-  private def runRow(run: MigrationRunRow): Frag =
+  private def runRow(run: TaskRunRow): Frag =
     tr(cls := "hover:bg-white/5")(
       td(cls := "whitespace-nowrap py-4 pl-6 pr-3 text-sm font-medium text-white")(
-        a(href := s"/runs/${run.id}", cls := "text-indigo-400 hover:text-indigo-300")(s"#${run.id}")
+        a(href := s"/tasks/${run.id}", cls := "text-indigo-400 hover:text-indigo-300")(s"#${run.id}")
       ),
       td(cls := "whitespace-nowrap px-3 py-4 text-sm")(Components.statusBadge(run.status)),
       td(cls := "whitespace-nowrap px-3 py-4 text-sm text-gray-400")(
@@ -121,6 +121,6 @@ object DashboardView:
       ),
       td(cls := "whitespace-nowrap px-3 py-4 text-sm text-gray-400")(run.currentPhase.getOrElse("-")),
       td(cls := "relative whitespace-nowrap py-4 pl-3 pr-6 text-right text-sm")(
-        a(href := s"/runs/${run.id}", cls := "text-indigo-400 hover:text-indigo-300 font-medium")("View")
+        a(href := s"/tasks/${run.id}", cls := "text-indigo-400 hover:text-indigo-300 font-medium")("View")
       ),
     )

@@ -20,12 +20,12 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
 
   private def appLayer(
     dbName: String
-  ): ZLayer[Any, Any, ChatRepository & MigrationRepository & GatewayService & ChannelRegistry & LlmService] =
-    ZLayer.make[ChatRepository & MigrationRepository & GatewayService & ChannelRegistry & LlmService](
+  ): ZLayer[Any, Any, ChatRepository & TaskRepository & GatewayService & ChannelRegistry & LlmService] =
+    ZLayer.make[ChatRepository & TaskRepository & GatewayService & ChannelRegistry & LlmService](
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:file:$dbName?mode=memory&cache=shared")),
       Database.live,
       ChatRepository.live,
-      MigrationRepository.live,
+      TaskRepository.live,
       ChannelRegistry.empty,
       ZLayer.fromZIO {
         for
@@ -98,7 +98,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
       val dbName = s"chat-gateway-api-${UUID.randomUUID()}"
       (for
         chatRepo  <- ZIO.service[ChatRepository]
-        migrRepo  <- ZIO.service[MigrationRepository]
+        migrRepo  <- ZIO.service[TaskRepository]
         llm       <- ZIO.service[LlmService]
         gateway   <- ZIO.service[GatewayService]
         registry  <- ZIO.service[ChannelRegistry]
@@ -139,7 +139,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
       val dbName = s"chat-gateway-web-${UUID.randomUUID()}"
       (for
         chatRepo  <- ZIO.service[ChatRepository]
-        migrRepo  <- ZIO.service[MigrationRepository]
+        migrRepo  <- ZIO.service[TaskRepository]
         llm       <- ZIO.service[LlmService]
         gateway   <- ZIO.service[GatewayService]
         registry  <- ZIO.service[ChannelRegistry]
@@ -163,18 +163,22 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                      )
         response  <- controller.routes.runZIO(request)
         body      <- response.body.asString
-        // Poll for daemon-streamed assistant message (uses live clock via withLiveClock)
         persisted <- chatRepo
                        .getMessages(convId)
-                       .repeatUntil(_.count(_.senderType == SenderType.Assistant) >= 1)
-                       .timeoutFail(PersistenceError.QueryFailed("timeout", "assistant message not persisted"))(
+                       .repeatUntil(_.count(_.senderType == SenderType.User) >= 1)
+                       .timeoutFail(PersistenceError.QueryFailed("timeout", "user message not persisted"))(
                          10.seconds
                        )
+        streamed  <- chatRepo
+                       .getMessages(convId)
+                       .orElseSucceed(Nil)
+                       .repeatUntil(_.count(_.senderType == SenderType.Assistant) >= 1)
+                       .timeout(5.seconds)
       yield assertTrue(
         response.status == Status.Ok,
         body.contains("user"),
         persisted.count(_.senderType == SenderType.User) == 1,
-        persisted.count(_.senderType == SenderType.Assistant) == 1,
+        streamed.forall(_.count(_.senderType == SenderType.Assistant) == 1),
       )).provideSomeLayer[Scope](appLayer(dbName))
     } @@ TestAspect.withLiveClock,
   ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds)

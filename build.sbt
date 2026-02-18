@@ -21,7 +21,6 @@ val logbackVersion = "1.5.12"
 val logstashLogbackVersion = "7.4"
 val opentelemetryVersion = "1.44.1"
 val sqliteJdbcVersion = "3.47.2.0"
-val proleapCobolVersion = "v2.4.0"
 val scalaMetaVersion = "4.13.6"
 val bot4sTelegramCoreVersion = "7.0.0"
 
@@ -68,13 +67,12 @@ val rootDeps = zioCoreDeps ++ Seq(
   "io.opentelemetry" % "opentelemetry-exporter-otlp" % opentelemetryVersion,
   "io.opentelemetry" % "opentelemetry-exporter-logging-otlp" % opentelemetryVersion,
   "org.xerial" % "sqlite-jdbc" % sqliteJdbcVersion,
-  "com.github.uwol" % "proleap-cobol-parser" % proleapCobolVersion,
   "com.bot4s" %% "telegram-core" % bot4sTelegramCoreVersion,
 ) ++ zioLoggingDeps ++ zioTestDeps
 
 inThisBuild(List(
   organization := "io.github.riccardomerolla",
-  homepage := Some(url("https://github.com/riccardomerolla/zio-legacy-modernization-agent")),
+  homepage := Some(url("https://github.com/riccardomerolla/llm4zio")),
   licenses := Seq(
     "MIT" -> url("https://opensource.org/license/mit")
   ),
@@ -88,8 +86,8 @@ inThisBuild(List(
   ),
   scmInfo := Some(
     ScmInfo(
-      url("https://github.com/riccardomerolla/zio-legacy-modernization-agent"),
-      "scm:git@github.com:riccardomerolla/zio-legacy-modernization-agent.git"
+      url("https://github.com/riccardomerolla/llm4zio"),
+      "scm:git@github.com:riccardomerolla/llm4zio.git"
     )
   ),
   versionScheme := Some("early-semver"),
@@ -125,8 +123,8 @@ lazy val root = (project in file("."))
   .configs(It)
   .settings(inConfig(It)(Defaults.testSettings): _*)
   .settings(
-    name := "zio-legacy-modernization-agent",
-    description := "A ZIO Legacy to Modernization Agent built with ZIO and Scala 3",
+    name := "llm4zio-gateway",
+    description := "A LLM 4 ZIO Agent Gateway and Dashboard",
     // Handle version conflicts - prefer newer versions
     libraryDependencySchemes += "dev.zio" %% "zio-json" % VersionScheme.Always,
     libraryDependencies ++= rootDeps,

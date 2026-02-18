@@ -10,7 +10,7 @@ import zio.json.*
 
 import models.Codecs.given
 
-/** Metadata for workspace associated with a migration run */
+/** Metadata for workspace associated with a task run */
 case class WorkspaceMetadata(
   runId: String,
   workspaceRoot: Path,
@@ -21,14 +21,29 @@ case class WorkspaceMetadata(
   createdAt: Instant,
 ) derives JsonCodec
 
-enum MigrationStep derives JsonCodec:
-  case Discovery, Analysis, Mapping, Transformation, Validation, Documentation
+type TaskStep = String
 
-case class MigrationError(
-  step: MigrationStep,
+object TaskStep:
+  val Discovery: TaskStep      = "Discovery"
+  val Analysis: TaskStep       = "Analysis"
+  val Mapping: TaskStep        = "Mapping"
+  val Transformation: TaskStep = "Transformation"
+  val Validation: TaskStep     = "Validation"
+  val Documentation: TaskStep  = "Documentation"
+
+  // Default built-in steps used by legacy workflow definitions.
+  val values: List[TaskStep] = List(Discovery, Analysis, Mapping, Transformation, Validation, Documentation)
+
+  given JsonCodec[TaskStep] = JsonCodec.string.asInstanceOf[JsonCodec[TaskStep]]
+
+case class TaskError(
+  stepName: String,
   message: String,
   timestamp: Instant,
 ) derives JsonCodec
+
+enum TaskStatus derives JsonCodec:
+  case Idle, Running, Paused, Done, Failed
 
 case class ProgressUpdate(
   runId: Long,
@@ -37,6 +52,8 @@ case class ProgressUpdate(
   itemsTotal: Int,
   message: String,
   timestamp: Instant,
+  status: String = "Running",
+  percentComplete: Double = 0.0,
 ) derives JsonCodec
 
 enum TelegramMode derives JsonCodec:
@@ -94,7 +111,7 @@ case class MigrationConfig(
   enableBusinessLogicExtractor: Boolean = false,
   resumeFromCheckpoint: Option[String] = None,
   retryFromRunId: Option[Long] = None,
-  retryFromStep: Option[MigrationStep] = None,
+  retryFromStep: Option[TaskStep] = None,
   workflowId: Option[Long] = None,
   dryRun: Boolean = false,
   verbose: Boolean = false,
@@ -121,26 +138,28 @@ case class MigrationConfig(
         )
       )
 
-case class MigrationState(
-  runId: String,
-  startedAt: Instant,
-  currentStep: MigrationStep,
-  completedSteps: Set[MigrationStep],
-  artifacts: Map[String, String],
-  errors: List[MigrationError],
-  config: MigrationConfig,
-  workspace: Option[WorkspaceMetadata] = None, // Workspace info for this run
-  fileInventory: Option[FileInventory],
-  analyses: List[CobolAnalysis],
-  dependencyGraph: Option[DependencyGraph],
-  projects: List[SpringBootProject],
-  validationReports: List[ValidationReport],
-  lastCheckpoint: Instant,
+case class TaskState(
+  taskRunId: Option[Long] = None,
+  currentStepName: Option[String] = None,
+  status: TaskStatus = TaskStatus.Idle,
+  // Backward-compatible fields retained during migration to task-centric state.
+  runId: String = "run-unknown",
+  startedAt: Instant = Instant.EPOCH,
+  currentStep: TaskStep = TaskStep.Discovery,
+  completedSteps: Set[TaskStep] = Set.empty,
+  artifacts: Map[String, String] = Map.empty,
+  errors: List[TaskError] = List.empty,
+  config: MigrationConfig = MigrationConfig(
+    sourceDir = Paths.get("."),
+    outputDir = Paths.get("./workspace/output"),
+  ),
+  workspace: Option[WorkspaceMetadata] = None,
+  lastCheckpoint: Instant = Instant.EPOCH,
 ) derives JsonCodec
 
 case class Checkpoint(
   runId: String,
-  step: MigrationStep,
+  step: String,
   createdAt: Instant,
   artifactPaths: Map[String, Path],
   checksum: String,
@@ -148,36 +167,32 @@ case class Checkpoint(
 
 case class CheckpointSnapshot(
   checkpoint: Checkpoint,
-  state: MigrationState,
+  state: TaskState,
 ) derives JsonCodec
 
-object MigrationState:
-  def empty: UIO[MigrationState] =
+object TaskState:
+  def empty: UIO[TaskState] =
     Clock.instant.map { now =>
-      MigrationState(
+      TaskState(
+        taskRunId = None,
+        currentStepName = None,
+        status = TaskStatus.Idle,
         runId = s"run-${now.toEpochMilli}",
         startedAt = now,
-        currentStep = MigrationStep.Discovery,
-        completedSteps = Set.empty,
-        artifacts = Map.empty,
-        errors = List.empty,
-        config = MigrationConfig(
-          sourceDir = Paths.get("cobol-source"),
-          outputDir = Paths.get("java-output"),
-        ),
-        fileInventory = None,
-        analyses = List.empty,
-        dependencyGraph = None,
-        projects = List.empty,
-        validationReports = List.empty,
+        currentStep = TaskStep.Discovery,
         lastCheckpoint = now,
       )
     }
 
-case class MigrationRunSummary(
+case class TaskRunSummary(
   runId: String,
-  startedAt: Instant,
-  currentStep: MigrationStep,
-  completedSteps: Set[MigrationStep],
+  currentStep: TaskStep,
+  completedSteps: Set[TaskStep],
   errorCount: Int,
+  // Generalized task state fields.
+  taskRunId: Option[Long] = None,
+  currentStepName: Option[String] = None,
+  status: TaskStatus = TaskStatus.Idle,
+  startedAt: Instant = Instant.EPOCH,
+  updatedAt: Instant = Instant.EPOCH,
 ) derives JsonCodec

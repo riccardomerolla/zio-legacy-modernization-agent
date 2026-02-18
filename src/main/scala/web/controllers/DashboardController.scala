@@ -3,7 +3,7 @@ package web.controllers
 import zio.*
 import zio.http.*
 
-import db.{ MigrationRepository, PersistenceError }
+import db.{ PersistenceError, TaskRepository }
 import orchestration.{ WorkflowService, WorkflowServiceError }
 import web.ErrorHandlingMiddleware
 import web.views.HtmlViews
@@ -16,16 +16,16 @@ object DashboardController:
   def routes: ZIO[DashboardController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[DashboardController](_.routes)
 
-  val live: ZLayer[MigrationRepository & WorkflowService, Nothing, DashboardController] =
+  val live: ZLayer[TaskRepository & WorkflowService, Nothing, DashboardController] =
     ZLayer.fromFunction(DashboardControllerLive.apply)
 
 final case class DashboardControllerLive(
-  repository: MigrationRepository,
+  repository: TaskRepository,
   workflowService: WorkflowService,
 ) extends DashboardController:
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / Root                      -> handler {
+    Method.GET / Root                       -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         for
           runs          <- repository.listRuns(offset = 0, limit = 20)
@@ -36,7 +36,7 @@ final case class DashboardControllerLive(
         yield html(HtmlViews.dashboard(runs, workflowCount))
       }
     },
-    Method.GET / "api" / "runs" / "recent" -> handler {
+    Method.GET / "api" / "tasks" / "recent" -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         repository.listRuns(offset = 0, limit = 10).map(runs => html(HtmlViews.recentRunsFragment(runs)))
       }

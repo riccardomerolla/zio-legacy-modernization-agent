@@ -11,15 +11,15 @@ trait WebServer:
 object WebServer:
 
   val live: ZLayer[
-    RunsController & AnalysisController & GraphController & DashboardController & SettingsController & ConfigController & AgentsController & AgentMonitorController & ChatController & WorkflowsController & TelegramController & ActivityController & HealthController & LogsController & WebSocketServer,
+    DashboardController & TasksController & ReportsController & GraphController & SettingsController & ConfigController & AgentsController & AgentMonitorController & ChatController & WorkflowsController & TelegramController & ActivityController & HealthController & LogsController,
     Nothing,
     WebServer,
   ] = ZLayer {
     for
-      runs        <- ZIO.service[RunsController]
-      analysis    <- ZIO.service[AnalysisController]
-      graph       <- ZIO.service[GraphController]
       dashboard   <- ZIO.service[DashboardController]
+      tasks       <- ZIO.service[TasksController]
+      reports     <- ZIO.service[ReportsController]
+      graph       <- ZIO.service[GraphController]
       settings    <- ZIO.service[SettingsController]
       config      <- ZIO.service[ConfigController]
       agents      <- ZIO.service[AgentsController]
@@ -30,11 +30,10 @@ object WebServer:
       activity    <- ZIO.service[ActivityController]
       health      <- ZIO.service[HealthController]
       logs        <- ZIO.service[LogsController]
-      wsServer    <- ZIO.service[WebSocketServer]
       staticRoutes = Routes.serveResources(Path.empty / "static")
     yield new WebServer {
       override val routes: Routes[Any, Response] =
-        dashboard.routes ++ runs.routes ++ analysis.routes ++ graph.routes ++ settings.routes ++ config.routes ++ agents.routes ++ monitor.routes ++ chat.routes ++ workflows.routes ++ telegram.routes ++ activity.routes ++ health.routes ++ logs.routes ++ wsServer.routes ++ staticRoutes
+        dashboard.routes ++ tasks.routes ++ reports.routes ++ graph.routes ++ settings.routes ++ config.routes ++ agents.routes ++ monitor.routes ++ chat.routes ++ workflows.routes ++ telegram.routes ++ activity.routes ++ health.routes ++ logs.routes ++ staticRoutes
     }
   }
   private val defaultShutdownTimeout = java.time.Duration.ofSeconds(3L)

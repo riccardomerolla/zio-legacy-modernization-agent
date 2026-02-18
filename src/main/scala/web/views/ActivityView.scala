@@ -103,7 +103,7 @@ object ActivityView:
           },
           event.runId.map { rid =>
             a(
-              attr("href") := s"/runs/$rid",
+              attr("href") := s"/tasks/$rid",
               cls          := "inline-flex items-center rounded-md bg-blue-500/10 px-1.5 py-0.5 text-xs text-blue-400 ring-1 ring-inset ring-blue-500/20 hover:bg-blue-500/20",
             )(s"Run #$rid")
           },

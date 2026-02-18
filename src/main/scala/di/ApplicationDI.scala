@@ -14,7 +14,7 @@ import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import orchestration.*
 import web.controllers.*
-import web.{ ActivityHub, StreamAbortRegistry, WebServer, WebSocketServer }
+import web.{ ActivityHub, StreamAbortRegistry, WebServer }
 
 object ApplicationDI:
 
@@ -25,12 +25,11 @@ object ApplicationDI:
       LlmService &
       StateService &
       javax.sql.DataSource &
-      MigrationRepository &
+      TaskRepository &
       WorkflowService &
       ActivityRepository &
       ActivityHub &
       ProgressTracker &
-      ResultPersister &
       ChatRepository &
       AgentRegistry &
       LogTailer &
@@ -39,14 +38,7 @@ object ApplicationDI:
       ChannelRegistry &
       MessageRouter &
       GatewayService &
-      TelegramPollingService &
-      CobolDiscoveryAgent &
-      CobolAnalyzerAgent &
-      BusinessLogicExtractorAgent &
-      DependencyMapperAgent &
-      JavaTransformerAgent &
-      ValidationAgent &
-      DocumentationAgent
+      TelegramPollingService
 
   def aiProviderToLlmProvider(aiProvider: AIProvider): LlmProvider =
     aiProvider match
@@ -90,12 +82,11 @@ object ApplicationDI:
       StateService.live(config.stateDir),
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
-      MigrationRepository.live,
+      TaskRepository.live,
       WorkflowService.live,
       ActivityRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
       ActivityHub.live,
       ProgressTracker.live,
-      ResultPersister.live,
       ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
       AgentRegistry.live,
       LogTailer.live,
@@ -105,15 +96,6 @@ object ApplicationDI:
       MessageRouter.live,
       GatewayService.live,
       TelegramPollingService.live,
-
-      // Agent implementations
-      CobolDiscoveryAgent.live,
-      CobolAnalyzerAgent.live,
-      BusinessLogicExtractorAgent.live,
-      DependencyMapperAgent.live,
-      JavaTransformerAgent.live,
-      ValidationAgent.live,
-      DocumentationAgent.live,
     )
 
   private def httpClientLayer(config: MigrationConfig): ZLayer[Any, Throwable, Client] =
@@ -126,32 +108,15 @@ object ApplicationDI:
     (ZLayer.succeed(clientConfig) ++ ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++
       DnsResolver.default) >>> Client.live
 
-  def orchestratorLayer(config: MigrationConfig): ZLayer[Any, Nothing, MigrationOrchestrator] =
-    orchestratorLayer(config, config.stateDir.resolve("migration.db"))
-
-  def orchestratorLayer(config: MigrationConfig, dbPath: java.nio.file.Path)
-    : ZLayer[Any, Nothing, MigrationOrchestrator] =
-    ZLayer.make[MigrationOrchestrator](
-      commonLayers(config, dbPath),
-      WorkspaceCoordinator.quotasLayer(config),
-      WorkspaceCoordinator.live,
-
-      // Orchestration
-      MigrationOrchestrator.live,
-    )
-
   def webServerLayer(config: MigrationConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
     ZLayer.make[WebServer](
       commonLayers(config, dbPath),
       ZLayer.succeed(config.resolvedProviderConfig),
-      WorkspaceCoordinator.quotasLayer(config),
-      WorkspaceCoordinator.live,
       OrchestratorControlPlane.live,
-      MigrationOrchestrator.live,
-      RunsController.live,
-      AnalysisController.live,
-      GraphController.live,
       DashboardController.live,
+      TasksController.live,
+      ReportsController.live,
+      GraphController.live,
       SettingsController.live,
       ConfigController.live,
       AgentsController.live,
@@ -165,7 +130,6 @@ object ApplicationDI:
       ActivityController.live,
       HealthController.live,
       TelegramController.live,
-      WebSocketServer.live,
       WebServer.live,
     )
 

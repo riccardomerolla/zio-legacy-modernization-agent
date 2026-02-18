@@ -8,9 +8,9 @@ import zio.stream.*
 
 import agents.AgentRegistry
 import com.sun.management.OperatingSystemMXBean
-import db.{ MigrationRepository, RunStatus }
+import db.{ RunStatus, TaskRepository }
 import gateway.{ ChannelRegistry, GatewayService }
-import models.AgentHealthStatus
+import models.{ AgentHealthStatus, MigrationConfig }
 
 final case class GatewayHealth(
   uptimeSeconds: Long,
@@ -29,7 +29,7 @@ final case class AgentHealthSummary(
 ) derives JsonCodec
 
 enum ChannelStatus derives JsonCodec:
-  case Connected, Disconnected, Error
+  case Connected, Disconnected, NotConfigured, Error
 
 final case class ChannelHealth(
   name: String,
@@ -74,7 +74,8 @@ object HealthMonitor:
   def stream(interval: Duration = 2.seconds): ZStream[HealthMonitor, Nothing, HealthSnapshot] =
     ZStream.serviceWithStream[HealthMonitor](_.stream(interval))
 
-  val live: ZLayer[GatewayService & ChannelRegistry & AgentRegistry & MigrationRepository, Nothing, HealthMonitor] =
+  val live
+    : ZLayer[GatewayService & ChannelRegistry & AgentRegistry & TaskRepository & MigrationConfig, Nothing, HealthMonitor] =
     ZLayer.fromZIO {
       for
         startedAt  <- Clock.instant
@@ -82,8 +83,9 @@ object HealthMonitor:
         gateway    <- ZIO.service[GatewayService]
         channels   <- ZIO.service[ChannelRegistry]
         agents     <- ZIO.service[AgentRegistry]
-        repo       <- ZIO.service[MigrationRepository]
-      yield HealthMonitorLive(startedAt, historyRef, gateway, channels, agents, repo)
+        repo       <- ZIO.service[TaskRepository]
+        config     <- ZIO.service[MigrationConfig]
+      yield HealthMonitorLive(startedAt, historyRef, gateway, channels, agents, repo, config)
     }
 
 final case class HealthMonitorLive(
@@ -92,7 +94,11 @@ final case class HealthMonitorLive(
   gatewayService: GatewayService,
   channelRegistry: ChannelRegistry,
   agentRegistry: AgentRegistry,
-  repository: MigrationRepository,
+  repository: TaskRepository,
+  config: MigrationConfig = MigrationConfig(
+    sourceDir = java.nio.file.Paths.get("."),
+    outputDir = java.nio.file.Paths.get("./workspace/output"),
+  ),
 ) extends HealthMonitor:
 
   private val HistoryCapacity = 180
@@ -112,15 +118,36 @@ final case class HealthMonitorLive(
       nowMs           = now.toEpochMilli
       gatewayMetrics <- gatewayService.metrics
       channels       <- channelRegistry.list
-      channelStats   <- ZIO.foreach(channels) { channel =>
+      runningTasks   <- repository
+                          .listRuns(offset = 0, limit = 200)
+                          .map(_.count(_.status == RunStatus.Running))
+                          .orElseSucceed(0)
+      dbReachable    <- repository.listRuns(offset = 0, limit = 1).as(true).catchAll(_ => ZIO.succeed(false))
+      channelStats0  <- ZIO.foreach(channels) { channel =>
                           channel.activeSessions.map { sessions =>
                             val active = sessions.size
-                            val status =
-                              if active > 0 then ChannelStatus.Connected
-                              else ChannelStatus.Disconnected
+                            val status = channel.name.toLowerCase match
+                              case "telegram" if !config.telegram.enabled =>
+                                ChannelStatus.NotConfigured
+                              case _ if active > 0                        =>
+                                ChannelStatus.Connected
+                              case _                                      =>
+                                ChannelStatus.Disconnected
                             ChannelHealth(channel.name, status, active)
                           }
                         }
+      channelStats    = channelStats0 ++ List(
+                          ChannelHealth(
+                            name = "tasks",
+                            status = if runningTasks > 0 then ChannelStatus.Connected else ChannelStatus.Disconnected,
+                            activeSessions = runningTasks,
+                          ),
+                          ChannelHealth(
+                            name = "database",
+                            status = if dbReachable then ChannelStatus.Connected else ChannelStatus.Error,
+                            activeSessions = if dbReachable then 1 else 0,
+                          ),
+                        )
       connectionCount = channelStats.map(_.activeSessions).sum
       allAgents      <- agentRegistry.getAllAgents
       agentSummary   <- summarizeAgents(allAgents, now)

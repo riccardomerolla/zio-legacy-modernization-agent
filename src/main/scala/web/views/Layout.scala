@@ -44,12 +44,17 @@ object Layout:
             li(
               ul(attr("role") := "list", cls := "-mx-2 space-y-1")(
                 navItem("/", "Dashboard", Icons.home, currentPath == "/"),
-                navItem("/runs", "Runs", Icons.folder, currentPath.startsWith("/runs") && currentPath != "/runs/new"),
                 navItem(
-                  "/runs/new",
-                  "New Run",
+                  "/tasks",
+                  "Tasks",
+                  Icons.folder,
+                  currentPath.startsWith("/tasks") && currentPath != "/tasks/new",
+                ),
+                navItem(
+                  "/tasks/new",
+                  "New Task",
                   Icons.plusCircle,
-                  currentPath == "/runs/new",
+                  currentPath == "/tasks/new",
                 ),
                 navItem(
                   "/workflows",
@@ -62,7 +67,7 @@ object Layout:
             li(
               div(cls := "text-xs/6 font-semibold text-gray-400")("Analysis"),
               ul(attr("role") := "list", cls := "-mx-2 mt-2 space-y-1")(
-                navItem("/analysis", "Files", Icons.document, currentPath.startsWith("/analysis")),
+                navItem("/reports", "Reports", Icons.document, currentPath.startsWith("/reports")),
                 navItem("/graph", "Graph", Icons.chart, currentPath.startsWith("/graph")),
               ),
             ),

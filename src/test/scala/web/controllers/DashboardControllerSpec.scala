@@ -12,7 +12,7 @@ import orchestration.*
 
 object DashboardControllerSpec extends ZIOSpecDefault:
 
-  private val sampleRun = MigrationRunRow(
+  private val sampleRun = TaskRunRow(
     id = 2L,
     sourceDir = "/src",
     outputDir = "/out",
@@ -37,16 +37,16 @@ object DashboardControllerSpec extends ZIOSpecDefault:
       yield assertTrue(
         response.status == Status.Ok,
         body.contains("Dashboard"),
-        body.contains("/runs/2"),
+        body.contains("/tasks/2"),
         body.contains("Workflows"),
         body.contains(">3<"),
       )
     },
-    test("GET /api/runs/recent returns runs fragment") {
+    test("GET /api/tasks/recent returns runs fragment") {
       for
         repo      <- TestRepository.make
         controller = DashboardControllerLive(repo, TestWorkflowService.withCount(1))
-        response  <- controller.routes.runZIO(Request.get("/api/runs/recent"))
+        response  <- controller.routes.runZIO(Request.get("/api/tasks/recent"))
         body      <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
@@ -55,40 +55,32 @@ object DashboardControllerSpec extends ZIOSpecDefault:
     },
   )
 
-  final private case class TestRepository() extends MigrationRepository:
+  final private case class TestRepository() extends TaskRepository:
 
-    override def listRuns(offset: Int, limit: Int): IO[PersistenceError, List[MigrationRunRow]] =
+    override def listRuns(offset: Int, limit: Int): IO[PersistenceError, List[TaskRunRow]] =
       ZIO.succeed(List(sampleRun))
 
-    override def createRun(run: MigrationRunRow): IO[PersistenceError, Long]                             =
+    override def createRun(run: TaskRunRow): IO[PersistenceError, Long]                           =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def updateRun(run: MigrationRunRow): IO[PersistenceError, Unit]                             =
+    override def updateRun(run: TaskRunRow): IO[PersistenceError, Unit]                           =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def getRun(id: Long): IO[PersistenceError, Option[MigrationRunRow]]                         =
+    override def getRun(id: Long): IO[PersistenceError, Option[TaskRunRow]]                       =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def deleteRun(id: Long): IO[PersistenceError, Unit]                                         =
+    override def deleteRun(id: Long): IO[PersistenceError, Unit]                                  =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def saveFiles(files: List[CobolFileRow]): IO[PersistenceError, Unit]                        =
+    override def saveReport(report: TaskReportRow): IO[PersistenceError, Long]                    =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def getFilesByRun(runId: Long): IO[PersistenceError, List[CobolFileRow]]                    =
+    override def getReport(reportId: Long): IO[PersistenceError, Option[TaskReportRow]]           =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def saveAnalysis(analysis: CobolAnalysisRow): IO[PersistenceError, Long]                    =
+    override def getReportsByTask(taskRunId: Long): IO[PersistenceError, List[TaskReportRow]]     =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def getAnalysesByRun(runId: Long): IO[PersistenceError, List[CobolAnalysisRow]]             =
+    override def saveArtifact(artifact: TaskArtifactRow): IO[PersistenceError, Long]              =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def saveDependencies(deps: List[DependencyRow]): IO[PersistenceError, Unit]                 =
+    override def getArtifactsByTask(taskRunId: Long): IO[PersistenceError, List[TaskArtifactRow]] =
       ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def getDependenciesByRun(runId: Long): IO[PersistenceError, List[DependencyRow]]            =
-      ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def saveProgress(p: PhaseProgressRow): IO[PersistenceError, Long]                           =
-      ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def getProgress(runId: Long, phase: String): IO[PersistenceError, Option[PhaseProgressRow]] =
-      ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def updateProgress(p: PhaseProgressRow): IO[PersistenceError, Unit]                         =
-      ZIO.dieMessage("unused in DashboardControllerSpec")
-    override def getAllSettings: IO[PersistenceError, List[SettingRow]]                                  = ZIO.succeed(Nil)
-    override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]                       = ZIO.none
-    override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]                   = ZIO.unit
+    override def getAllSettings: IO[PersistenceError, List[SettingRow]]                           = ZIO.succeed(Nil)
+    override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]                = ZIO.none
+    override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]            = ZIO.unit
 
   private object TestRepository:
     def make: UIO[TestRepository] = ZIO.succeed(TestRepository())
@@ -100,7 +92,7 @@ object DashboardControllerSpec extends ZIOSpecDefault:
           WorkflowDefinition(
             id = Some(index.toLong + 1L),
             name = s"wf-$index",
-            steps = List(MigrationStep.Discovery),
+            steps = List(TaskStep.Discovery),
             isBuiltin = false,
           )
         )

@@ -1,64 +1,70 @@
 package web.views
 
-import db.{ CobolAnalysisRow, CobolFileRow, DependencyRow, MigrationRunRow, PhaseProgressRow }
+import db.{ TaskReportRow, TaskRunRow }
 import models.*
 
 object HtmlViews:
 
-  def dashboard(runs: List[MigrationRunRow], workflowCount: Int = 0): String =
+  def dashboard(runs: List[TaskRunRow], workflowCount: Int): String =
     DashboardView.dashboard(runs, workflowCount)
 
-  def runsList(runs: List[MigrationRunRow], pageNumber: Int, pageSize: Int): String =
-    RunsView.list(runs, pageNumber, pageSize)
+  def recentRunsFragment(runs: List[TaskRunRow]): String =
+    DashboardView.recentRunsContent(runs).render
 
-  def runDetail(run: MigrationRunRow, phases: List[PhaseProgressRow]): String =
-    RunsView.detail(run, phases, workflowName = None, workflow = WorkflowDefinition.default)
-
-  def runDetail(run: MigrationRunRow, phases: List[PhaseProgressRow], workflowName: Option[String]): String =
-    RunsView.detail(run, phases, workflowName, workflow = WorkflowDefinition.default)
-
-  def runDetail(
-    run: MigrationRunRow,
-    phases: List[PhaseProgressRow],
-    workflowName: Option[String],
-    workflow: WorkflowDefinition,
+  def tasksList(
+    tasks: List[TaskListItem],
+    workflows: List[WorkflowDefinition],
+    flash: Option[String] = None,
   ): String =
-    RunsView.detail(run, phases, workflowName, workflow)
+    TasksView.tasksList(tasks, workflows, flash)
 
-  def runForm: String =
-    RunsView.form()
+  def taskDetail(task: TaskListItem): String =
+    TasksView.taskDetail(task)
 
-  def runForm(workflows: List[WorkflowDefinition]): String =
-    RunsView.form(workflows)
+  def reportsList(taskId: Long, reports: List[TaskReportRow]): String =
+    ReportsView.reportsList(taskId, reports)
 
-  def recentRunsFragment(runs: List[MigrationRunRow]): String =
-    RunsView.recentRunsFragment(runs)
+  def reportsHome: String =
+    ReportsView.reportsHome
 
-  def phaseProgressFragment(phases: List[PhaseProgressRow]): String =
-    RunsView.phaseProgressFragment(phases)
+  def reportDetail(report: TaskReportRow): String =
+    ReportsView.reportDetail(report)
 
-  def runWorkflowDiagramFragment(workflow: WorkflowDefinition, phases: List[PhaseProgressRow]): String =
-    RunsView.workflowDiagramFragment(workflow, phases)
+  def graphPage(taskId: Long, graphReports: List[TaskReportRow]): String =
+    GraphView.page(taskId, graphReports)
 
-  def analysisList(runId: Long, files: List[CobolFileRow], analyses: List[CobolAnalysisRow]): String =
-    AnalysisView.list(runId, files, analyses)
-
-  def analysisDetail(file: CobolFileRow, analysis: CobolAnalysisRow): String =
-    AnalysisView.detail(file, analysis)
-
-  def analysisSearchFragment(files: List[CobolFileRow]): String =
-    AnalysisView.searchFragment(files)
-
-  def graphPage(runId: Long, deps: List[DependencyRow]): String =
-    GraphView.page(runId, deps)
+  def graphHome: String =
+    GraphView.home
 
   def settingsPage(settings: Map[String, String], flash: Option[String] = None): String =
     SettingsView.page(settings, flash)
 
+  def workflowsList(
+    workflows: List[WorkflowDefinition],
+    availableAgents: List[AgentInfo],
+    flash: Option[String] = None,
+  ): String =
+    WorkflowsView.list(workflows, availableAgents, flash)
+
+  def workflowForm(
+    title: String,
+    action: String,
+    workflow: WorkflowDefinition,
+    availableAgents: List[AgentInfo],
+    flash: Option[String] = None,
+  ): String =
+    WorkflowsView.form(title, action, workflow, availableAgents, flash)
+
+  def workflowDetail(workflow: WorkflowDefinition): String =
+    WorkflowsView.detail(workflow)
+
   def agentsPage(agents: List[AgentInfo], flash: Option[String] = None): String =
     AgentsView.list(agents, flash)
 
-  def newCustomAgentPage(values: Map[String, String] = Map.empty, flash: Option[String] = None): String =
+  def newCustomAgentPage(
+    values: Map[String, String] = Map.empty,
+    flash: Option[String] = None,
+  ): String =
     AgentsView.newCustomAgentForm(values, flash)
 
   def editCustomAgentPage(
@@ -94,8 +100,8 @@ object HtmlViews:
   ): String =
     IssuesView.list(runId, issues, statusFilter, query, tagFilter)
 
-  def issueCreateForm(defaultRunId: Option[Long]): String =
-    IssuesView.newForm(defaultRunId)
+  def issueCreateForm(runId: Option[Long]): String =
+    IssuesView.newForm(runId)
 
   def issueDetail(
     issue: AgentIssue,
@@ -103,31 +109,3 @@ object HtmlViews:
     availableAgents: List[AgentInfo],
   ): String =
     IssuesView.detail(issue, assignments, availableAgents)
-
-  def workflowsList(
-    workflows: List[WorkflowDefinition],
-    availableAgents: List[AgentInfo],
-    flash: Option[String] = None,
-  ): String =
-    WorkflowsView.list(workflows, availableAgents, flash)
-
-  def workflowForm(
-    title: String,
-    action: String,
-    workflow: WorkflowDefinition,
-    availableAgents: List[AgentInfo],
-    flash: Option[String] = None,
-  ): String =
-    WorkflowsView.form(title, action, workflow, availableAgents, flash)
-
-  def workflowDetail(workflow: WorkflowDefinition): String =
-    WorkflowsView.detail(workflow)
-
-  def activityTimeline(events: List[ActivityEvent]): String =
-    ActivityView.timeline(events)
-
-  def activityEventsFragment(events: List[ActivityEvent]): String =
-    ActivityView.eventsFragment(events)
-
-  def healthPage: String =
-    HealthDashboard.page
