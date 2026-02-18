@@ -10,10 +10,18 @@ import models.*
 
 trait TaskExecutor:
   def execute(taskRunId: Long, workflow: WorkflowDefinition): IO[PersistenceError, Unit]
+  def start(taskRunId: Long, workflow: WorkflowDefinition): UIO[Unit]
+  def cancel(taskRunId: Long): UIO[Unit]
 
 object TaskExecutor:
   def execute(taskRunId: Long, workflow: WorkflowDefinition): ZIO[TaskExecutor, PersistenceError, Unit] =
     ZIO.serviceWithZIO[TaskExecutor](_.execute(taskRunId, workflow))
+
+  def start(taskRunId: Long, workflow: WorkflowDefinition): ZIO[TaskExecutor, Nothing, Unit] =
+    ZIO.serviceWithZIO[TaskExecutor](_.start(taskRunId, workflow))
+
+  def cancel(taskRunId: Long): ZIO[TaskExecutor, Nothing, Unit] =
+    ZIO.serviceWithZIO[TaskExecutor](_.cancel(taskRunId))
 
   val live
     : ZLayer[
@@ -21,7 +29,23 @@ object TaskExecutor:
       Nothing,
       TaskExecutor,
     ] =
-    ZLayer.fromFunction(TaskExecutorLive.apply)
+    ZLayer.fromZIO {
+      for
+        repository     <- ZIO.service[TaskRepository]
+        registry       <- ZIO.service[AgentRegistry]
+        workflowEngine <- ZIO.service[WorkflowEngine]
+        dispatcher     <- ZIO.service[AgentDispatcher]
+        controlPlane   <- ZIO.service[OrchestratorControlPlane]
+        runningFibers  <- Ref.Synchronized.make(Map.empty[Long, Fiber.Runtime[PersistenceError, Unit]])
+      yield TaskExecutorLive(
+        repository = repository,
+        registry = registry,
+        workflowEngine = workflowEngine,
+        dispatcher = dispatcher,
+        controlPlane = controlPlane,
+        runningFibers = runningFibers,
+      )
+    }
 
 final case class TaskExecutorLive(
   repository: TaskRepository,
@@ -29,7 +53,26 @@ final case class TaskExecutorLive(
   workflowEngine: WorkflowEngine,
   dispatcher: AgentDispatcher,
   controlPlane: OrchestratorControlPlane,
+  runningFibers: Ref.Synchronized[Map[Long, Fiber.Runtime[PersistenceError, Unit]]],
 ) extends TaskExecutor:
+
+  override def start(taskRunId: Long, workflow: WorkflowDefinition): UIO[Unit] =
+    for
+      effect <- ZIO.succeed(
+                  execute(taskRunId, workflow)
+                    .catchAll(err => ZIO.logError(s"Task execution failed for run=$taskRunId: $err"))
+                )
+      fiber  <- effect.ensuring(runningFibers.update(_ - taskRunId)).forkDaemon
+      old    <- runningFibers.modify { fibers =>
+                  (fibers.get(taskRunId), fibers.updated(taskRunId, fiber))
+                }
+      _      <- ZIO.foreachDiscard(old)(_.interrupt)
+    yield ()
+
+  override def cancel(taskRunId: Long): UIO[Unit] =
+    runningFibers.modify { fibers =>
+      (fibers.get(taskRunId), fibers - taskRunId)
+    }.flatMap(old => ZIO.foreachDiscard(old)(_.interrupt))
 
   override def execute(taskRunId: Long, workflow: WorkflowDefinition): IO[PersistenceError, Unit] =
     for
