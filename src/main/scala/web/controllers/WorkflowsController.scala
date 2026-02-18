@@ -167,7 +167,12 @@ final case class WorkflowsControllerLive(
   private def parseOrderedSteps(form: Map[String, String]): IO[WorkflowServiceError, List[TaskStep]] =
     val raw = form.getOrElse("orderedSteps", "")
     if raw.trim.isEmpty then
-      ZIO.succeed(WorkflowDefinition.defaultSteps.filter(step => form.get(s"step.$step").exists(_.trim.nonEmpty)))
+      ZIO.succeed(
+        form.toList.collect {
+          case (key, value) if key.startsWith("step.") && value.trim.nonEmpty =>
+            key.stripPrefix("step.").trim
+        }.filter(_.nonEmpty)
+      )
     else
       ZIO.foreach(raw.split(",").toList.map(_.trim).filter(_.nonEmpty)) { value =>
         parseStep(value)
