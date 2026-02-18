@@ -1,6 +1,7 @@
 package gateway.telegram
 
 import gateway.models.NormalizedMessage
+import models.WorkflowRunState
 
 final case class FormattedTelegramResponse(
   text: String,
@@ -89,3 +90,28 @@ object ResponseFormatter:
       .filter(_.nonEmpty)
       .map(line => if line.startsWith("-") || line.startsWith("*") then line else s"- $line")
       .mkString("\n")
+
+  def formatTaskProgress(
+    runState: WorkflowRunState,
+    taskName: String,
+    stepName: Option[String],
+  ): String =
+    runState match
+      case WorkflowRunState.Running   =>
+        val header = s"""▶ Task "$taskName" started"""
+        stepName match
+          case Some(step) if step.trim.nonEmpty => s"$header\n→ Step: ${step.trim} — Running..."
+          case _                                => header
+      case WorkflowRunState.Completed =>
+        s"""✓ Task "$taskName" completed"""
+      case WorkflowRunState.Failed    =>
+        val header = s"""✗ Task "$taskName" failed"""
+        stepName match
+          case Some(step) if step.trim.nonEmpty => s"$header at step: ${step.trim}"
+          case _                                => header
+      case WorkflowRunState.Paused    =>
+        s"""⏸ Task "$taskName" paused"""
+      case WorkflowRunState.Cancelled =>
+        s"""⛔ Task "$taskName" cancelled"""
+      case WorkflowRunState.Pending   =>
+        s"""⏳ Task "$taskName" pending"""

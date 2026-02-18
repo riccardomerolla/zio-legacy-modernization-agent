@@ -49,7 +49,8 @@ object ApplicationDI:
       ChannelRegistry &
       MessageRouter &
       GatewayService &
-      TelegramPollingService
+      TelegramPollingService &
+      TaskProgressNotifier
 
   def aiProviderToLlmProvider(aiProvider: AIProvider): LlmProvider =
     aiProvider match
@@ -111,6 +112,7 @@ object ApplicationDI:
       MessageRouter.live,
       GatewayService.live,
       TelegramPollingService.live,
+      TaskProgressNotifier.live,
     )
 
   /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */

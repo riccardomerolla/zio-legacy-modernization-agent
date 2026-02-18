@@ -175,6 +175,23 @@ object ControlPlaneSpec extends ZIOSpecDefault:
         )
       }
     },
+    test("publishEvent broadcasts to global subscribers") {
+      ZIO.scoped {
+        for
+          queue <- OrchestratorControlPlane.subscribeAllEvents
+          now   <- Clock.instant
+          event  = StepStarted(
+                     correlationId = "corr-global",
+                     runId = "run-global",
+                     step = TaskStep.Analysis,
+                     assignedAgent = "agent-1",
+                     timestamp = now,
+                   )
+          _     <- OrchestratorControlPlane.publishEvent(event)
+          got   <- queue.take
+        yield assertTrue(got == event)
+      }
+    },
     test("subscribeToEvents deregisters queue on scope exit") {
       for
         _    <- ZIO.scoped {

@@ -57,6 +57,9 @@ trait ChatRepository:
   def getSessionContextByConversation(conversationId: Long): IO[PersistenceError, Option[SessionContextLink]] =
     ZIO.fail(PersistenceError.QueryFailed("getSessionContextByConversation", "Not implemented"))
 
+  def getSessionContextByTaskRunId(taskRunId: Long): IO[PersistenceError, Option[SessionContextLink]] =
+    ZIO.fail(PersistenceError.QueryFailed("getSessionContextByTaskRunId", "Not implemented"))
+
   def deleteSessionContext(
     channelName: String,
     sessionKey: String,
@@ -147,6 +150,9 @@ object ChatRepository:
 
   def getSessionContextByConversation(conversationId: Long): ZIO[ChatRepository, PersistenceError, Option[SessionContextLink]] =
     ZIO.serviceWithZIO[ChatRepository](_.getSessionContextByConversation(conversationId))
+
+  def getSessionContextByTaskRunId(taskRunId: Long): ZIO[ChatRepository, PersistenceError, Option[SessionContextLink]] =
+    ZIO.serviceWithZIO[ChatRepository](_.getSessionContextByTaskRunId(taskRunId))
 
   def deleteSessionContext(
     channelName: String,
@@ -627,6 +633,24 @@ final case class ChatRepositoryLive(
       }.map(_.find(link => extractConversationId(link.contextJson).contains(conversationId)))
     }
 
+  override def getSessionContextByTaskRunId(taskRunId: Long): IO[PersistenceError, Option[SessionContextLink]] =
+    val sql =
+      """SELECT channel_name, session_key, context_json, updated_at
+        |FROM chat_session_context
+        |ORDER BY updated_at DESC
+        |""".stripMargin
+
+    withConnection { conn =>
+      queryMany(conn, sql)(_ => ()) { rs =>
+        for
+          channelName <- executeBlocking(sql)(rs.getString("channel_name"))
+          sessionKey  <- executeBlocking(sql)(rs.getString("session_key"))
+          contextJson <- executeBlocking(sql)(rs.getString("context_json"))
+          updatedAt   <- parseInstant(sql, rs.getString("updated_at"))
+        yield SessionContextLink(channelName, sessionKey, contextJson, updatedAt)
+      }.map(_.find(link => extractRunId(link.contextJson).contains(taskRunId)))
+    }
+
   override def deleteSessionContext(
     channelName: String,
     sessionKey: String,
@@ -663,7 +687,13 @@ final case class ChatRepositoryLive(
     yield conversation.copy(messages = messages)
 
   private def extractConversationId(contextJson: String): Option[Long] =
-    val marker = "\"conversationId\":"
+    extractLongField(contextJson, "conversationId")
+
+  private def extractRunId(contextJson: String): Option[Long] =
+    extractLongField(contextJson, "runId")
+
+  private def extractLongField(contextJson: String, field: String): Option[Long] =
+    val marker = s""""$field":"""
     val start  = contextJson.indexOf(marker)
     if start < 0 then None
     else

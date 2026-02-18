@@ -5,6 +5,7 @@ import java.time.Instant
 import zio.test.*
 
 import gateway.models.*
+import models.WorkflowRunState
 
 object ResponseFormatterSpec extends ZIOSpecDefault:
 
@@ -57,6 +58,18 @@ object ResponseFormatterSpec extends ZIOSpecDefault:
         formatted.continuationToken.isEmpty,
         formatted.remaining.isEmpty,
         formatted.text.length == 5000,
+      )
+    },
+    test("formats task progress states with expected prefixes") {
+      val running   = ResponseFormatter.formatTaskProgress(WorkflowRunState.Running, "Generate report", Some("chat"))
+      val completed = ResponseFormatter.formatTaskProgress(WorkflowRunState.Completed, "Generate report", None)
+      val failed    = ResponseFormatter.formatTaskProgress(WorkflowRunState.Failed, "Generate report", Some("chat"))
+      assertTrue(
+        running.startsWith("▶"),
+        running.contains("Step: chat"),
+        completed.startsWith("✓"),
+        failed.startsWith("✗"),
+        failed.contains("step: chat"),
       )
     },
   )
