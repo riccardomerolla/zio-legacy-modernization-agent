@@ -3,6 +3,7 @@ package gateway
 import java.util.UUID
 
 import zio.*
+import zio.json.*
 
 import agents.AgentRegistry
 import gateway.models.NormalizedMessage
@@ -17,6 +18,15 @@ enum GatewayQueueCommand:
   case Inbound(message: NormalizedMessage)
   case Outbound(message: NormalizedMessage)
 
+case class ChannelMetrics(
+  inboundEnqueued: Long = 0L,
+  outboundEnqueued: Long = 0L,
+  inboundProcessed: Long = 0L,
+  outboundProcessed: Long = 0L,
+  failed: Long = 0L,
+  lastActivityTs: Option[Long] = None,
+) derives JsonCodec
+
 case class GatewayMetricsSnapshot(
   enqueued: Long = 0L,
   processed: Long = 0L,
@@ -24,6 +34,7 @@ case class GatewayMetricsSnapshot(
   chunkedMessages: Long = 0L,
   emittedChunks: Long = 0L,
   steeringForwarded: Long = 0L,
+  perChannel: Map[String, ChannelMetrics] = Map.empty,
 )
 
 trait GatewayService:
@@ -87,8 +98,10 @@ object GatewayService:
     def markProcessed: UIO[Unit] =
       metricsRef.update(current => current.copy(processed = current.processed + 1))
 
-    def markFailed: UIO[Unit] =
-      metricsRef.update(current => current.copy(failed = current.failed + 1))
+    def markFailed(channelName: String, timestamp: Long): UIO[Unit] =
+      metricsRef.update(current =>
+        GatewayService.markChannelFailed(current.copy(failed = current.failed + 1), channelName, timestamp)
+      )
 
     def forwardSteering(message: NormalizedMessage): UIO[Unit] =
       steeringQueue match
@@ -102,7 +115,14 @@ object GatewayService:
         case GatewayQueueCommand.Inbound(message)  =>
           (forwardSteering(message) *> router.routeInbound(message).mapError(GatewayServiceError.Router.apply))
             .tapError(err => ZIO.logWarning(s"gateway inbound processing failed: $err"))
-            .foldZIO(_ => markFailed, _ => markProcessed)
+            .foldZIO(
+              _ => markFailed(message.channelName, message.timestamp.toEpochMilli),
+              _ =>
+                markProcessed *>
+                  metricsRef.update(current =>
+                    GatewayService.markInboundProcessed(current, message.channelName, message.timestamp.toEpochMilli)
+                  ),
+            )
         case GatewayQueueCommand.Outbound(message) =>
           val chunks       = ResponseChunker.chunkMessageForChannel(message)
           val markChunking =
@@ -118,12 +138,71 @@ object GatewayService:
             markChunking *>
             ZIO.foreachDiscard(chunks)(chunk => router.routeOutbound(chunk).mapError(GatewayServiceError.Router.apply)))
             .tapError(err => ZIO.logWarning(s"gateway outbound processing failed: $err"))
-            .foldZIO(_ => markFailed, _ => markProcessed)
+            .foldZIO(
+              _ => markFailed(message.channelName, message.timestamp.toEpochMilli),
+              _ =>
+                markProcessed *>
+                  metricsRef.update(current =>
+                    GatewayService.markOutboundProcessed(current, message.channelName, message.timestamp.toEpochMilli)
+                  ),
+            )
 
     def loop: UIO[Unit] =
       queue.take.flatMap(runCommand).forever
 
     loop
+
+  private def updateChannelMetrics(
+    snapshot: GatewayMetricsSnapshot,
+    channelName: String,
+  )(update: ChannelMetrics => ChannelMetrics): GatewayMetricsSnapshot =
+    val current = snapshot.perChannel.getOrElse(channelName, ChannelMetrics())
+    snapshot.copy(perChannel = snapshot.perChannel.updated(channelName, update(current)))
+
+  private[gateway] def markInboundEnqueued(
+    snapshot: GatewayMetricsSnapshot,
+    channelName: String,
+    timestamp: Long,
+  ): GatewayMetricsSnapshot =
+    updateChannelMetrics(snapshot, channelName)(metrics =>
+      metrics.copy(inboundEnqueued = metrics.inboundEnqueued + 1L, lastActivityTs = Some(timestamp))
+    )
+
+  private[gateway] def markOutboundEnqueued(
+    snapshot: GatewayMetricsSnapshot,
+    channelName: String,
+    timestamp: Long,
+  ): GatewayMetricsSnapshot =
+    updateChannelMetrics(snapshot, channelName)(metrics =>
+      metrics.copy(outboundEnqueued = metrics.outboundEnqueued + 1L, lastActivityTs = Some(timestamp))
+    )
+
+  private[gateway] def markInboundProcessed(
+    snapshot: GatewayMetricsSnapshot,
+    channelName: String,
+    timestamp: Long,
+  ): GatewayMetricsSnapshot =
+    updateChannelMetrics(snapshot, channelName)(metrics =>
+      metrics.copy(inboundProcessed = metrics.inboundProcessed + 1L, lastActivityTs = Some(timestamp))
+    )
+
+  private[gateway] def markOutboundProcessed(
+    snapshot: GatewayMetricsSnapshot,
+    channelName: String,
+    timestamp: Long,
+  ): GatewayMetricsSnapshot =
+    updateChannelMetrics(snapshot, channelName)(metrics =>
+      metrics.copy(outboundProcessed = metrics.outboundProcessed + 1L, lastActivityTs = Some(timestamp))
+    )
+
+  private[gateway] def markChannelFailed(
+    snapshot: GatewayMetricsSnapshot,
+    channelName: String,
+    timestamp: Long,
+  ): GatewayMetricsSnapshot =
+    updateChannelMetrics(snapshot, channelName)(metrics =>
+      metrics.copy(failed = metrics.failed + 1L, lastActivityTs = Some(timestamp))
+    )
 
 final case class GatewayServiceLive(
   queue: Queue[GatewayQueueCommand],
@@ -137,11 +216,23 @@ final case class GatewayServiceLive(
 
   override def enqueueInbound(message: NormalizedMessage): UIO[Unit] =
     queue.offer(GatewayQueueCommand.Inbound(message)).unit *>
-      metricsRef.update(current => current.copy(enqueued = current.enqueued + 1))
+      metricsRef.update(current =>
+        GatewayService.markInboundEnqueued(
+          current.copy(enqueued = current.enqueued + 1),
+          message.channelName,
+          message.timestamp.toEpochMilli,
+        )
+      )
 
   override def enqueueOutbound(message: NormalizedMessage): UIO[Unit] =
     queue.offer(GatewayQueueCommand.Outbound(message)).unit *>
-      metricsRef.update(current => current.copy(enqueued = current.enqueued + 1))
+      metricsRef.update(current =>
+        GatewayService.markOutboundEnqueued(
+          current.copy(enqueued = current.enqueued + 1),
+          message.channelName,
+          message.timestamp.toEpochMilli,
+        )
+      )
 
   override def processInbound(message: NormalizedMessage): IO[GatewayServiceError, Unit] =
     for
@@ -152,7 +243,13 @@ final case class GatewayServiceLive(
                  metricsRef.update(current => current.copy(steeringForwarded = current.steeringForwarded + 1))
       _ <- router.routeInbound(message).mapError(GatewayServiceError.Router.apply)
       _ <- handleIntentRouting(message)
-      _ <- metricsRef.update(current => current.copy(processed = current.processed + 1))
+      _ <- metricsRef.update(current =>
+             GatewayService.markInboundProcessed(
+               current.copy(processed = current.processed + 1),
+               message.channelName,
+               message.timestamp.toEpochMilli,
+             )
+           )
     yield ()
 
   override def processOutbound(message: NormalizedMessage): IO[GatewayServiceError, List[NormalizedMessage]] =
@@ -165,10 +262,14 @@ final case class GatewayServiceLive(
                  metricsRef.update(current => current.copy(steeringForwarded = current.steeringForwarded + 1))
       _ <- ZIO.foreachDiscard(chunks)(chunk => router.routeOutbound(chunk).mapError(GatewayServiceError.Router.apply))
       _ <- metricsRef.update { current =>
-             current.copy(
-               processed = current.processed + 1,
-               chunkedMessages = current.chunkedMessages + (if chunks.length > 1 then 1 else 0),
-               emittedChunks = current.emittedChunks + chunks.length.toLong,
+             GatewayService.markOutboundProcessed(
+               current.copy(
+                 processed = current.processed + 1,
+                 chunkedMessages = current.chunkedMessages + (if chunks.length > 1 then 1 else 0),
+                 emittedChunks = current.emittedChunks + chunks.length.toLong,
+               ),
+               message.channelName,
+               message.timestamp.toEpochMilli,
              )
            }
     yield chunks

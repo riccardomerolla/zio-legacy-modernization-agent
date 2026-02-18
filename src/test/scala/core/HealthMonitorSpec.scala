@@ -109,8 +109,9 @@ object HealthMonitorSpec extends ZIOSpecDefault:
 
   private def makeRegistry: UIO[ChannelRegistry] =
     for
-      ref <- Ref.Synchronized.make(Map("websocket" -> channelWithSession))
-    yield ChannelRegistryLive(ref)
+      ref       <- Ref.Synchronized.make(Map("websocket" -> channelWithSession))
+      runtimeRef <- Ref.Synchronized.make(Map.empty[String, gateway.ChannelRuntime])
+    yield ChannelRegistryLive(ref, runtimeRef)
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("HealthMonitorSpec")(
     test("snapshot aggregates gateway, agents, channels, and errors") {

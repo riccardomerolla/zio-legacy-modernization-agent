@@ -79,9 +79,13 @@ object TelegramPollingService:
                      ZIO.fail(MessageChannelError.InvalidMessage("telegram channel is not a TelegramChannel"))
       _       <- ZIO.foreachDiscard(batch.messages)(message => gatewayService.processInbound(message).ignore)
       _       <- offsetRef.update(current => batch.nextOffset.orElse(current))
+      now     <- Clock.instant
+      _       <- channelRegistry.markActivity("telegram", now)
+      _       <- channelRegistry.markConnected("telegram")
     yield batch.messages.length)
       .catchAll(err =>
-        ZIO.logWarning(s"telegram polling iteration failed: $err").as(0)
+        channelRegistry.markError("telegram", err.toString) *>
+          ZIO.logWarning(s"telegram polling iteration failed: $err").as(0)
       )
 
   private def sanitizeConfig(config: TelegramPollingConfig): TelegramPollingConfig =
@@ -121,7 +125,7 @@ final case class TelegramPollingServiceDynamicLive(
   override def runOnce: UIO[Int] =
     config.flatMap { cfg =>
       if cfg.enabled then TelegramPollingService.pollOnce(channelRegistry, gatewayService, offsetRef, cfg)
-      else ZIO.succeed(0)
+      else channelRegistry.markNotConfigured("telegram").as(0)
     }
 
   override def runLoop: UIO[Nothing] =

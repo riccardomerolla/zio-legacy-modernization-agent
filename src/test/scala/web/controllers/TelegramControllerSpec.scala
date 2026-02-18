@@ -55,7 +55,8 @@ object TelegramControllerSpec extends ZIOSpecDefault:
       messagesRef <- Ref.make(List.empty[NormalizedMessage])
       gateway      = CapturingGateway(messagesRef)
       channelsRef <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
-      registry     = ChannelRegistryLive(channelsRef)
+      runtimeRef  <- Ref.Synchronized.make(Map.empty[String, ChannelRuntime])
+      registry     = ChannelRegistryLive(channelsRef, runtimeRef)
       telegram    <- TelegramChannel.make(noopTelegramClient)
       _           <- registry.register(telegram)
       controller  <- TelegramController.make(

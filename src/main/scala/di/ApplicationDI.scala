@@ -156,6 +156,7 @@ object ApplicationDI:
       StreamAbortRegistry.live,
       ChatController.live,
       ActivityController.live,
+      ChannelController.live,
       HealthController.live,
       TelegramController.live,
       WebServer.live,
@@ -168,12 +169,13 @@ object ApplicationDI:
         agentRegistry <- ZIO.service[AgentRegistry]
         repository    <- ZIO.service[TaskRepository]
         channels      <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
+        runtime       <- Ref.Synchronized.make(Map.empty[String, ChannelRuntime])
         clients       <- Ref.Synchronized.make(Map.empty[String, TelegramClient])
         backend       <- ZIO.attempt {
                            given ExecutionContext = ExecutionContext.global
                            DefaultFutureBackend()
                          }.orDie
-        registry       = ChannelRegistryLive(channels)
+        registry       = ChannelRegistryLive(channels, runtime)
         websocket     <- WebSocketChannel.make()
         telegramClient = ConfigAwareTelegramClient(configRef, clients, backend)
         telegram      <- TelegramChannel.make(
