@@ -340,7 +340,7 @@ object TelegramChannelSpec extends ZIOSpecDefault:
         sent.count(_.text.contains("Task controls are unavailable for #90.")) == 3,
       )
     },
-    test("send formats long response and supports show more callback") {
+    test("send keeps long response without custom show more callback") {
       for
         updatesRef  <- Ref.make(List.empty[TelegramUpdate])
         sentRef     <- Ref.make(List.empty[TelegramSendMessage])
@@ -362,14 +362,9 @@ object TelegramChannelSpec extends ZIOSpecDefault:
         session      = SessionScopeStrategy.PerConversation.build("telegram", "88")
         _           <- channel.send(outboundMessage(session, "line\n" * 300))
         sent1       <- sentRef.get
-        showMore     = sent1.lastOption.flatMap(_.reply_markup).flatMap(_.inline_keyboard.flatten.headOption)
-        token        = showMore.flatMap(_.callback_data).map(_.stripPrefix("more:")).getOrElse("missing")
-        _           <- channel.ingestUpdate(callbackUpdate(42L, 88L, 912L, s"more:$token"))
-        sent2       <- sentRef.get
       yield assertTrue(
         sent1.nonEmpty,
-        showMore.exists(_.text == "Show More"),
-        sent2.length >= 2,
+        sent1.lastOption.flatMap(_.reply_markup).isEmpty,
       )
     },
     test("send uploads generated attachments as zip document") {

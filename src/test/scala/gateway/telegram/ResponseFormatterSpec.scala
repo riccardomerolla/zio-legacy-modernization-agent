@@ -50,13 +50,13 @@ object ResponseFormatterSpec extends ZIOSpecDefault:
         formatted.text.contains("output.zip"),
       )
     },
-    test("truncates long responses and provides show more callback") {
+    test("keeps long responses intact (no custom truncation)") {
       val formatted = ResponseFormatter.format(message("x" * 5000))
       assertTrue(
-        formatted.replyMarkup.nonEmpty,
-        formatted.continuationToken.nonEmpty,
-        formatted.remaining.exists(_.nonEmpty),
-        formatted.text.contains("truncated"),
+        formatted.replyMarkup.isEmpty,
+        formatted.continuationToken.isEmpty,
+        formatted.remaining.isEmpty,
+        formatted.text.length == 5000,
       )
     },
   )
