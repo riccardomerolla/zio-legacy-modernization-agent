@@ -1,5 +1,7 @@
 package di
 
+import scala.concurrent.{ ExecutionContext, Future }
+
 import zio.*
 import zio.http.netty.NettyConfig
 import zio.http.{ Client, DnsResolver, ZClient }
@@ -7,6 +9,7 @@ import zio.http.{ Client, DnsResolver, ZClient }
 import _root_.config.SettingsApplier
 import _root_.models.*
 import agents.*
+import com.bot4s.telegram.clients.FutureSttpClient
 import core.*
 import db.*
 import gateway.*
@@ -14,6 +17,7 @@ import gateway.telegram.*
 import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import orchestration.*
+import sttp.client4.DefaultFutureBackend
 import web.controllers.*
 import web.{ ActivityHub, StreamAbortRegistry, WebServer }
 
@@ -157,36 +161,84 @@ object ApplicationDI:
       WebServer.live,
     )
 
-  private val channelRegistryLayer: ULayer[ChannelRegistry] =
-    ZLayer.fromZIO {
+  private val channelRegistryLayer: ZLayer[Ref[GatewayConfig], Nothing, ChannelRegistry] =
+    ZLayer.scoped {
       for
-        ref       <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
-        registry   = ChannelRegistryLive(ref)
-        websocket <- WebSocketChannel.make()
-        telegram  <- TelegramChannel.make(noopTelegramClient)
-        _         <- registry.register(websocket)
-        _         <- registry.register(telegram)
+        configRef     <- ZIO.service[Ref[GatewayConfig]]
+        channels      <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
+        clients       <- Ref.Synchronized.make(Map.empty[String, TelegramClient])
+        backend       <- ZIO.attempt {
+                           given ExecutionContext = ExecutionContext.global
+                           DefaultFutureBackend()
+                         }.orDie
+        registry       = ChannelRegistryLive(channels)
+        websocket     <- WebSocketChannel.make()
+        telegramClient = ConfigAwareTelegramClient(configRef, clients, backend)
+        telegram      <- TelegramChannel.make(
+                           client = telegramClient,
+                           workflowNotifier = WorkflowNotifierLive(telegramClient),
+                         )
+        _             <- registry.register(websocket)
+        _             <- registry.register(telegram)
       yield registry
     }
 
-  private val noopTelegramClient: TelegramClient =
-    new TelegramClient:
-      override def getUpdates(
-        offset: Option[Long],
-        limit: Int,
-        timeoutSeconds: Int,
-        timeout: Duration,
-      ): IO[TelegramClientError, List[TelegramUpdate]] =
-        ZIO.succeed(Nil)
+  final private case class ConfigAwareTelegramClient(
+    configRef: Ref[GatewayConfig],
+    clientsRef: Ref.Synchronized[Map[String, TelegramClient]],
+    backend: sttp.client4.WebSocketBackend[Future],
+  ) extends TelegramClient:
 
-      override def sendMessage(
-        request: TelegramSendMessage,
-        timeout: Duration,
-      ): IO[TelegramClientError, TelegramMessage] =
-        ZIO.fail(TelegramClientError.Network("telegram client is not configured"))
+    private given ExecutionContext = ExecutionContext.global
 
-      override def sendDocument(
-        request: TelegramSendDocument,
-        timeout: Duration,
-      ): IO[TelegramClientError, TelegramMessage] =
-        ZIO.fail(TelegramClientError.Network("telegram client is not configured"))
+    override def getUpdates(
+      offset: Option[Long],
+      limit: Int,
+      timeoutSeconds: Int,
+      timeout: Duration,
+    ): IO[TelegramClientError, List[TelegramUpdate]] =
+      currentClient.flatMap(_.getUpdates(offset, limit, timeoutSeconds, timeout))
+
+    override def sendMessage(
+      request: TelegramSendMessage,
+      timeout: Duration,
+    ): IO[TelegramClientError, TelegramMessage] =
+      currentClient.flatMap(_.sendMessage(request, timeout))
+
+    override def sendDocument(
+      request: TelegramSendDocument,
+      timeout: Duration,
+    ): IO[TelegramClientError, TelegramMessage] =
+      currentClient.flatMap(_.sendDocument(request, timeout))
+
+    private def currentClient: IO[TelegramClientError, TelegramClient] =
+      for
+        config <- configRef.get
+        token  <- ZIO
+                    .fromOption(config.telegram.botToken.map(_.trim).filter(_.nonEmpty))
+                    .orElseFail(
+                      TelegramClientError.InvalidConfig(
+                        "telegram bot token is not configured; set telegram.botToken in Settings"
+                      )
+                    )
+        client <- clientsRef.modifyZIO { current =>
+                    current.get(token) match
+                      case Some(existing) =>
+                        ZIO.succeed((existing, current))
+                      case None           =>
+                        ZIO
+                          .attempt {
+                            val handler = FutureSttpClient(
+                              token = token,
+                              telegramHost = "api.telegram.org",
+                            )(using backend, summon[ExecutionContext])
+                            TelegramClient.fromRequestHandler(handler)
+                          }
+                          .mapError(err =>
+                            TelegramClientError.InvalidConfig(
+                              s"failed to initialize telegram client: ${Option(err.getMessage).getOrElse(err.toString)}"
+                            )
+                          )
+                          .map(created => (created, current + (token -> created)))
+                  }
+      yield client

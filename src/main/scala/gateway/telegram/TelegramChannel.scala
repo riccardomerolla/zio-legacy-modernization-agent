@@ -6,6 +6,11 @@ import zio.stream.ZStream
 import gateway.*
 import gateway.models.{ MessageDirection, MessageRole, NormalizedMessage, SessionKey, SessionScopeStrategy }
 
+final case class TelegramPollBatch(
+  messages: List[NormalizedMessage],
+  nextOffset: Option[Long],
+)
+
 final case class TelegramChannel(
   name: String,
   scopeStrategy: SessionScopeStrategy,
@@ -148,12 +153,21 @@ final case class TelegramChannel(
     timeoutSeconds: Int = 30,
     timeout: Duration = 60.seconds,
   ): IO[MessageChannelError, List[NormalizedMessage]] =
+    pollInboundBatch(offset, limit, timeoutSeconds, timeout).map(_.messages)
+
+  def pollInboundBatch(
+    offset: Option[Long] = None,
+    limit: Int = 100,
+    timeoutSeconds: Int = 30,
+    timeout: Duration = 60.seconds,
+  ): IO[MessageChannelError, TelegramPollBatch] =
     for
-      updates <- client
-                   .getUpdates(offset = offset, limit = limit, timeoutSeconds = timeoutSeconds, timeout = timeout)
-                   .mapError(err => MessageChannelError.InvalidMessage(s"telegram polling failed: $err"))
-      mapped  <- ZIO.foreach(updates)(ingestUpdate)
-    yield mapped.flatten
+      updates   <- client
+                     .getUpdates(offset = offset, limit = limit, timeoutSeconds = timeoutSeconds, timeout = timeout)
+                     .mapError(err => MessageChannelError.InvalidMessage(s"telegram polling failed: $err"))
+      mapped    <- ZIO.foreach(updates)(ingestUpdate)
+      nextOffset = updates.map(_.update_id).maxOption.map(_ + 1L)
+    yield TelegramPollBatch(mapped.flatten, nextOffset)
 
   private def ensureConnected(sessionKey: SessionKey): IO[MessageChannelError, Unit] =
     sessionsRef.get.flatMap { sessions =>

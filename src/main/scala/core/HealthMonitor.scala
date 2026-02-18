@@ -75,7 +75,7 @@ object HealthMonitor:
     ZStream.serviceWithStream[HealthMonitor](_.stream(interval))
 
   val live
-    : ZLayer[GatewayService & ChannelRegistry & AgentRegistry & TaskRepository & GatewayConfig, Nothing, HealthMonitor] =
+    : ZLayer[GatewayService & ChannelRegistry & AgentRegistry & TaskRepository & Ref[GatewayConfig], Nothing, HealthMonitor] =
     ZLayer.fromZIO {
       for
         startedAt  <- Clock.instant
@@ -84,8 +84,16 @@ object HealthMonitor:
         channels   <- ZIO.service[ChannelRegistry]
         agents     <- ZIO.service[AgentRegistry]
         repo       <- ZIO.service[TaskRepository]
-        config     <- ZIO.service[GatewayConfig]
-      yield HealthMonitorLive(startedAt, historyRef, gateway, channels, agents, repo, config)
+        configRef  <- ZIO.service[Ref[GatewayConfig]]
+      yield HealthMonitorLive(
+        startedAt,
+        historyRef,
+        gateway,
+        channels,
+        agents,
+        repo,
+        runtimeConfigRef = Some(configRef),
+      )
     }
 
 final case class HealthMonitorLive(
@@ -96,6 +104,7 @@ final case class HealthMonitorLive(
   agentRegistry: AgentRegistry,
   repository: TaskRepository,
   config: GatewayConfig = GatewayConfig(),
+  runtimeConfigRef: Option[Ref[GatewayConfig]] = None,
 ) extends HealthMonitor:
 
   private val HistoryCapacity = 180
@@ -113,6 +122,9 @@ final case class HealthMonitorLive(
     for
       now            <- Clock.instant
       nowMs           = now.toEpochMilli
+      runtimeConfig  <- runtimeConfigRef match
+                          case Some(ref) => ref.get
+                          case None      => ZIO.succeed(config)
       gatewayMetrics <- gatewayService.metrics
       channels       <- channelRegistry.list
       runningTasks   <- repository
@@ -124,11 +136,11 @@ final case class HealthMonitorLive(
                           channel.activeSessions.map { sessions =>
                             val active = sessions.size
                             val status = channel.name.toLowerCase match
-                              case "telegram" if !config.telegram.enabled =>
+                              case "telegram" if !runtimeConfig.telegram.enabled =>
                                 ChannelStatus.NotConfigured
-                              case _ if active > 0                        =>
+                              case _ if active > 0                               =>
                                 ChannelStatus.Connected
-                              case _                                      =>
+                              case _                                             =>
                                 ChannelStatus.Disconnected
                             ChannelHealth(channel.name, status, active)
                           }

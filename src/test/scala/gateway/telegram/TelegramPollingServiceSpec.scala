@@ -29,6 +29,27 @@ object TelegramPollingServiceSpec extends ZIOSpecDefault:
     ): IO[TelegramClientError, TelegramMessage] =
       ZIO.fail(TelegramClientError.Network("unused"))
 
+  final private case class OffsetAwareTelegramClient(updates: List[TelegramUpdate]) extends TelegramClient:
+    override def getUpdates(
+      offset: Option[Long],
+      limit: Int,
+      timeoutSeconds: Int,
+      timeout: Duration,
+    ): IO[TelegramClientError, List[TelegramUpdate]] =
+      ZIO.succeed(updates.filter(_.update_id >= offset.getOrElse(Long.MinValue)).take(limit))
+
+    override def sendMessage(
+      request: TelegramSendMessage,
+      timeout: Duration,
+    ): IO[TelegramClientError, TelegramMessage] =
+      ZIO.fail(TelegramClientError.Network("unused"))
+
+    override def sendDocument(
+      request: TelegramSendDocument,
+      timeout: Duration,
+    ): IO[TelegramClientError, TelegramMessage] =
+      ZIO.fail(TelegramClientError.Network("unused"))
+
   final private case class CapturingGateway(messagesRef: Ref[List[NormalizedMessage]]) extends GatewayService:
     override def enqueueInbound(message: NormalizedMessage): UIO[Unit]  = ZIO.unit
     override def enqueueOutbound(message: NormalizedMessage): UIO[Unit] = ZIO.unit
@@ -55,6 +76,19 @@ object TelegramPollingServiceSpec extends ZIOSpecDefault:
       ),
     )
 
+  private def mkCommandUpdate(id: Long, text: String): TelegramUpdate =
+    TelegramUpdate(
+      update_id = id,
+      message = Some(
+        TelegramMessage(
+          message_id = id * 10L,
+          date = 1710000000L,
+          chat = TelegramChat(id = 42L, `type` = "private"),
+          text = Some(text),
+        )
+      ),
+    )
+
   private def makeDeps(initialUpdates: List[TelegramUpdate])
     : UIO[(ChannelRegistry, CapturingGateway, Ref[List[NormalizedMessage]])] =
     for
@@ -73,10 +107,12 @@ object TelegramPollingServiceSpec extends ZIOSpecDefault:
       for
         deps                    <- makeDeps(List(mkUpdate(1L), mkUpdate(2L)))
         (registry, gateway, ref) = deps
+        offsetRef               <- Ref.make(Option.empty[Long])
         service                  = TelegramPollingServiceLive(
                                      channelRegistry = registry,
                                      gatewayService = gateway,
-                                     config = TelegramPollingConfig(enabled = true, batchSize = 10),
+                                     config0 = TelegramPollingConfig(enabled = true, batchSize = 10),
+                                     offsetRef = offsetRef,
                                    )
         processed               <- service.runOnce
         captured                <- ref.get
@@ -106,6 +142,33 @@ object TelegramPollingServiceSpec extends ZIOSpecDefault:
       yield assertTrue(
         captured.nonEmpty,
         captured.head.content == "message-7",
+      )
+    },
+    test("runOnce advances offset for command-only updates and avoids loops") {
+      val client = OffsetAwareTelegramClient(List(mkCommandUpdate(100L, "/help")))
+      for
+        telegram    <- TelegramChannel.make(client)
+        channelsRef <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
+        registry     = ChannelRegistryLive(channelsRef)
+        _           <- registry.register(telegram)
+        messagesRef <- Ref.make(List.empty[NormalizedMessage])
+        gateway      = CapturingGateway(messagesRef)
+        offsetRef   <- Ref.make(Option.empty[Long])
+        service      = TelegramPollingServiceLive(
+                         channelRegistry = registry,
+                         gatewayService = gateway,
+                         config0 = TelegramPollingConfig(enabled = true, batchSize = 10),
+                         offsetRef = offsetRef,
+                       )
+        first       <- service.runOnce
+        second      <- service.runOnce
+        offset      <- offsetRef.get
+        captured    <- messagesRef.get
+      yield assertTrue(
+        first == 0,
+        second == 0,
+        offset.contains(101L),
+        captured.isEmpty,
       )
     },
   ) @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds)
