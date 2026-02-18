@@ -31,7 +31,7 @@ object SettingsView:
           div(cls := "mb-6 rounded-md bg-red-500/10 border border-red-500/30 p-4")(
             p(cls := "text-sm font-semibold text-red-400")("Validation Errors"),
             ul(cls := "text-xs text-red-300 mt-2 space-y-1")(
-              errors.map { case (key, msg) => li(s"$key: $msg") }.toSeq: _*
+              errors.map { case (key, msg) => li(s"$key: $msg") }.toSeq*
             ),
           )
         else (),
@@ -45,6 +45,15 @@ object SettingsView:
               cls    := "rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500",
             )("Save Settings")
           ),
+        ),
+        div(cls := "mt-8 pt-6 border-t border-white/10")(
+          div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg p-4")(
+            p(cls := "text-sm text-gray-300")(
+              "💡 For advanced configuration with validation, diff, history, and hot reload, use the ",
+              a(href := "/config", cls := "text-indigo-400 hover:text-indigo-300 underline")("Config Editor"),
+              ".",
+            )
+          )
         ),
       ),
       tag("script")(

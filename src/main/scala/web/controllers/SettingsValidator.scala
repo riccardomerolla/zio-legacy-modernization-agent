@@ -1,7 +1,5 @@
 package web.controllers
 
-import models.{ AIProvider, TelegramMode }
-
 /** Validation for settings values before persistence
   *
   * Validates user-submitted settings and returns either validated values or error messages.
@@ -38,8 +36,11 @@ object SettingsValidator:
           else validateAIProvider(value)
 
         // Numeric fields — must be positive integers
-        case k if k.endsWith(".timeout") | k.endsWith(".interval") | k.endsWith(".batchSize") | k.endsWith(".maxRetries") | k
-            .endsWith(".parallelism") | k.endsWith(".acquireTimeout") | k.endsWith(".requestTimeout") =>
+        case k
+             if k.endsWith(".timeout") | k.endsWith(".interval") | k.endsWith(".batchSize") | k.endsWith(
+               ".maxRetries"
+             ) | k
+               .endsWith(".parallelism") | k.endsWith(".acquireTimeout") | k.endsWith(".requestTimeout") =>
           validatePositiveInt(value, fieldName = key)
 
         // Temperature — must be empty or decimal 0.0 to 2.0
@@ -97,8 +98,8 @@ object SettingsValidator:
   private def validateTemperature(value: String): Either[String, String] =
     value.toDoubleOption match
       case Some(temp) if temp >= 0.0 && temp <= 2.0 => Right(value)
-      case Some(_)                                   => Left("Temperature must be between 0.0 and 2.0")
-      case None                                      => Left("Temperature must be a valid decimal number")
+      case Some(_)                                  => Left("Temperature must be between 0.0 and 2.0")
+      case None                                     => Left("Temperature must be a valid decimal number")
 
   /** Validate multiple settings and collect errors
     *
@@ -110,11 +111,12 @@ object SettingsValidator:
   def validateAll(
     settings: Map[String, String]
   ): (Map[String, String], Map[String, String]) =
-    val results = settings.map { case (key, value) =>
-      key -> validate(key, value)
+    val results = settings.map {
+      case (key, value) =>
+        key -> validate(key, value)
     }
 
-    val valid = results.collect { case (k, Right(v)) => k -> v }
+    val valid  = results.collect { case (k, Right(v)) => k -> v }
     val errors = results.collect { case (k, Left(e)) => k -> e }
 
     (valid, errors)
