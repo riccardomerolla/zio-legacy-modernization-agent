@@ -35,6 +35,7 @@ object ApplicationDI:
       AgentRegistry &
       LogTailer &
       HealthMonitor &
+      ConfigValidator &
       ChannelRegistry &
       MessageRouter &
       GatewayService &
@@ -99,6 +100,7 @@ object ApplicationDI:
       AgentRegistry.live,
       LogTailer.live,
       HealthMonitor.live,
+      ConfigValidator.live,
       channelRegistryLayer,
       MessageRouter.live,
       GatewayService.live,
@@ -151,6 +153,7 @@ object ApplicationDI:
       GraphController.live,
       DashboardController.live,
       SettingsController.live,
+      ConfigController.live,
       AgentsController.live,
       AgentMonitorController.live,
       WorkflowsController.live,
