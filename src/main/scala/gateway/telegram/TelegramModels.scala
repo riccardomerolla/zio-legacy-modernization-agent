@@ -21,7 +21,17 @@ case class TelegramMessage(
   date: Long,
   chat: TelegramChat,
   text: Option[String] = None,
+  caption: Option[String] = None,
+  document: Option[TelegramDocument] = None,
   from: Option[TelegramUser] = None,
+) derives JsonCodec
+
+case class TelegramDocument(
+  file_id: String,
+  file_unique_id: String,
+  file_name: Option[String] = None,
+  mime_type: Option[String] = None,
+  file_size: Option[Long] = None,
 ) derives JsonCodec
 
 case class TelegramCallbackQuery(
@@ -54,6 +64,22 @@ case class TelegramSendMessage(
   disable_web_page_preview: Option[Boolean] = None,
   reply_to_message_id: Option[Long] = None,
   reply_markup: Option[TelegramInlineKeyboardMarkup] = None,
+) derives JsonCodec
+
+case class TelegramSendDocument(
+  chat_id: Long,
+  document_path: String,
+  file_name: Option[String] = None,
+  caption: Option[String] = None,
+  parse_mode: Option[String] = None,
+  reply_to_message_id: Option[Long] = None,
+) derives JsonCodec
+
+case class TelegramFile(
+  file_id: String,
+  file_unique_id: String,
+  file_size: Option[Long] = None,
+  file_path: Option[String] = None,
 ) derives JsonCodec
 
 case class TelegramApiErrorParameters(
