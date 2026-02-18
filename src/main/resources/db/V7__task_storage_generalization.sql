@@ -1,19 +1,7 @@
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS task_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_dir TEXT NOT NULL,
-  output_dir TEXT NOT NULL,
-  status TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  total_files INTEGER NOT NULL DEFAULT 0,
-  processed_files INTEGER NOT NULL DEFAULT 0,
-  successful_conversions INTEGER NOT NULL DEFAULT 0,
-  failed_conversions INTEGER NOT NULL DEFAULT 0,
-  current_phase TEXT,
-  error_message TEXT
-);
+DROP TABLE IF EXISTS phase_progress;
+DROP TABLE IF EXISTS dependencies;
+DROP TABLE IF EXISTS cobol_analyses;
+DROP TABLE IF EXISTS cobol_files;
 
 CREATE TABLE IF NOT EXISTS task_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,9 +25,3 @@ CREATE TABLE IF NOT EXISTS task_artifacts (
 
 CREATE INDEX IF NOT EXISTS idx_task_reports_task_run_id ON task_reports(task_run_id);
 CREATE INDEX IF NOT EXISTS idx_task_artifacts_task_run_id ON task_artifacts(task_run_id);
-
-CREATE TABLE IF NOT EXISTS application_settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);

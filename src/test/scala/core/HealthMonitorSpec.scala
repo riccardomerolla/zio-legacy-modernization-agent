@@ -35,23 +35,18 @@ object HealthMonitorSpec extends ZIOSpecDefault:
         )
       )
 
-    override def createRun(run: TaskRunRow): IO[PersistenceError, Long]                                  = ZIO.dieMessage("unused")
-    override def updateRun(run: TaskRunRow): IO[PersistenceError, Unit]                                  = ZIO.dieMessage("unused")
-    override def getRun(id: Long): IO[PersistenceError, Option[TaskRunRow]]                              = ZIO.dieMessage("unused")
-    override def deleteRun(id: Long): IO[PersistenceError, Unit]                                         = ZIO.dieMessage("unused")
-    override def saveFiles(files: List[CobolFileRow]): IO[PersistenceError, Unit]                        = ZIO.dieMessage("unused")
-    override def getFilesByRun(runId: Long): IO[PersistenceError, List[CobolFileRow]]                    = ZIO.dieMessage("unused")
-    override def saveAnalysis(analysis: CobolAnalysisRow): IO[PersistenceError, Long]                    = ZIO.dieMessage("unused")
-    override def getAnalysesByRun(runId: Long): IO[PersistenceError, List[CobolAnalysisRow]]             = ZIO.dieMessage("unused")
-    override def saveDependencies(deps: List[DependencyRow]): IO[PersistenceError, Unit]                 = ZIO.dieMessage("unused")
-    override def getDependenciesByRun(runId: Long): IO[PersistenceError, List[DependencyRow]]            = ZIO.dieMessage("unused")
-    override def saveProgress(p: PhaseProgressRow): IO[PersistenceError, Long]                           = ZIO.dieMessage("unused")
-    override def getProgress(runId: Long, phase: String): IO[PersistenceError, Option[PhaseProgressRow]] =
+    override def createRun(run: TaskRunRow): IO[PersistenceError, Long]                           = ZIO.dieMessage("unused")
+    override def updateRun(run: TaskRunRow): IO[PersistenceError, Unit]                           = ZIO.dieMessage("unused")
+    override def getRun(id: Long): IO[PersistenceError, Option[TaskRunRow]]                       = ZIO.dieMessage("unused")
+    override def deleteRun(id: Long): IO[PersistenceError, Unit]                                  = ZIO.dieMessage("unused")
+    override def saveReport(report: TaskReportRow): IO[PersistenceError, Long]                    = ZIO.dieMessage("unused")
+    override def getReportsByTask(taskRunId: Long): IO[PersistenceError, List[TaskReportRow]]     = ZIO.dieMessage("unused")
+    override def saveArtifact(artifact: TaskArtifactRow): IO[PersistenceError, Long]              = ZIO.dieMessage("unused")
+    override def getArtifactsByTask(taskRunId: Long): IO[PersistenceError, List[TaskArtifactRow]] =
       ZIO.dieMessage("unused")
-    override def updateProgress(p: PhaseProgressRow): IO[PersistenceError, Unit]                         = ZIO.dieMessage("unused")
-    override def getAllSettings: IO[PersistenceError, List[SettingRow]]                                  = ZIO.succeed(Nil)
-    override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]                       = ZIO.none
-    override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]                   = ZIO.unit
+    override def getAllSettings: IO[PersistenceError, List[SettingRow]]                           = ZIO.succeed(Nil)
+    override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]                = ZIO.none
+    override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]            = ZIO.unit
 
   private val stubGateway: GatewayService = new GatewayService:
     override def enqueueInbound(message: NormalizedMessage): UIO[Unit]                                         = ZIO.unit

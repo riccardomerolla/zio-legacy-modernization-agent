@@ -72,7 +72,7 @@ val rootDeps = zioCoreDeps ++ Seq(
 
 inThisBuild(List(
   organization := "io.github.riccardomerolla",
-  homepage := Some(url("https://github.com/riccardomerolla/zio-legacy-modernization-agent")),
+  homepage := Some(url("https://github.com/riccardomerolla/llm4zio")),
   licenses := Seq(
     "MIT" -> url("https://opensource.org/license/mit")
   ),
@@ -86,8 +86,8 @@ inThisBuild(List(
   ),
   scmInfo := Some(
     ScmInfo(
-      url("https://github.com/riccardomerolla/zio-legacy-modernization-agent"),
-      "scm:git@github.com:riccardomerolla/zio-legacy-modernization-agent.git"
+      url("https://github.com/riccardomerolla/llm4zio"),
+      "scm:git@github.com:riccardomerolla/llm4zio.git"
     )
   ),
   versionScheme := Some("early-semver"),
@@ -123,8 +123,8 @@ lazy val root = (project in file("."))
   .configs(It)
   .settings(inConfig(It)(Defaults.testSettings): _*)
   .settings(
-    name := "zio-legacy-modernization-agent",
-    description := "A ZIO Legacy to Modernization Agent built with ZIO and Scala 3",
+    name := "llm4zio",
+    description := "A LLM 4 ZIO Agent Gateway and Dashboard",
     // Handle version conflicts - prefer newer versions
     libraryDependencySchemes += "dev.zio" %% "zio-json" % VersionScheme.Always,
     libraryDependencies ++= rootDeps,

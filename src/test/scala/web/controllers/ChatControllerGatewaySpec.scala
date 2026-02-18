@@ -166,6 +166,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         // Poll for daemon-streamed assistant message (uses live clock via withLiveClock)
         persisted <- chatRepo
                        .getMessages(convId)
+                       .orElseSucceed(Nil)
                        .repeatUntil(_.count(_.senderType == SenderType.Assistant) >= 1)
                        .timeoutFail(PersistenceError.QueryFailed("timeout", "assistant message not persisted"))(
                          10.seconds

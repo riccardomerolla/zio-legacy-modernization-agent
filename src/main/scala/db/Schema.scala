@@ -51,43 +51,22 @@ case class WorkflowRow(
   updatedAt: Instant,
 ) derives JsonCodec
 
-case class CobolFileRow(
+case class TaskReportRow(
   id: Long,
-  runId: Long,
-  path: String,
-  name: String,
-  fileType: FileType,
-  size: Long,
-  lineCount: Long,
-  encoding: String,
+  taskRunId: Long,
+  stepName: String,
+  reportType: String,
+  content: String,
   createdAt: Instant,
 ) derives JsonCodec
 
-case class CobolAnalysisRow(
+case class TaskArtifactRow(
   id: Long,
-  runId: Long,
-  fileId: Long,
-  analysisJson: String,
+  taskRunId: Long,
+  stepName: String,
+  key: String,
+  value: String,
   createdAt: Instant,
-) derives JsonCodec
-
-case class DependencyRow(
-  id: Long,
-  runId: Long,
-  sourceNode: String,
-  targetNode: String,
-  edgeType: String,
-) derives JsonCodec
-
-case class PhaseProgressRow(
-  id: Long,
-  runId: Long,
-  phase: String,
-  status: String,
-  itemTotal: Int,
-  itemProcessed: Int,
-  errorCount: Int,
-  updatedAt: Instant,
 ) derives JsonCodec
 
 case class SettingRow(

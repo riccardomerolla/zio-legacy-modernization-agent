@@ -14,22 +14,11 @@ trait TaskRepository:
   def listRuns(offset: Int, limit: Int): IO[PersistenceError, List[TaskRunRow]]
   def deleteRun(id: Long): IO[PersistenceError, Unit]
 
-  // Files
-  def saveFiles(files: List[CobolFileRow]): IO[PersistenceError, Unit]
-  def getFilesByRun(runId: Long): IO[PersistenceError, List[CobolFileRow]]
-
-  // Analysis
-  def saveAnalysis(analysis: CobolAnalysisRow): IO[PersistenceError, Long]
-  def getAnalysesByRun(runId: Long): IO[PersistenceError, List[CobolAnalysisRow]]
-
-  // Dependencies
-  def saveDependencies(deps: List[DependencyRow]): IO[PersistenceError, Unit]
-  def getDependenciesByRun(runId: Long): IO[PersistenceError, List[DependencyRow]]
-
-  // Progress
-  def saveProgress(p: PhaseProgressRow): IO[PersistenceError, Long]
-  def getProgress(runId: Long, phase: String): IO[PersistenceError, Option[PhaseProgressRow]]
-  def updateProgress(p: PhaseProgressRow): IO[PersistenceError, Unit]
+  // Reports and artifacts
+  def saveReport(report: TaskReportRow): IO[PersistenceError, Long]
+  def getReportsByTask(taskRunId: Long): IO[PersistenceError, List[TaskReportRow]]
+  def saveArtifact(artifact: TaskArtifactRow): IO[PersistenceError, Long]
+  def getArtifactsByTask(taskRunId: Long): IO[PersistenceError, List[TaskArtifactRow]]
 
   // Settings
   def getAllSettings: IO[PersistenceError, List[SettingRow]]
@@ -84,32 +73,17 @@ object TaskRepository:
   def deleteRun(id: Long): ZIO[TaskRepository, PersistenceError, Unit] =
     ZIO.serviceWithZIO[TaskRepository](_.deleteRun(id))
 
-  def saveFiles(files: List[CobolFileRow]): ZIO[TaskRepository, PersistenceError, Unit] =
-    ZIO.serviceWithZIO[TaskRepository](_.saveFiles(files))
+  def saveReport(report: TaskReportRow): ZIO[TaskRepository, PersistenceError, Long] =
+    ZIO.serviceWithZIO[TaskRepository](_.saveReport(report))
 
-  def getFilesByRun(runId: Long): ZIO[TaskRepository, PersistenceError, List[CobolFileRow]] =
-    ZIO.serviceWithZIO[TaskRepository](_.getFilesByRun(runId))
+  def getReportsByTask(taskRunId: Long): ZIO[TaskRepository, PersistenceError, List[TaskReportRow]] =
+    ZIO.serviceWithZIO[TaskRepository](_.getReportsByTask(taskRunId))
 
-  def saveAnalysis(analysis: CobolAnalysisRow): ZIO[TaskRepository, PersistenceError, Long] =
-    ZIO.serviceWithZIO[TaskRepository](_.saveAnalysis(analysis))
+  def saveArtifact(artifact: TaskArtifactRow): ZIO[TaskRepository, PersistenceError, Long] =
+    ZIO.serviceWithZIO[TaskRepository](_.saveArtifact(artifact))
 
-  def getAnalysesByRun(runId: Long): ZIO[TaskRepository, PersistenceError, List[CobolAnalysisRow]] =
-    ZIO.serviceWithZIO[TaskRepository](_.getAnalysesByRun(runId))
-
-  def saveDependencies(deps: List[DependencyRow]): ZIO[TaskRepository, PersistenceError, Unit] =
-    ZIO.serviceWithZIO[TaskRepository](_.saveDependencies(deps))
-
-  def getDependenciesByRun(runId: Long): ZIO[TaskRepository, PersistenceError, List[DependencyRow]] =
-    ZIO.serviceWithZIO[TaskRepository](_.getDependenciesByRun(runId))
-
-  def saveProgress(progress: PhaseProgressRow): ZIO[TaskRepository, PersistenceError, Long] =
-    ZIO.serviceWithZIO[TaskRepository](_.saveProgress(progress))
-
-  def getProgress(runId: Long, phase: String): ZIO[TaskRepository, PersistenceError, Option[PhaseProgressRow]] =
-    ZIO.serviceWithZIO[TaskRepository](_.getProgress(runId, phase))
-
-  def updateProgress(progress: PhaseProgressRow): ZIO[TaskRepository, PersistenceError, Unit] =
-    ZIO.serviceWithZIO[TaskRepository](_.updateProgress(progress))
+  def getArtifactsByTask(taskRunId: Long): ZIO[TaskRepository, PersistenceError, List[TaskArtifactRow]] =
+    ZIO.serviceWithZIO[TaskRepository](_.getArtifactsByTask(taskRunId))
 
   def getAllSettings: ZIO[TaskRepository, PersistenceError, List[SettingRow]] =
     ZIO.serviceWithZIO[TaskRepository](_.getAllSettings)
@@ -285,174 +259,60 @@ final case class TaskRepositoryLive(
       }
     }
 
-  override def saveFiles(files: List[CobolFileRow]): IO[PersistenceError, Unit] =
-    if files.isEmpty then ZIO.unit
-    else
-      val sql =
-        """INSERT INTO cobol_files (run_id, path, name, file_type, size, line_count, encoding, created_at)
-          |VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          |""".stripMargin
-
-      withConnection { conn =>
-        withPreparedStatement(conn, sql) { stmt =>
-          ZIO
-            .foreachDiscard(files) { file =>
-              executeBlocking(sql) {
-                stmt.setLong(1, file.runId)
-                stmt.setString(2, file.path)
-                stmt.setString(3, file.name)
-                stmt.setString(4, file.fileType.toString)
-                stmt.setLong(5, file.size)
-                stmt.setLong(6, file.lineCount)
-                stmt.setString(7, file.encoding)
-                stmt.setString(8, file.createdAt.toString)
-                stmt.addBatch()
-                ()
-              }
-            } *>
-            executeBlocking(sql) {
-              stmt.executeBatch()
-              ()
-            }
-        }
-      }
-
-  override def getFilesByRun(runId: Long): IO[PersistenceError, List[CobolFileRow]] =
+  override def saveReport(report: TaskReportRow): IO[PersistenceError, Long] =
     val sql =
-      """SELECT id, run_id, path, name, file_type, size, line_count, encoding, created_at
-        |FROM cobol_files
-        |WHERE run_id = ?
+      """INSERT INTO task_reports (task_run_id, step_name, report_type, content, created_at)
+        |VALUES (?, ?, ?, ?, ?)
+        |""".stripMargin
+
+    withConnection { conn =>
+      executeUpdateReturningKey(conn, sql, "task_reports") { stmt =>
+        stmt.setLong(1, report.taskRunId)
+        stmt.setString(2, report.stepName)
+        stmt.setString(3, report.reportType)
+        stmt.setString(4, report.content)
+        stmt.setString(5, report.createdAt.toString)
+      }
+    }
+
+  override def getReportsByTask(taskRunId: Long): IO[PersistenceError, List[TaskReportRow]] =
+    val sql =
+      """SELECT id, task_run_id, step_name, report_type, content, created_at
+        |FROM task_reports
+        |WHERE task_run_id = ?
         |ORDER BY id ASC
         |""".stripMargin
 
     withConnection { conn =>
-      queryMany(conn, sql)(_.setLong(1, runId))(readFileRow(_, sql))
+      queryMany(conn, sql)(_.setLong(1, taskRunId))(readTaskReportRow)
     }
 
-  override def saveAnalysis(analysis: CobolAnalysisRow): IO[PersistenceError, Long] =
+  override def saveArtifact(artifact: TaskArtifactRow): IO[PersistenceError, Long] =
     val sql =
-      """INSERT INTO cobol_analyses (run_id, file_id, analysis_json, created_at)
-        |VALUES (?, ?, ?, ?)
+      """INSERT INTO task_artifacts (task_run_id, step_name, key, value, created_at)
+        |VALUES (?, ?, ?, ?, ?)
         |""".stripMargin
 
     withConnection { conn =>
-      executeUpdateReturningKey(conn, sql, "cobol_analyses") { stmt =>
-        stmt.setLong(1, analysis.runId)
-        stmt.setLong(2, analysis.fileId)
-        stmt.setString(3, analysis.analysisJson)
-        stmt.setString(4, analysis.createdAt.toString)
+      executeUpdateReturningKey(conn, sql, "task_artifacts") { stmt =>
+        stmt.setLong(1, artifact.taskRunId)
+        stmt.setString(2, artifact.stepName)
+        stmt.setString(3, artifact.key)
+        stmt.setString(4, artifact.value)
+        stmt.setString(5, artifact.createdAt.toString)
       }
     }
 
-  override def getAnalysesByRun(runId: Long): IO[PersistenceError, List[CobolAnalysisRow]] =
+  override def getArtifactsByTask(taskRunId: Long): IO[PersistenceError, List[TaskArtifactRow]] =
     val sql =
-      """SELECT id, run_id, file_id, analysis_json, created_at
-        |FROM cobol_analyses
-        |WHERE run_id = ?
+      """SELECT id, task_run_id, step_name, key, value, created_at
+        |FROM task_artifacts
+        |WHERE task_run_id = ?
         |ORDER BY id ASC
         |""".stripMargin
 
     withConnection { conn =>
-      queryMany(conn, sql)(_.setLong(1, runId))(readAnalysisRow)
-    }
-
-  override def saveDependencies(deps: List[DependencyRow]): IO[PersistenceError, Unit] =
-    if deps.isEmpty then ZIO.unit
-    else
-      val sql =
-        """INSERT INTO dependencies (run_id, source_node, target_node, edge_type)
-          |VALUES (?, ?, ?, ?)
-          |""".stripMargin
-
-      withConnection { conn =>
-        withPreparedStatement(conn, sql) { stmt =>
-          ZIO
-            .foreachDiscard(deps) { dep =>
-              executeBlocking(sql) {
-                stmt.setLong(1, dep.runId)
-                stmt.setString(2, dep.sourceNode)
-                stmt.setString(3, dep.targetNode)
-                stmt.setString(4, dep.edgeType)
-                stmt.addBatch()
-                ()
-              }
-            } *>
-            executeBlocking(sql) {
-              stmt.executeBatch()
-              ()
-            }
-        }
-      }
-
-  override def getDependenciesByRun(runId: Long): IO[PersistenceError, List[DependencyRow]] =
-    val sql =
-      """SELECT id, run_id, source_node, target_node, edge_type
-        |FROM dependencies
-        |WHERE run_id = ?
-        |ORDER BY id ASC
-        |""".stripMargin
-
-    withConnection { conn =>
-      queryMany(conn, sql)(_.setLong(1, runId))(readDependencyRow)
-    }
-
-  override def saveProgress(p: PhaseProgressRow): IO[PersistenceError, Long] =
-    val sql =
-      """INSERT INTO phase_progress (run_id, phase, status, item_total, item_processed, error_count, updated_at)
-        |VALUES (?, ?, ?, ?, ?, ?, ?)
-        |""".stripMargin
-
-    withConnection { conn =>
-      executeUpdateReturningKey(conn, sql, "phase_progress") { stmt =>
-        stmt.setLong(1, p.runId)
-        stmt.setString(2, p.phase)
-        stmt.setString(3, p.status)
-        stmt.setInt(4, p.itemTotal)
-        stmt.setInt(5, p.itemProcessed)
-        stmt.setInt(6, p.errorCount)
-        stmt.setString(7, p.updatedAt.toString)
-      }
-    }
-
-  override def getProgress(runId: Long, phase: String): IO[PersistenceError, Option[PhaseProgressRow]] =
-    val sql =
-      """SELECT id, run_id, phase, status, item_total, item_processed, error_count, updated_at
-        |FROM phase_progress
-        |WHERE run_id = ? AND phase = ?
-        |LIMIT 1
-        |""".stripMargin
-
-    withConnection { conn =>
-      queryOne(conn, sql) { stmt =>
-        stmt.setLong(1, runId)
-        stmt.setString(2, phase)
-      }(readProgressRow)
-    }
-
-  override def updateProgress(p: PhaseProgressRow): IO[PersistenceError, Unit] =
-    val sql =
-      """UPDATE phase_progress
-        |SET run_id = ?,
-        |    phase = ?,
-        |    status = ?,
-        |    item_total = ?,
-        |    item_processed = ?,
-        |    error_count = ?,
-        |    updated_at = ?
-        |WHERE id = ?
-        |""".stripMargin
-
-    withConnection { conn =>
-      executeUpdateExpectingRows(conn, sql, PersistenceError.NotFound("phase_progress", p.id)) { stmt =>
-        stmt.setLong(1, p.runId)
-        stmt.setString(2, p.phase)
-        stmt.setString(3, p.status)
-        stmt.setInt(4, p.itemTotal)
-        stmt.setInt(5, p.itemProcessed)
-        stmt.setInt(6, p.errorCount)
-        stmt.setString(7, p.updatedAt.toString)
-        stmt.setLong(8, p.id)
-      }
+      queryMany(conn, sql)(_.setLong(1, taskRunId))(readTaskArtifactRow)
     }
 
   override def getAllSettings: IO[PersistenceError, List[SettingRow]] =
@@ -759,6 +619,7 @@ final case class TaskRepositoryLive(
             "db/V4__workflows.sql",
             "db/V5__activity_events.sql",
             "db/V6__rename_migration_runs_to_task_runs.sql",
+            "db/V7__task_storage_generalization.sql",
           )
         )
       _          <- ZIO.acquireReleaseWith(acquireConnection)(closeConnection) { conn =>
@@ -1041,11 +902,6 @@ final case class TaskRepositoryLive(
       .fromOption(RunStatus.values.find(_.toString == raw))
       .orElseFail(PersistenceError.QueryFailed(sql, s"Invalid RunStatus: $raw"))
 
-  private def parseFileType(raw: String, sql: String): IO[PersistenceError, FileType] =
-    ZIO
-      .fromOption(FileType.values.find(_.toString == raw))
-      .orElseFail(PersistenceError.QueryFailed(sql, s"Invalid FileType: $raw"))
-
   private def readRunRow(rs: ResultSet, sql: String): IO[PersistenceError, TaskRunRow] =
     for
       status <- parseRunStatus(rs.getString("status"), sql)
@@ -1065,54 +921,27 @@ final case class TaskRepositoryLive(
       errorMessage = optionalString(rs, "error_message"),
     )
 
-  private def readFileRow(rs: ResultSet, sql: String): IO[PersistenceError, CobolFileRow] =
-    for
-      fileType <- parseFileType(rs.getString("file_type"), sql)
-    yield CobolFileRow(
-      id = rs.getLong("id"),
-      runId = rs.getLong("run_id"),
-      path = rs.getString("path"),
-      name = rs.getString("name"),
-      fileType = fileType,
-      size = rs.getLong("size"),
-      lineCount = rs.getLong("line_count"),
-      encoding = rs.getString("encoding"),
-      createdAt = Instant.parse(rs.getString("created_at")),
-    )
-
-  private def readAnalysisRow(rs: ResultSet): IO[PersistenceError, CobolAnalysisRow] =
+  private def readTaskReportRow(rs: ResultSet): IO[PersistenceError, TaskReportRow] =
     ZIO.succeed(
-      CobolAnalysisRow(
+      TaskReportRow(
         id = rs.getLong("id"),
-        runId = rs.getLong("run_id"),
-        fileId = rs.getLong("file_id"),
-        analysisJson = rs.getString("analysis_json"),
+        taskRunId = rs.getLong("task_run_id"),
+        stepName = rs.getString("step_name"),
+        reportType = rs.getString("report_type"),
+        content = rs.getString("content"),
         createdAt = Instant.parse(rs.getString("created_at")),
       )
     )
 
-  private def readDependencyRow(rs: ResultSet): IO[PersistenceError, DependencyRow] =
+  private def readTaskArtifactRow(rs: ResultSet): IO[PersistenceError, TaskArtifactRow] =
     ZIO.succeed(
-      DependencyRow(
+      TaskArtifactRow(
         id = rs.getLong("id"),
-        runId = rs.getLong("run_id"),
-        sourceNode = rs.getString("source_node"),
-        targetNode = rs.getString("target_node"),
-        edgeType = rs.getString("edge_type"),
-      )
-    )
-
-  private def readProgressRow(rs: ResultSet): IO[PersistenceError, PhaseProgressRow] =
-    ZIO.succeed(
-      PhaseProgressRow(
-        id = rs.getLong("id"),
-        runId = rs.getLong("run_id"),
-        phase = rs.getString("phase"),
-        status = rs.getString("status"),
-        itemTotal = rs.getInt("item_total"),
-        itemProcessed = rs.getInt("item_processed"),
-        errorCount = rs.getInt("error_count"),
-        updatedAt = Instant.parse(rs.getString("updated_at")),
+        taskRunId = rs.getLong("task_run_id"),
+        stepName = rs.getString("step_name"),
+        key = rs.getString("key"),
+        value = rs.getString("value"),
+        createdAt = Instant.parse(rs.getString("created_at")),
       )
     )
 
