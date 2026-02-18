@@ -114,6 +114,7 @@ object ApplicationDI:
       ZLayer.succeed(config.resolvedProviderConfig),
       OrchestratorControlPlane.live,
       DashboardController.live,
+      TasksController.live,
       SettingsController.live,
       ConfigController.live,
       AgentsController.live,

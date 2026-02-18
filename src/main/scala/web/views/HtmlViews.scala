@@ -11,6 +11,16 @@ object HtmlViews:
   def recentRunsFragment(runs: List[TaskRunRow]): String =
     DashboardView.recentRunsContent(runs).render
 
+  def tasksList(
+    tasks: List[TaskListItem],
+    workflows: List[WorkflowDefinition],
+    flash: Option[String] = None,
+  ): String =
+    TasksView.tasksList(tasks, workflows, flash)
+
+  def taskDetail(task: TaskListItem): String =
+    TasksView.taskDetail(task)
+
   def settingsPage(settings: Map[String, String], flash: Option[String] = None): String =
     SettingsView.page(settings, flash)
 

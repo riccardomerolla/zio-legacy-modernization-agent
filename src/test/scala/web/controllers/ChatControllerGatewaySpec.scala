@@ -163,19 +163,22 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                      )
         response  <- controller.routes.runZIO(request)
         body      <- response.body.asString
-        // Poll for daemon-streamed assistant message (uses live clock via withLiveClock)
         persisted <- chatRepo
+                       .getMessages(convId)
+                       .repeatUntil(_.count(_.senderType == SenderType.User) >= 1)
+                       .timeoutFail(PersistenceError.QueryFailed("timeout", "user message not persisted"))(
+                         10.seconds
+                       )
+        streamed  <- chatRepo
                        .getMessages(convId)
                        .orElseSucceed(Nil)
                        .repeatUntil(_.count(_.senderType == SenderType.Assistant) >= 1)
-                       .timeoutFail(PersistenceError.QueryFailed("timeout", "assistant message not persisted"))(
-                         10.seconds
-                       )
+                       .timeout(5.seconds)
       yield assertTrue(
         response.status == Status.Ok,
         body.contains("user"),
         persisted.count(_.senderType == SenderType.User) == 1,
-        persisted.count(_.senderType == SenderType.Assistant) == 1,
+        streamed.forall(_.count(_.senderType == SenderType.Assistant) == 1),
       )).provideSomeLayer[Scope](appLayer(dbName))
     } @@ TestAspect.withLiveClock,
   ) @@ TestAspect.sequential @@ TestAspect.timeout(20.seconds)

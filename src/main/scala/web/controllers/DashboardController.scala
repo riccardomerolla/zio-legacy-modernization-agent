@@ -25,7 +25,7 @@ final case class DashboardControllerLive(
 ) extends DashboardController:
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / Root                      -> handler {
+    Method.GET / Root                       -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         for
           runs          <- repository.listRuns(offset = 0, limit = 20)
@@ -36,7 +36,7 @@ final case class DashboardControllerLive(
         yield html(HtmlViews.dashboard(runs, workflowCount))
       }
     },
-    Method.GET / "api" / "runs" / "recent" -> handler {
+    Method.GET / "api" / "tasks" / "recent" -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         repository.listRuns(offset = 0, limit = 10).map(runs => html(HtmlViews.recentRunsFragment(runs)))
       }

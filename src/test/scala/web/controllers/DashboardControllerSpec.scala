@@ -37,16 +37,16 @@ object DashboardControllerSpec extends ZIOSpecDefault:
       yield assertTrue(
         response.status == Status.Ok,
         body.contains("Dashboard"),
-        body.contains("/runs/2"),
+        body.contains("/tasks/2"),
         body.contains("Workflows"),
         body.contains(">3<"),
       )
     },
-    test("GET /api/runs/recent returns runs fragment") {
+    test("GET /api/tasks/recent returns runs fragment") {
       for
         repo      <- TestRepository.make
         controller = DashboardControllerLive(repo, TestWorkflowService.withCount(1))
-        response  <- controller.routes.runZIO(Request.get("/api/runs/recent"))
+        response  <- controller.routes.runZIO(Request.get("/api/tasks/recent"))
         body      <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
