@@ -23,18 +23,7 @@ case class WorkspaceMetadata(
 
 type TaskStep = String
 
-object TaskStep:
-  val Discovery: TaskStep      = "Discovery"
-  val Analysis: TaskStep       = "Analysis"
-  val Mapping: TaskStep        = "Mapping"
-  val Transformation: TaskStep = "Transformation"
-  val Validation: TaskStep     = "Validation"
-  val Documentation: TaskStep  = "Documentation"
-
-  // Default built-in steps used by legacy workflow definitions.
-  val values: List[TaskStep] = List(Discovery, Analysis, Mapping, Transformation, Validation, Documentation)
-
-  given JsonCodec[TaskStep] = JsonCodec.string.asInstanceOf[JsonCodec[TaskStep]]
+given JsonCodec[TaskStep] = JsonCodec.string.asInstanceOf[JsonCodec[TaskStep]]
 
 case class TaskError(
   stepName: String,
@@ -145,7 +134,7 @@ case class TaskState(
   // Backward-compatible fields retained during migration to task-centric state.
   runId: String = "run-unknown",
   startedAt: Instant = Instant.EPOCH,
-  currentStep: TaskStep = TaskStep.Discovery,
+  currentStep: TaskStep = "",
   completedSteps: Set[TaskStep] = Set.empty,
   artifacts: Map[String, String] = Map.empty,
   errors: List[TaskError] = List.empty,
@@ -179,7 +168,7 @@ object TaskState:
         status = TaskStatus.Idle,
         runId = s"run-${now.toEpochMilli}",
         startedAt = now,
-        currentStep = TaskStep.Discovery,
+        currentStep = "",
         lastCheckpoint = now,
       )
     }

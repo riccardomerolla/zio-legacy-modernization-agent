@@ -109,19 +109,19 @@ object WorkflowsView:
               div(cls := "mt-4")(
                 p(cls := "mb-2 text-sm font-semibold text-slate-200")("Steps"),
                 div(cls := "grid grid-cols-1 gap-2 sm:grid-cols-2")(
-                  TaskStep.values.toList.map { step =>
+                  WorkflowDefinition.defaultSteps.map { step =>
                     val selected = workflow.steps.contains(step)
                     label(
                       cls := "flex items-center gap-2 rounded-md border border-white/10 bg-slate-800/60 px-3 py-2 text-sm text-slate-100"
                     )(
                       input(
                         `type`                   := "checkbox",
-                        attr("data-step-toggle") := step.toString,
-                        name                     := s"step.${step.toString}",
+                        attr("data-step-toggle") := step,
+                        name                     := s"step.$step",
                         scalatags.Text.all.value := "on",
                         if selected then checked := "checked" else (),
                       ),
-                      span(step.toString),
+                      span(step),
                     )
                   }
                 ),
@@ -132,18 +132,18 @@ object WorkflowsView:
                   cls := "mb-2 text-xs text-slate-400"
                 )("Optional fallback fields used when JavaScript is unavailable."),
                 div(cls := "grid grid-cols-1 gap-2 sm:grid-cols-2")(
-                  TaskStep.values.toList.map { step =>
+                  WorkflowDefinition.defaultSteps.map { step =>
                     val selectedAgent = stepAgentMap.getOrElse(step, "")
                     div(cls := "rounded-md border border-white/10 bg-slate-800/50 px-3 py-2")(
                       label(
                         cls   := "mb-1 block text-xs font-semibold text-slate-200",
-                        `for` := s"agent-${step.toString}",
+                        `for` := s"agent-$step",
                       )(
-                        step.toString
+                        step
                       ),
                       select(
-                        id   := s"agent-${step.toString}",
-                        name := s"agent.${step.toString}",
+                        id   := s"agent-$step",
+                        name := s"agent.$step",
                         cls  := "w-full rounded-md border border-white/15 bg-slate-900/70 px-2 py-1.5 text-xs text-slate-100",
                       )(
                         option(
@@ -219,7 +219,7 @@ object WorkflowsView:
             workflow.steps.map { step =>
               val assignedAgent = workflow.stepAgents.find(_.step == step).map(_.agentName)
               li(
-                span(step.toString),
+                span(step),
                 assignedAgent.filter(_.nonEmpty).map(agent =>
                   span(cls := "ml-2 text-xs text-cyan-300")(s"(agent: $agent)")
                 ),
@@ -235,7 +235,7 @@ object WorkflowsView:
     )
 
   def workflowToMermaid(steps: List[TaskStep]): String =
-    val nodes = steps.zipWithIndex.map((step, index) => s"""  step$index["${step.toString}"]""")
+    val nodes = steps.zipWithIndex.map((step, index) => s"""  step$index["$step"]""")
     val edges = (0 until Math.max(steps.length - 1, 0)).map(index => s"  step$index --> step${index + 1}").toList
     ("graph LR" :: nodes ::: edges).mkString("\n")
 
@@ -276,7 +276,7 @@ object WorkflowsView:
           .map {
             case (step, agentName) =>
               val display = agentDisplayByName.getOrElse(agentName, agentName)
-              s"${step.toString}: $display"
+              s"$step: $display"
           }
           .mkString(" · ")
 
@@ -305,7 +305,7 @@ object WorkflowsView:
     val payload = stepAgents
       .collect {
         case WorkflowStepAgent(step, agentName) if agentName.trim.nonEmpty =>
-          step.toString -> agentName.trim
+          step -> agentName.trim
       }
       .toMap
     val entries = payload.toList.sortBy(_._1).map {

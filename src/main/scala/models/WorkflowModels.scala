@@ -74,48 +74,42 @@ case class WorkflowDefinition(
 ) derives JsonCodec
 
 object WorkflowDefinition:
+  val defaultSteps: List[TaskStep] = List(
+    "IntentRouting",
+    "TaskPlanning",
+    "Execution",
+    "Validation",
+    "Reporting",
+  )
+
   val default: WorkflowDefinition =
     WorkflowDefinition(
       id = None,
       name = "Default Workflow",
-      description = Some("Built-in end-to-end migration workflow"),
-      steps = List(
-        TaskStep.Discovery,
-        TaskStep.Analysis,
-        TaskStep.Mapping,
-        TaskStep.Transformation,
-        TaskStep.Validation,
-        TaskStep.Documentation,
-      ),
+      description = Some("Built-in end-to-end gateway workflow"),
+      steps = defaultSteps,
       stepAgents = Nil,
       isBuiltin = true,
       dynamicGraph = Some(
         WorkflowGraph(
           List(
-            WorkflowNode(id = "discovery", step = TaskStep.Discovery),
-            WorkflowNode(id = "analysis", step = TaskStep.Analysis, dependsOn = List("discovery")),
-            WorkflowNode(id = "mapping", step = TaskStep.Mapping, dependsOn = List("analysis")),
-            WorkflowNode(id = "transformation", step = TaskStep.Transformation, dependsOn = List("mapping")),
+            WorkflowNode(id = "routing", step = "IntentRouting"),
+            WorkflowNode(id = "planning", step = "TaskPlanning", dependsOn = List("routing")),
+            WorkflowNode(id = "execution", step = "Execution", dependsOn = List("planning")),
             WorkflowNode(
               id = "validation",
-              step = TaskStep.Validation,
-              dependsOn = List("transformation"),
+              step = "Validation",
+              dependsOn = List("execution"),
               condition = WorkflowCondition.NotDryRun,
             ),
-            WorkflowNode(id = "documentation", step = TaskStep.Documentation, dependsOn = List("discovery")),
+            WorkflowNode(id = "reporting", step = "Reporting", dependsOn = List("execution")),
           )
         )
       ),
     )
 
 object WorkflowValidator:
-  private val dependencies: Map[TaskStep, List[TaskStep]] = Map(
-    TaskStep.Analysis       -> List(TaskStep.Discovery),
-    TaskStep.Mapping        -> List(TaskStep.Analysis),
-    TaskStep.Transformation -> List(TaskStep.Analysis, TaskStep.Mapping),
-    TaskStep.Validation     -> List(TaskStep.Transformation, TaskStep.Analysis),
-    TaskStep.Documentation  -> List(TaskStep.Discovery),
-  )
+  private val dependencies: Map[TaskStep, List[TaskStep]] = Map.empty
 
   def validate(workflow: WorkflowDefinition): Either[List[String], WorkflowDefinition] =
     val normalizedName     = workflow.name.trim

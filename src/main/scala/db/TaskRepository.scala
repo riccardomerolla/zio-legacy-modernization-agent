@@ -153,13 +153,13 @@ final case class TaskRepositoryLive(
   initialized: Ref.Synchronized[Boolean],
 ) extends TaskRepository:
   private val builtInAgentNamesLower: Set[String] = Set(
-    "coboldiscovery",
-    "cobolanalyzer",
-    "businesslogicextractor",
-    "dependencymapper",
-    "javatransformer",
-    "validationagent",
-    "documentationagent",
+    "chat-agent",
+    "code-agent",
+    "task-planner",
+    "web-search-agent",
+    "file-agent",
+    "report-agent",
+    "router-agent",
   )
 
   override def createRun(run: TaskRunRow): IO[PersistenceError, Long] =
@@ -645,7 +645,7 @@ final case class TaskRepositoryLive(
     yield ()
 
   private def executeSchemaStatement(stmt: java.sql.Statement, sql: String): IO[PersistenceError, Unit] =
-    val normalizedSql = sql.toLowerCase.replaceAll("\\s+", " ").trim
+    val normalizedSql      = sql.toLowerCase.replaceAll("\\s+", " ").trim
     val isLegacyRunsRename =
       normalizedSql.contains("alter table migration_runs rename to task_runs")
     executeBlocking(sql)(stmt.execute(sql)).unit.catchAll {
