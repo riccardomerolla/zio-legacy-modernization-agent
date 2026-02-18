@@ -130,11 +130,6 @@ case class MigrationState(
   errors: List[MigrationError],
   config: MigrationConfig,
   workspace: Option[WorkspaceMetadata] = None, // Workspace info for this run
-  fileInventory: Option[FileInventory],
-  analyses: List[CobolAnalysis],
-  dependencyGraph: Option[DependencyGraph],
-  projects: List[SpringBootProject],
-  validationReports: List[ValidationReport],
   lastCheckpoint: Instant,
 ) derives JsonCodec
 
@@ -165,11 +160,6 @@ object MigrationState:
           sourceDir = Paths.get("cobol-source"),
           outputDir = Paths.get("java-output"),
         ),
-        fileInventory = None,
-        analyses = List.empty,
-        dependencyGraph = None,
-        projects = List.empty,
-        validationReports = List.empty,
         lastCheckpoint = now,
       )
     }
