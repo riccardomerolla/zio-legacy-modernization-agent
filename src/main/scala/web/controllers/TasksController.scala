@@ -9,7 +9,7 @@ import zio.json.*
 
 import db.*
 import models.WorkflowDefinition
-import orchestration.{ WorkflowService, WorkflowServiceError }
+import orchestration.{ TaskExecutor, WorkflowService, WorkflowServiceError }
 import web.views.{ TaskListItem, TasksView }
 
 trait TasksController:
@@ -20,12 +20,13 @@ object TasksController:
   def routes: ZIO[TasksController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[TasksController](_.routes)
 
-  val live: ZLayer[TaskRepository & WorkflowService, Nothing, TasksController] =
+  val live: ZLayer[TaskRepository & WorkflowService & TaskExecutor, Nothing, TasksController] =
     ZLayer.fromFunction(TasksControllerLive.apply)
 
 final case class TasksControllerLive(
   repository: TaskRepository,
   workflowService: WorkflowService,
+  taskExecutor: TaskExecutor,
 ) extends TasksController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -117,6 +118,10 @@ final case class TasksControllerLive(
                                createdAt = now,
                              )
                            )
+          _             <- taskExecutor
+                             .execute(runId, workflow)
+                             .catchAll(err => ZIO.logError(s"Task execution failed for run=$runId: $err"))
+                             .forkDaemon
         yield redirect(s"/tasks?flash=${urlEncode("Task created")}")
       }
     },

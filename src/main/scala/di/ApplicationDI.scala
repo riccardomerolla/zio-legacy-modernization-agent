@@ -32,6 +32,8 @@ object ApplicationDI:
       ProgressTracker &
       ChatRepository &
       AgentRegistry &
+      WorkflowEngine &
+      AgentDispatcher &
       LogTailer &
       HealthMonitor &
       ConfigValidator &
@@ -89,6 +91,8 @@ object ApplicationDI:
       ProgressTracker.live,
       ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
       AgentRegistry.live,
+      WorkflowEngine.live,
+      AgentDispatcher.live,
       LogTailer.live,
       HealthMonitor.live,
       ConfigValidator.live,
@@ -113,6 +117,7 @@ object ApplicationDI:
       commonLayers(config, dbPath),
       ZLayer.succeed(config.resolvedProviderConfig),
       OrchestratorControlPlane.live,
+      TaskExecutor.live,
       DashboardController.live,
       TasksController.live,
       ReportsController.live,
