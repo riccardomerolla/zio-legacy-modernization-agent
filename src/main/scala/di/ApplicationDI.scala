@@ -14,8 +14,9 @@ import core.*
 import db.*
 import gateway.*
 import gateway.telegram.*
-import llm4zio.core.{ LlmConfig, LlmProvider, LlmService }
+import llm4zio.core.*
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
+import llm4zio.tools.{ AnyTool, JsonSchema }
 import orchestration.*
 import sttp.client4.DefaultFutureBackend
 import web.controllers.*
@@ -40,13 +41,16 @@ object ApplicationDI:
       AgentRegistry &
       WorkflowEngine &
       AgentDispatcher &
+      OrchestratorControlPlane &
+      TaskExecutor &
       LogTailer &
       HealthMonitor &
       ConfigValidator &
       ChannelRegistry &
       MessageRouter &
       GatewayService &
-      TelegramPollingService
+      TelegramPollingService &
+      TaskProgressNotifier
 
   def aiProviderToLlmProvider(aiProvider: AIProvider): LlmProvider =
     aiProvider match
@@ -74,25 +78,23 @@ object ApplicationDI:
     )
 
   def commonLayers(config: GatewayConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, CommonServices] =
-    val llmConfig = aiConfigToLlmConfig(config.resolvedProviderConfig)
     ZLayer.make[CommonServices](
       // Core services and configuration
       FileService.live,
       ZLayer.succeed(config),
-      ZLayer.succeed(llmConfig),
 
       // Service implementations
       httpClientLayer(config).orDie,
       HttpAIClient.live,
       HttpClient.live,
       GeminiCliExecutor.live,
-      LlmService.fromConfig,
       StateService.live(config.stateDir),
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       TaskRepository.live,
       // Create runtime config ref with merged DB settings
       configRefLayer,
+      configAwareLlmServiceLayer,
       WorkflowService.live,
       ActivityRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
       ActivityHub.live,
@@ -101,6 +103,8 @@ object ApplicationDI:
       AgentRegistry.live,
       WorkflowEngine.live,
       AgentDispatcher.live,
+      OrchestratorControlPlane.live,
+      TaskExecutor.live,
       LogTailer.live,
       HealthMonitor.live,
       ConfigValidator.live,
@@ -108,6 +112,7 @@ object ApplicationDI:
       MessageRouter.live,
       GatewayService.live,
       TelegramPollingService.live,
+      TaskProgressNotifier.live,
     )
 
   /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */
@@ -135,12 +140,20 @@ object ApplicationDI:
     (ZLayer.succeed(clientConfig) ++ ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++
       DnsResolver.default) >>> Client.live
 
+  private val configAwareLlmServiceLayer: ZLayer[Ref[GatewayConfig] & HttpClient & GeminiCliExecutor, Nothing, LlmService] =
+    ZLayer.fromZIO {
+      for
+        configRef <- ZIO.service[Ref[GatewayConfig]]
+        http      <- ZIO.service[HttpClient]
+        cliExec   <- ZIO.service[GeminiCliExecutor]
+        cache     <- Ref.Synchronized.make(Map.empty[LlmConfig, LlmService])
+      yield ConfigAwareLlmService(configRef, http, cliExec, cache)
+    }
+
   def webServerLayer(config: GatewayConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
     ZLayer.make[WebServer](
       commonLayers(config, dbPath),
       ZLayer.succeed(config.resolvedProviderConfig),
-      OrchestratorControlPlane.live,
-      TaskExecutor.live,
       DashboardController.live,
       TasksController.live,
       ReportsController.live,
@@ -156,27 +169,36 @@ object ApplicationDI:
       StreamAbortRegistry.live,
       ChatController.live,
       ActivityController.live,
+      ChannelController.live,
       HealthController.live,
       TelegramController.live,
+      WebSocketController.live,
       WebServer.live,
     )
 
-  private val channelRegistryLayer: ZLayer[Ref[GatewayConfig], Nothing, ChannelRegistry] =
+  private val channelRegistryLayer
+    : ZLayer[Ref[GatewayConfig] & AgentRegistry & TaskRepository & TaskExecutor, Nothing, ChannelRegistry] =
     ZLayer.scoped {
       for
         configRef     <- ZIO.service[Ref[GatewayConfig]]
+        agentRegistry <- ZIO.service[AgentRegistry]
+        repository    <- ZIO.service[TaskRepository]
+        taskExecutor  <- ZIO.service[TaskExecutor]
         channels      <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
+        runtime       <- Ref.Synchronized.make(Map.empty[String, ChannelRuntime])
         clients       <- Ref.Synchronized.make(Map.empty[String, TelegramClient])
         backend       <- ZIO.attempt {
                            given ExecutionContext = ExecutionContext.global
                            DefaultFutureBackend()
                          }.orDie
-        registry       = ChannelRegistryLive(channels)
+        registry       = ChannelRegistryLive(channels, runtime)
         websocket     <- WebSocketChannel.make()
         telegramClient = ConfigAwareTelegramClient(configRef, clients, backend)
         telegram      <- TelegramChannel.make(
                            client = telegramClient,
-                           workflowNotifier = WorkflowNotifierLive(telegramClient),
+                           workflowNotifier = WorkflowNotifierLive(telegramClient, agentRegistry, repository, taskExecutor),
+                           taskRepository = Some(repository),
+                           taskExecutor = Some(taskExecutor),
                          )
         _             <- registry.register(websocket)
         _             <- registry.register(telegram)
@@ -242,3 +264,56 @@ object ApplicationDI:
                           .map(created => (created, current + (token -> created)))
                   }
       yield client
+
+  final private case class ConfigAwareLlmService(
+    configRef: Ref[GatewayConfig],
+    http: HttpClient,
+    cliExec: GeminiCliExecutor,
+    cacheRef: Ref.Synchronized[Map[LlmConfig, LlmService]],
+  ) extends LlmService:
+
+    override def execute(prompt: String): IO[LlmError, LlmResponse] =
+      currentService.flatMap(_.execute(prompt))
+
+    override def executeStream(prompt: String): zio.stream.Stream[LlmError, LlmChunk] =
+      zio.stream.ZStream.unwrap(currentService.map(_.executeStream(prompt)))
+
+    override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
+      currentService.flatMap(_.executeWithHistory(messages))
+
+    override def executeStreamWithHistory(messages: List[Message]): zio.stream.Stream[LlmError, LlmChunk] =
+      zio.stream.ZStream.unwrap(currentService.map(_.executeStreamWithHistory(messages)))
+
+    override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
+      currentService.flatMap(_.executeWithTools(prompt, tools))
+
+    override def executeStructured[A: zio.json.JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
+      currentService.flatMap(_.executeStructured(prompt, schema))
+
+    override def isAvailable: UIO[Boolean] =
+      currentService.flatMap(_.isAvailable).orElseSucceed(false)
+
+    private def currentService: IO[LlmError, LlmService] =
+      for
+        cfg <- configRef.get.map(conf => aiConfigToLlmConfig(conf.resolvedProviderConfig))
+        svc <- cacheRef.modifyZIO { current =>
+                 current.get(cfg) match
+                   case Some(existing) => ZIO.succeed((existing, current))
+                   case None           =>
+                     ZIO
+                       .attempt(buildProvider(cfg))
+                       .mapError(th => LlmError.ConfigError(Option(th.getMessage).getOrElse(th.toString)))
+                       .map(created => (created, current + (cfg -> created)))
+               }
+      yield svc
+
+    private def buildProvider(cfg: LlmConfig): LlmService =
+      import llm4zio.providers.*
+      cfg.provider match
+        case LlmProvider.GeminiCli => GeminiCliProvider.make(cfg, cliExec)
+        case LlmProvider.GeminiApi => GeminiApiProvider.make(cfg, http)
+        case LlmProvider.OpenAI    => OpenAIProvider.make(cfg, http)
+        case LlmProvider.Anthropic => AnthropicProvider.make(cfg, http)
+        case LlmProvider.LmStudio  => LmStudioProvider.make(cfg, http)
+        case LlmProvider.Ollama    => OllamaProvider.make(cfg, http)
+        case LlmProvider.OpenCode  => OpenCodeProvider.make(cfg, http)

@@ -1,11 +1,14 @@
 package web.views
 
-import models.{ ChatConversation, ConversationMessage, SenderType }
+import models.{ ChatConversation, ConversationMessage, ConversationSessionMeta, SenderType }
 import scalatags.Text.all.*
 
 object ChatView:
 
-  def dashboard(conversations: List[ChatConversation]): String =
+  def dashboard(
+    conversations: List[ChatConversation],
+    sessionMetaByConversation: Map[Long, ConversationSessionMeta],
+  ): String =
     Layout.page("Chat — COBOL Modernization", "/chat")(
       div(cls := "mb-6")(
         div(cls := "flex items-center justify-between")(
@@ -36,12 +39,16 @@ object ChatView:
       else
         div(cls := "grid grid-cols-1 gap-4")(
           conversations.map { conv =>
-            conversationCard(conv)
+            val meta = conv.id.flatMap(sessionMetaByConversation.get)
+            conversationCard(conv, meta)
           }
         ),
     )
 
-  def detail(conversation: ChatConversation): String =
+  def detail(
+    conversation: ChatConversation,
+    sessionMeta: Option[ConversationSessionMeta],
+  ): String =
     val issuesHref = conversation.runId match
       case Some(runId) => s"/issues?run_id=$runId"
       case None        => "/issues"
@@ -58,6 +65,7 @@ object ChatView:
             if conversation.description.isDefined then
               p(cls := "text-gray-400 text-sm mt-2")(conversation.description.get)
             else (),
+            sessionContextPanel(sessionMeta),
           ),
           div(cls := "inline-flex flex-wrap items-center gap-2 text-xs self-start lg:justify-end")(
             span(
@@ -106,31 +114,90 @@ object ChatView:
             attr("hx-target")            := s"#messages-${conversation.id.get}",
             attr("hx-swap")              := "innerHTML",
             attr("hx-disabled-elt")      := "button[type='submit']",
-            attr("hx-on::after-request") := "this.reset()",
-            attr("onsubmit")             := "const i=this.querySelector(\"input[name='content']\");if(i){setTimeout(()=>{i.value='';i.focus();},0);}",
-            cls                          := "flex gap-2",
+            attr("hx-on::before-request") := s"""
+              |document.getElementById('messages-${conversation.id.get}')?.markPending?.();
+            """.stripMargin.trim,
+            attr("hx-on::after-request") := s"""
+              |this.reset();
+            """.stripMargin.trim,
+            cls                          := "space-y-2",
           )(
             input(`type`  := "hidden", name := "fragment", value := "true"),
-            input(
-              name        := "content",
-              placeholder := "Type your message...",
-              cls         := "flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500",
-              required,
+            div(
+              id                           := "chat-composer",
+              cls                          := "space-y-2",
+              attr("data-conversation-id") := conversation.id.get.toString,
+              attr("data-agents-endpoint") := "/api/agents",
+            )(
+              div(cls := "flex flex-wrap items-center gap-2")(
+                button(
+                  `type`            := "button",
+                  cls               := "rounded-md bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-semibold text-gray-200",
+                  attr("data-role") := "mode-toggle",
+                )("Preview"),
+                select(
+                  cls               := "rounded-md bg-white/10 border border-white/20 px-2 py-1.5 text-xs text-gray-100",
+                  attr("data-role") := "code-language",
+                )(
+                  option(value := "plain")("plain"),
+                  option(value := "scala")("scala"),
+                  option(value := "python")("python"),
+                  option(value := "bash")("bash"),
+                  option(value := "json")("json"),
+                  option(value := "yaml")("yaml"),
+                ),
+                button(
+                  `type`            := "button",
+                  cls               := "rounded-md bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-semibold text-gray-200",
+                  attr("data-role") := "insert-code",
+                )("</> Code"),
+                span(cls := "text-xs text-gray-400")("Ctrl/Cmd+Enter send, Ctrl+Shift+P preview, Ctrl+K code"),
+              ),
+              div(cls := "relative")(
+                div(attr("data-role") := "write-pane")(
+                  textarea(
+                    id          := s"chat-input-${conversation.id.get}",
+                    name        := "content",
+                    placeholder := "Type your message... Use @agent-name to route directly.",
+                    rows        := 5,
+                    cls         := "w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm",
+                    required,
+                    attr("autocomplete") := "off",
+                    attr("spellcheck")   := "false",
+                  )()
+                ),
+                div(
+                  attr("data-role") := "preview-pane",
+                  cls               := "hidden min-h-[7rem] rounded-lg border border-white/20 bg-black/20 px-4 py-3 text-sm leading-6 text-gray-100 overflow-auto",
+                )(),
+                div(
+                  attr("data-role") := "mentions",
+                  cls               := "hidden absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-md border border-white/15 bg-slate-900/95 shadow-lg z-20",
+                )(),
+              ),
             ),
-            button(
-              `type` := "submit",
-              cls    := "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors",
-            )("Send"),
-            button(
-              id              := s"abort-btn-${conversation.id.get}",
-              `type`          := "button",
-              cls             := "hidden px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors",
-              attr("onclick") := s"document.getElementById('messages-${conversation.id.get}').abort()",
-            )("Stop"),
+            div(cls := "flex items-center gap-2")(
+              button(
+                `type` := "submit",
+                cls    := "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors",
+              )("Send"),
+              button(
+                id              := s"abort-btn-${conversation.id.get}",
+                `type`          := "button",
+                cls             := "hidden px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors",
+                attr("onclick") := s"document.getElementById('messages-${conversation.id.get}').abort()",
+              )("Stop"),
+            ),
           )
         ),
       ),
       streamingScript(conversation.id.get),
+      JsResources.markedScript,
+      tag("link")(
+        attr("rel")  := "stylesheet",
+        attr("href") := "https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github-dark.min.css",
+      ),
+      JsResources.inlineModuleScript("/static/client/components/message-composer.js"),
     )
 
   def messagesFragment(messages: List[ConversationMessage]): String =
@@ -154,7 +221,7 @@ object ChatView:
           "text-slate-300",
         )
 
-    div(cls := containerClasses)(
+    div(cls := containerClasses, attr("data-sender") := (if isUser then "user" else "assistant"))(
       div(cls := bubbleClasses)(
         div(cls := s"text-xs font-semibold mb-2 $senderClasses")(
           message.sender
@@ -200,35 +267,71 @@ class ChatMessageStream extends LitElement {
     super();
     this._streaming = false;
     this._streamBuffer = '';
+    this._assistantCountAtPending = 0;
     this._ws = null;
+    this._wsEnabled = true;
+    this._wsEverOpened = false;
     this._reconnectTimer = null;
+    this._pendingPoll = null;
+    this._backgroundPoll = null;
+    this._thinkingTicker = null;
+    this._thinkingIndex = 0;
+    this._thinkingPhrases = [
+      'Thinking through your request...',
+      'Checking context and dependencies...',
+      'Preparing the best possible answer...',
+      'Running reasoning and validations...',
+      'Finalizing response...'
+    ];
+    this._lastSnapshot = '';
   }
 
   createRenderRoot() { return this; }
 
   connectedCallback() {
     super.connectedCallback();
+    this._lastSnapshot = this._normalizedSnapshot(this.innerHTML);
+    this._assistantCountAtPending = this._countAssistantMessages();
+    this._scrollToBottom();
+    this._backgroundPoll = setInterval(() => {
+      if (!this._streaming) this._refreshMessages();
+    }, 2000);
     this._connect();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+    if (this._pendingPoll) clearInterval(this._pendingPoll);
+    if (this._backgroundPoll) clearInterval(this._backgroundPoll);
+    if (this._thinkingTicker) clearInterval(this._thinkingTicker);
     if (this._ws) this._ws.close();
   }
 
   _connect() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this._ws = new WebSocket(protocol + '//' + location.host + this.wsUrl);
-    this._ws.onopen = () => {
-      this._ws.send(JSON.stringify({Subscribe:{topic:'chat:'+this.conversationId+':stream',params:{}}}));
-    };
-    this._ws.onmessage = (e) => {
-      try { this._handleMessage(JSON.parse(e.data)); } catch(ignored) {}
-    };
-    this._ws.onclose = () => {
-      this._reconnectTimer = setTimeout(() => this._connect(), 3000);
-    };
+    if (!this._wsEnabled || !this.wsUrl) return;
+    try {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      this._ws = new WebSocket(protocol + '//' + location.host + this.wsUrl);
+      this._ws.onopen = () => {
+        this._wsEverOpened = true;
+        this._ws.send(JSON.stringify({Subscribe:{topic:'chat:'+this.conversationId+':stream',params:{}}}));
+      };
+      this._ws.onmessage = (e) => {
+        try { this._handleMessage(JSON.parse(e.data)); } catch(ignored) {}
+      };
+      this._ws.onclose = () => {
+        if (this._wsEnabled) {
+          this._reconnectTimer = setTimeout(() => this._connect(), 3000);
+        }
+      };
+      this._ws.onerror = () => {
+        if (!this._wsEverOpened) {
+          this._wsEnabled = false;
+          if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+        }
+      };
+    } catch (ignored) {}
   }
 
   _handleMessage(msg) {
@@ -269,7 +372,8 @@ class ChatMessageStream extends LitElement {
     bubble.id = 'stream-bubble';
     bubble.className = 'flex justify-start';
     const inner = document.createElement('div');
-    inner.className = 'max-w-[85%] lg:max-w-[72%] rounded-2xl rounded-bl-md border border-white/15 bg-slate-800/80 px-4 py-3 shadow-lg shadow-black/20';
+    inner.className = 'max-w-[85%] lg:max-w-[72%] rounded-2xl rounded-bl-md border border-indigo-300/25 bg-slate-800/60 px-4 py-3 shadow-lg shadow-black/20';
+    inner.style.backdropFilter = 'blur(2px)';
     const senderEl = document.createElement('div');
     senderEl.className = 'text-xs font-semibold mb-2 text-slate-300';
     senderEl.textContent = 'assistant';
@@ -286,6 +390,7 @@ class ChatMessageStream extends LitElement {
     inner.appendChild(wrapper);
     bubble.appendChild(inner);
     this.appendChild(bubble);
+    this._startThinkingTicker();
     this._scrollToBottom();
   }
 
@@ -300,10 +405,16 @@ class ChatMessageStream extends LitElement {
   _removeStreamBubble() {
     const bubble = this.querySelector('#stream-bubble');
     if (bubble) bubble.remove();
+    this._stopThinkingTicker();
   }
 
   _scrollToBottom() {
-    this.scrollTop = this.scrollHeight;
+    requestAnimationFrame(() => {
+      this.scrollTop = this.scrollHeight;
+      requestAnimationFrame(() => {
+        this.scrollTop = this.scrollHeight;
+      });
+    });
   }
 
   _toggleAbortButton(show) {
@@ -311,10 +422,72 @@ class ChatMessageStream extends LitElement {
     if (btn) btn.classList.toggle('hidden', !show);
   }
 
+  markPending() {
+    const existingBubble = this.querySelector('#stream-bubble');
+    if (this._streaming && existingBubble) {
+      this._toggleAbortButton(true);
+      this._startPendingPoll();
+      this._scrollToBottom();
+      return;
+    }
+    this._lastSnapshot = this._normalizedSnapshot(this.innerHTML);
+    this._assistantCountAtPending = this._countAssistantMessages();
+    this._streaming = true;
+    this._streamBuffer = this._thinkingPhrases[0];
+    this._appendStreamBubble();
+    this._updateStreamBubble();
+    this._toggleAbortButton(true);
+    this._startPendingPoll();
+  }
+
+  _startPendingPoll() {
+    if (this._pendingPoll) clearInterval(this._pendingPoll);
+    this._pendingPoll = setInterval(() => {
+      this._refreshMessages();
+    }, 1200);
+  }
+
+  _stopPendingPoll() {
+    if (this._pendingPoll) {
+      clearInterval(this._pendingPoll);
+      this._pendingPoll = null;
+    }
+  }
+
+  _startThinkingTicker() {
+    this._stopThinkingTicker();
+    this._thinkingIndex = 0;
+    this._streamBuffer = this._thinkingPhrases[this._thinkingIndex] || 'Thinking...';
+    this._updateStreamBubble();
+    this._thinkingTicker = setInterval(() => {
+      this._thinkingIndex = (this._thinkingIndex + 1) % this._thinkingPhrases.length;
+      this._streamBuffer = this._thinkingPhrases[this._thinkingIndex];
+      this._updateStreamBubble();
+    }, 1200);
+  }
+
+  _stopThinkingTicker() {
+    if (this._thinkingTicker) {
+      clearInterval(this._thinkingTicker);
+      this._thinkingTicker = null;
+    }
+  }
+
+  _normalizedSnapshot(value) {
+    return (value || '').replace(/\\s+/g, ' ').trim();
+  }
+
+  _countAssistantMessages() {
+    return this.querySelectorAll('[data-sender="assistant"]').length;
+  }
+
   _refreshMessages() {
     fetch('/chat/$conversationId/messages')
       .then(r => r.text())
       .then(t => {
+        const next = this._normalizedSnapshot(t);
+        const changed = next !== this._lastSnapshot;
+        if (!changed) return;
         const streamBubble = this.querySelector('#stream-bubble');
         const wrapper = document.createElement('div');
         wrapper.className = 'space-y-4 text-gray-100';
@@ -324,14 +497,36 @@ class ChatMessageStream extends LitElement {
         while (this.firstChild) this.removeChild(this.firstChild);
         this.appendChild(wrapper);
         if (streamBubble && this._streaming) this.appendChild(streamBubble);
+        if (this._streaming && !this.querySelector('#stream-bubble')) {
+          this._appendStreamBubble();
+          this._updateStreamBubble();
+        }
+        this._lastSnapshot = next;
+        if (this._streaming) {
+          const assistantCountNow = this._countAssistantMessages();
+          const receivedAssistantReply = assistantCountNow > this._assistantCountAtPending;
+          if (receivedAssistantReply) {
+            this._streaming = false;
+            this._removeStreamBubble();
+            this._toggleAbortButton(false);
+            this._stopPendingPoll();
+          } else {
+            this._toggleAbortButton(true);
+            this._startPendingPoll();
+          }
+        }
         this._scrollToBottom();
       });
   }
 
   abort() {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+    if (this._wsEnabled && this._ws && this._ws.readyState === WebSocket.OPEN) {
       this._ws.send(JSON.stringify({AbortChat:{conversationId:$conversationId}}));
     }
+    this._streaming = false;
+    this._removeStreamBubble();
+    this._toggleAbortButton(false);
+    this._stopPendingPoll();
     fetch('/api/chat/$conversationId/abort', {method:'POST'});
   }
 }
@@ -342,13 +537,27 @@ if (!customElements.get('chat-message-stream')) {
 """))
   // scalafmt: { maxColumn = 120 }
 
-  private def conversationCard(conv: ChatConversation) =
+  private def conversationCard(
+    conv: ChatConversation,
+    sessionMeta: Option[ConversationSessionMeta] = None,
+  ): Frag =
+    val lastMessage = conv.messages.lastOption
+    val preview     = lastMessage.map(_.content.trim).filter(_.nonEmpty).map(compactPreview).getOrElse("No messages yet")
+    val channel     = conv.channel.orElse(sessionMeta.map(_.channelName)).getOrElse("web")
     a(
       href := s"/chat/${conv.id.get}",
       cls  := "bg-white/5 hover:bg-white/10 ring-1 ring-white/10 rounded-lg p-4 transition-all hover:ring-indigo-500/50 cursor-pointer block",
     )(
       div(cls := "flex items-start justify-between mb-2")(
-        h3(cls := "text-lg font-semibold text-white max-w-xs truncate")(conv.title),
+        div(cls := "min-w-0")(
+          h3(cls := "text-lg font-semibold text-white max-w-xs truncate")(conv.title),
+          div(cls := "mt-1 flex items-center gap-2 text-xs")(
+            channelBadge(channel),
+            sessionMeta.filter(_.channelName == "telegram").map(meta =>
+              span(cls := "text-amber-300/90")(s"via Telegram (${meta.sessionKey})")
+            ),
+          ),
+        ),
         span(
           cls := s"inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ${
               if conv.status == "active" then
@@ -364,19 +573,47 @@ if (!customElements.get('chat-message-stream')) {
           conv.status,
         ),
       ),
-      if conv.description.isDefined then
-        div(cls := "pt-2")(
-          p(cls := "text-gray-400 text-sm mb-3 truncate")(conv.description.get)
-        )
-      else (),
+      div(cls := "pt-2")(
+        p(cls := "text-gray-300 text-sm mb-2 truncate")(preview),
+      ),
       div(cls := "flex items-center justify-between text-xs text-gray-500")(
-        span(
-          if conv.messages.nonEmpty then
-            s"${conv.messages.length} message${if conv.messages.length != 1 then "s" else ""}"
-          else "No messages"
-        ),
+        span(s"${conv.messages.length} message${if conv.messages.length != 1 then "s" else ""}"),
         span(cls := "text-right")(
-          conv.updatedAt.toString.take(10)
+          lastMessage.map(_.createdAt).map(formatTimestamp).getOrElse(formatTimestamp(conv.updatedAt))
         ),
       ),
     )
+
+  private def channelBadge(channel: String): Frag =
+    val normalized = channel.trim.toLowerCase
+    val classes    = normalized match
+      case "telegram"  => "bg-sky-500/10 text-sky-300 ring-sky-400/30"
+      case "websocket" => "bg-indigo-500/10 text-indigo-300 ring-indigo-400/30"
+      case _           => "bg-gray-500/10 text-gray-300 ring-gray-400/30"
+    span(cls := s"inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset $classes")(
+      normalized
+    )
+
+  private def sessionContextPanel(sessionMeta: Option[ConversationSessionMeta]): Frag =
+    sessionMeta match
+      case None       => frag()
+      case Some(meta) =>
+        div(cls := "mt-3 rounded-md bg-white/5 ring-1 ring-white/10 p-3 text-xs text-gray-300")(
+          div(cls := "font-semibold text-gray-200 mb-2")("Session Context"),
+          div(cls := "space-y-1")(
+            p(span(cls := "text-gray-400 mr-2")("Channel:"), meta.channelName),
+            p(span(cls := "text-gray-400 mr-2")("Session Key:"), meta.sessionKey),
+            p(
+              span(cls := "text-gray-400 mr-2")("Linked Task:"),
+              meta.linkedTaskRunId.map(id => s"#$id").getOrElse("none")
+            ),
+            p(span(cls := "text-gray-400 mr-2")("Updated:"), formatTimestamp(meta.updatedAt)),
+          ),
+        )
+
+  private def compactPreview(raw: String): String =
+    val compact = raw.replaceAll("\\s+", " ").trim
+    if compact.length <= 90 then compact else compact.take(87) + "..."
+
+  private def formatTimestamp(instant: java.time.Instant): String =
+    instant.toString.take(19).replace("T", " ")

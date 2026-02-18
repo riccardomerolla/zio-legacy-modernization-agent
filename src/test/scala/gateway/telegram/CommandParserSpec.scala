@@ -9,10 +9,12 @@ object CommandParserSpec extends ZIOSpecDefault:
       val start = CommandParser.parse("/start")
       val help  = CommandParser.parse("/help")
       val list  = CommandParser.parse("/list")
+      val tasks = CommandParser.parse("/tasks")
       assertTrue(
         start == Right(BotCommand.Start),
         help == Right(BotCommand.Help),
-        list == Right(BotCommand.ListRuns),
+        list == Right(BotCommand.ListTasks),
+        tasks == Right(BotCommand.ListTasks),
       )
     },
     test("parses run-id commands with parameters") {
@@ -34,7 +36,7 @@ object CommandParserSpec extends ZIOSpecDefault:
       val op2 = CommandParser.parseToWorkflowOperation("/cancel 3")
       assertTrue(
         op1 == Right(BotWorkflowOperation.ShowWelcome),
-        op2 == Right(BotWorkflowOperation.CancelRun(3L)),
+        op2 == Right(BotWorkflowOperation.CancelTask(3L)),
       )
     },
     test("returns errors for invalid commands") {
@@ -47,7 +49,7 @@ object CommandParserSpec extends ZIOSpecDefault:
         empty == Left(CommandParseError.EmptyInput),
         unknown == Left(CommandParseError.UnknownCommand("unknown")),
         missing == Left(CommandParseError.MissingParameter("status", "id")),
-        badId == Left(CommandParseError.InvalidRunId("cancel", "abc")),
+        badId == Left(CommandParseError.InvalidTaskId("cancel", "abc")),
         plain == Left(CommandParseError.NotACommand("hello")),
       )
     },

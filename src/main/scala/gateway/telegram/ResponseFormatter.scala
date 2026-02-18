@@ -1,6 +1,7 @@
 package gateway.telegram
 
 import gateway.models.NormalizedMessage
+import models.WorkflowRunState
 
 final case class FormattedTelegramResponse(
   text: String,
@@ -11,56 +12,28 @@ final case class FormattedTelegramResponse(
 )
 
 object ResponseFormatter:
-  private val PreviewLimit = 1200
-
   def format(message: NormalizedMessage): FormattedTelegramResponse =
     val baseText        = formatStructured(message.content, message.metadata)
     val withAttachments = appendAttachments(baseText, message.metadata)
     val normalized      = withAttachments.trim
 
-    if normalized.length <= PreviewLimit then
-      FormattedTelegramResponse(
-        text = normalized,
-        parseMode = parseModeFor(normalized, message.metadata),
-        replyMarkup = None,
-        continuationToken = None,
-        remaining = None,
-      )
-    else
-      val token     = s"msg-${sanitizeToken(message.id)}"
-      val safeSplit = findSplit(normalized)
-      val head      = normalized.take(safeSplit).trim
-      val tail      = normalized.drop(safeSplit).trim
-      FormattedTelegramResponse(
-        text = s"$head\n\n_…truncated_",
-        parseMode = Some("Markdown"),
-        replyMarkup = Some(showMoreKeyboard(token)),
-        continuationToken = Some(token),
-        remaining = Some(tail),
-      )
+    FormattedTelegramResponse(
+      text = normalized,
+      parseMode = parseModeFor(normalized, message.metadata),
+      replyMarkup = None,
+      continuationToken = None,
+      remaining = None,
+    )
 
   def formatContinuation(token: String, remaining: String): FormattedTelegramResponse =
     val normalized = remaining.trim
-
-    if normalized.length <= PreviewLimit then
-      FormattedTelegramResponse(
-        text = normalized,
-        parseMode = parseModeFor(normalized, Map.empty),
-        replyMarkup = None,
-        continuationToken = None,
-        remaining = None,
-      )
-    else
-      val safeSplit = findSplit(normalized)
-      val head      = normalized.take(safeSplit).trim
-      val tail      = normalized.drop(safeSplit).trim
-      FormattedTelegramResponse(
-        text = s"$head\n\n_…truncated_",
-        parseMode = Some("Markdown"),
-        replyMarkup = Some(showMoreKeyboard(token)),
-        continuationToken = Some(token),
-        remaining = Some(tail),
-      )
+    FormattedTelegramResponse(
+      text = normalized,
+      parseMode = parseModeFor(normalized, Map.empty),
+      replyMarkup = None,
+      continuationToken = None,
+      remaining = None,
+    )
 
   private def parseModeFor(content: String, metadata: Map[String, String]): Option[String] =
     metadata.get("telegram.parse_mode").orElse {
@@ -86,29 +59,6 @@ object ResponseFormatter:
     else
       val lines = attachments.map(path => s"- $path").mkString("\n")
       s"$content\n\nGenerated attachments:\n$lines"
-
-  private def showMoreKeyboard(token: String): TelegramInlineKeyboardMarkup =
-    TelegramInlineKeyboardMarkup(
-      inline_keyboard = List(
-        List(
-          TelegramInlineKeyboardButton(
-            text = "Show More",
-            callback_data = s"more:$token",
-          )
-        )
-      )
-    )
-
-  private def findSplit(content: String): Int =
-    val preview = content.take(PreviewLimit)
-    val idx     = preview.lastIndexWhere(ch => ch == '\n' || ch == ' ')
-    if idx > PreviewLimit / 2 then idx else PreviewLimit
-
-  private def sanitizeToken(raw: String): String =
-    raw.map {
-      case ch if ch.isLetterOrDigit || ch == '-' || ch == '_' => ch
-      case _                                                  => '-'
-    }
 
   private def looksLikeJson(content: String): Boolean =
     val trimmed = content.trim
@@ -140,3 +90,28 @@ object ResponseFormatter:
       .filter(_.nonEmpty)
       .map(line => if line.startsWith("-") || line.startsWith("*") then line else s"- $line")
       .mkString("\n")
+
+  def formatTaskProgress(
+    runState: WorkflowRunState,
+    taskName: String,
+    stepName: Option[String],
+  ): String =
+    runState match
+      case WorkflowRunState.Running   =>
+        val header = s"""▶ Task "$taskName" started"""
+        stepName match
+          case Some(step) if step.trim.nonEmpty => s"$header\n→ Step: ${step.trim} — Running..."
+          case _                                => header
+      case WorkflowRunState.Completed =>
+        s"""✓ Task "$taskName" completed"""
+      case WorkflowRunState.Failed    =>
+        val header = s"""✗ Task "$taskName" failed"""
+        stepName match
+          case Some(step) if step.trim.nonEmpty => s"$header at step: ${step.trim}"
+          case _                                => header
+      case WorkflowRunState.Paused    =>
+        s"""⏸ Task "$taskName" paused"""
+      case WorkflowRunState.Cancelled =>
+        s"""⛔ Task "$taskName" cancelled"""
+      case WorkflowRunState.Pending   =>
+        s"""⏳ Task "$taskName" pending"""

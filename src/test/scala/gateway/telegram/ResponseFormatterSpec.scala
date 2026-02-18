@@ -5,6 +5,7 @@ import java.time.Instant
 import zio.test.*
 
 import gateway.models.*
+import models.WorkflowRunState
 
 object ResponseFormatterSpec extends ZIOSpecDefault:
 
@@ -50,13 +51,25 @@ object ResponseFormatterSpec extends ZIOSpecDefault:
         formatted.text.contains("output.zip"),
       )
     },
-    test("truncates long responses and provides show more callback") {
+    test("keeps long responses intact (no custom truncation)") {
       val formatted = ResponseFormatter.format(message("x" * 5000))
       assertTrue(
-        formatted.replyMarkup.nonEmpty,
-        formatted.continuationToken.nonEmpty,
-        formatted.remaining.exists(_.nonEmpty),
-        formatted.text.contains("truncated"),
+        formatted.replyMarkup.isEmpty,
+        formatted.continuationToken.isEmpty,
+        formatted.remaining.isEmpty,
+        formatted.text.length == 5000,
+      )
+    },
+    test("formats task progress states with expected prefixes") {
+      val running   = ResponseFormatter.formatTaskProgress(WorkflowRunState.Running, "Generate report", Some("chat"))
+      val completed = ResponseFormatter.formatTaskProgress(WorkflowRunState.Completed, "Generate report", None)
+      val failed    = ResponseFormatter.formatTaskProgress(WorkflowRunState.Failed, "Generate report", Some("chat"))
+      assertTrue(
+        running.startsWith("▶"),
+        running.contains("Step: chat"),
+        completed.startsWith("✓"),
+        failed.startsWith("✗"),
+        failed.contains("step: chat"),
       )
     },
   )

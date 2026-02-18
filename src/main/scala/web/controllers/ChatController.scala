@@ -14,7 +14,7 @@ import zio.json.*
 import agents.AgentRegistry
 import db.{ ChatRepository, PersistenceError, TaskRepository }
 import gateway.models.{ MessageDirection as GatewayMessageDirection, MessageRole as GatewayMessageRole, * }
-import gateway.{ ChannelRegistry, GatewayService, GatewayServiceError, MessageChannelError }
+import gateway.{ ChannelRegistry, GatewayService, GatewayServiceError, MessageChannelError, SessionContext }
 import llm4zio.core.{ LlmError, LlmService, Streaming }
 import models.*
 import orchestration.{ AgentConfigResolver, IssueAssignmentOrchestrator }
@@ -54,9 +54,11 @@ final case class ChatControllerLive(
     // Chat Conversations Web Views
     Method.GET / "chat"                                          -> handler { (_: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
-        chatRepository.listConversations(0, 20).map { conversations =>
-          html(HtmlViews.chatDashboard(conversations))
-        }
+        for
+          conversations <- chatRepository.listConversations(0, 20)
+          enriched      <- enrichConversationsWithChannel(conversations)
+          sessionMeta   <- buildSessionMetaMap(enriched)
+        yield html(HtmlViews.chatDashboard(enriched, sessionMeta))
       }
     },
     Method.POST / "chat"                                         -> handler { (req: Request) =>
@@ -89,7 +91,8 @@ final case class ChatControllerLive(
           conversation <- chatRepository
                             .getConversation(id)
                             .someOrFail(PersistenceError.NotFound("conversation", id))
-        yield html(HtmlViews.chatDetail(conversation))
+          sessionMeta  <- resolveConversationSessionMeta(id)
+        yield html(HtmlViews.chatDetail(conversation, sessionMeta))
       }
     },
     Method.GET / "chat" / long("id") / "messages"                -> handler { (id: Long, _: Request) =>
@@ -103,21 +106,24 @@ final case class ChatControllerLive(
       ErrorHandlingMiddleware.fromPersistence {
         for
           form        <- parseForm(req)
-          content     <- ZIO
+          rawContent  <- ZIO
                            .fromOption(form.get("content").map(_.trim).filter(_.nonEmpty))
                            .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
+          mention      = parsePreferredAgentMention(rawContent)
+          content       = mention.content
           now         <- Clock.instant
           _           <- chatRepository.addMessage(
                            ConversationMessage(
                              conversationId = id,
                              sender = "user",
-                             senderType = SenderType.User,
-                             content = content,
+                              senderType = SenderType.User,
+                             content = rawContent,
                              messageType = MessageType.Text,
                              createdAt = now,
                              updatedAt = now,
                            )
                          )
+          _           <- ensureConversationTitle(id, content, now)
           _           <- activityHub.publish(
                            ActivityEvent(
                              eventType = ActivityEventType.MessageSent,
@@ -127,7 +133,14 @@ final case class ChatControllerLive(
                              createdAt = now,
                            )
                          )
-          userInbound <- toGatewayMessage(id, SenderType.User, content, None, GatewayMessageDirection.Inbound)
+          userInbound <- toGatewayMessage(
+                           id,
+                           SenderType.User,
+                           content,
+                           None,
+                           GatewayMessageDirection.Inbound,
+                           additionalMetadata = mention.metadata,
+                         )
           _           <- routeThroughGateway(gatewayService.processInbound(userInbound))
           _           <- streamAssistantResponse(id, content).forkDaemon
           messages    <- chatRepository.getMessages(id)
@@ -483,6 +496,7 @@ final case class ChatControllerLive(
     metadata: Option[String],
   ): IO[PersistenceError, ConversationMessage] =
     for
+      mention     <- ZIO.succeed(parsePreferredAgentMention(userContent))
       now         <- Clock.instant
       _           <- chatRepository.addMessage(
                        ConversationMessage(
@@ -496,17 +510,19 @@ final case class ChatControllerLive(
                          updatedAt = now,
                        )
                      )
+      _           <- ensureConversationTitle(conversationId, userContent, now)
       userInbound <- toGatewayMessage(
                        conversationId = conversationId,
                        senderType = SenderType.User,
-                       content = userContent,
+                       content = mention.content,
                        metadata = metadata,
                        direction = GatewayMessageDirection.Inbound,
+                       additionalMetadata = mention.metadata,
                      )
       _           <- routeThroughGateway(gatewayService.processInbound(userInbound))
       aiConfig    <- configResolver.resolveConfig("chat")
       llmResponse <- llmService
-                       .execute(userContent)
+                       .execute(mention.content)
                        .mapError(convertLlmError)
       now2        <- Clock.instant
       aiMessage    = ConversationMessage(
@@ -605,6 +621,7 @@ final case class ChatControllerLive(
     content: String,
     metadata: Option[String],
     direction: GatewayMessageDirection,
+    additionalMetadata: Map[String, String] = Map.empty,
   ): UIO[NormalizedMessage] =
     for
       now <- Clock.instant
@@ -620,9 +637,31 @@ final case class ChatControllerLive(
         case SenderType.System    => GatewayMessageRole.System
       ,
       content = content,
-      metadata = Map("conversationId" -> conversationId.toString) ++ metadata.map("raw" -> _).toMap,
+      metadata = Map("conversationId" -> conversationId.toString) ++ metadata.map("raw" -> _).toMap ++ additionalMetadata,
       timestamp = now,
     )
+
+  private final case class PreferredAgentMention(
+    content: String,
+    metadata: Map[String, String],
+  )
+
+  private def parsePreferredAgentMention(rawContent: String): PreferredAgentMention =
+    val MentionPattern = """^\s*@([A-Za-z][A-Za-z0-9_-]*)\b[:\-]?\s*(.*)$""".r
+    rawContent match
+      case MentionPattern(agentName, remainder) if remainder.trim.nonEmpty =>
+        PreferredAgentMention(
+          content = remainder.trim,
+          metadata = Map(
+            "preferredAgent" -> agentName,
+            "intent.agent"   -> agentName,
+          ),
+        )
+      case _                                                       =>
+        PreferredAgentMention(
+          content = rawContent,
+          metadata = Map.empty,
+        )
 
   private def ensureWebSocketSession(conversationId: Long): UIO[Unit] =
     val sessionKey = SessionScopeStrategy.PerConversation.build("websocket", conversationId.toString)
@@ -640,6 +679,71 @@ final case class ChatControllerLive(
 
   private def routeThroughGateway(effect: IO[GatewayServiceError, Unit]): UIO[Unit] =
     effect.catchAll(err => ZIO.logWarning(s"gateway routing skipped: $err"))
+
+  private def enrichConversationsWithChannel(
+    conversations: List[ChatConversation]
+  ): IO[PersistenceError, List[ChatConversation]] =
+    ZIO.foreach(conversations) { conversation =>
+      conversation.id match
+        case Some(id) =>
+          resolveConversationSessionMeta(id).map { meta =>
+            conversation.copy(channel = meta.map(_.channelName).orElse(conversation.channel))
+          }
+        case None     => ZIO.succeed(conversation)
+    }
+
+  private def buildSessionMetaMap(
+    conversations: List[ChatConversation]
+  ): IO[PersistenceError, Map[Long, ConversationSessionMeta]] =
+    ZIO
+      .foreach(conversations.flatMap(_.id)) { id =>
+        resolveConversationSessionMeta(id).map(meta => id -> meta)
+      }
+      .map(_.collect { case (id, Some(meta)) => id -> meta }.toMap)
+
+  private def resolveConversationSessionMeta(
+    conversationId: Long
+  ): IO[PersistenceError, Option[ConversationSessionMeta]] =
+    chatRepository.getSessionContextByConversation(conversationId).flatMap {
+      case None       => ZIO.none
+      case Some(link) =>
+        parseSessionContext(link.contextJson).map { parsed =>
+          Some(
+            ConversationSessionMeta(
+              channelName = link.channelName,
+              sessionKey = link.sessionKey,
+              linkedTaskRunId = parsed.flatMap(_.runId),
+              updatedAt = link.updatedAt,
+            )
+          )
+        }
+    }
+
+  private def parseSessionContext(raw: String): IO[PersistenceError, Option[SessionContext]] =
+    ZIO
+      .fromEither(raw.fromJson[SessionContext])
+      .map(Some(_))
+      .catchAll(err => ZIO.logWarning(s"invalid session context payload: $err").as(None))
+
+  private def ensureConversationTitle(
+    conversationId: Long,
+    firstUserMessage: String,
+    now: Instant,
+  ): IO[PersistenceError, Unit] =
+    chatRepository
+      .getConversation(conversationId)
+      .flatMap {
+        case None               => ZIO.unit
+        case Some(conversation) =>
+          val isMissing = conversation.title.trim.isEmpty
+          if isMissing then
+            ChatConversation.autoTitleFromFirstMessage(firstUserMessage) match
+              case Some(generated) =>
+                chatRepository.updateConversation(conversation.copy(title = generated, updatedAt = now))
+              case None            =>
+                ZIO.unit
+          else ZIO.unit
+      }
 
   private def convertLlmError(error: LlmError): PersistenceError =
     error match

@@ -42,6 +42,10 @@ trait OrchestratorControlPlane:
     */
   def subscribeToEvents(runId: String): ZIO[Scope, Nothing, Dequeue[ControlPlaneEvent]]
 
+  /** Subscribe to events for all runs
+    */
+  def subscribeAllEvents: ZIO[Scope, Nothing, Dequeue[ControlPlaneEvent]]
+
   /** Get all active runs
     */
   def getActiveRuns: ZIO[Any, ControlPlaneError, List[ActiveRun]]
@@ -110,6 +114,9 @@ object OrchestratorControlPlane:
   def subscribeToEvents(runId: String): ZIO[OrchestratorControlPlane & Scope, Nothing, Dequeue[ControlPlaneEvent]] =
     ZIO.serviceWithZIO[OrchestratorControlPlane](_.subscribeToEvents(runId))
 
+  def subscribeAllEvents: ZIO[OrchestratorControlPlane & Scope, Nothing, Dequeue[ControlPlaneEvent]] =
+    ZIO.serviceWithZIO[OrchestratorControlPlane](_.subscribeAllEvents)
+
   def eventStream(runId: String): ZStream[OrchestratorControlPlane & Scope, Nothing, ControlPlaneEvent] =
     ZStream.unwrap(subscribeToEvents(runId).map(queue => ZStream.fromQueue(queue)))
 
@@ -157,6 +164,7 @@ object OrchestratorControlPlane:
       config        <- ZIO.service[MigrationConfig]
       activeRuns    <- Ref.make[Map[String, ActiveRun]](Map.empty)
       eventQueues   <- Ref.make[Map[String, List[Queue[ControlPlaneEvent]]]](Map.empty)
+      globalQueues  <- Ref.make[List[Queue[ControlPlaneEvent]]](Nil)
       resourceState <- Ref.make[ResourceAllocationState](
                          ResourceAllocationState(
                            maxParallelism = config.parallelism,
@@ -171,6 +179,7 @@ object OrchestratorControlPlane:
     yield new OrchestratorControlPlaneLive(
       activeRuns,
       eventQueues,
+      globalQueues,
       resourceState,
       stepAgents,
       agentStates,
@@ -181,6 +190,7 @@ object OrchestratorControlPlane:
 final private[orchestration] class OrchestratorControlPlaneLive(
   activeRuns: Ref[Map[String, ActiveRun]],
   eventQueues: Ref[Map[String, List[Queue[ControlPlaneEvent]]]],
+  globalQueues: Ref[List[Queue[ControlPlaneEvent]]],
   resourceState: Ref[ResourceAllocationState],
   stepAgents: Ref[Map[String, String]],
   agentStates: Ref[Map[String, AgentExecutionInfo]],
@@ -345,7 +355,9 @@ final private[orchestration] class OrchestratorControlPlaneLive(
                        case ResourceAllocated(_, id, _, _)     => id
                        case ResourceReleased(_, id, _, _)      => id)
       targetQueues = queues.getOrElse(runId, List.empty)
+      allQueues   <- globalQueues.get
       _           <- ZIO.foreachDiscard(targetQueues)(q => q.offer(event))
+      _           <- ZIO.foreachDiscard(allQueues)(q => q.offer(event))
       _           <- trackAgentEvent(event)
     yield ()
 
@@ -361,6 +373,15 @@ final private[orchestration] class OrchestratorControlPlaneLive(
                    val current = queues.getOrElse(runId, List.empty)
                    queues + (runId -> current.filterNot(_ == queue))
                  }.unit
+               )
+    yield queue
+
+  override def subscribeAllEvents: ZIO[Scope, Nothing, Dequeue[ControlPlaneEvent]] =
+    for
+      queue <- Queue.bounded[ControlPlaneEvent](256)
+      _     <- globalQueues.update(_ :+ queue)
+      _     <- ZIO.addFinalizer(
+                 globalQueues.update(_.filterNot(_ == queue)).unit
                )
     yield queue
 

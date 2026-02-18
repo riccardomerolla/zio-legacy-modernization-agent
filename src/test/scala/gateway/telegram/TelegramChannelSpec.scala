@@ -336,13 +336,11 @@ object TelegramChannelSpec extends ZIOSpecDefault:
         sent           <- sentRef.get
       yield assertTrue(
         commands.contains((77L, Some(801L), BotCommand.Status(90L))),
-        commands.contains((77L, Some(802L), BotCommand.Cancel(90L))),
-        sent.exists(_.text.contains("Pause requested for run 90")),
-        sent.exists(_.text.contains("Retry requested for run 90")),
-        sent.exists(msg => msg.reply_markup.exists(_.inline_keyboard.flatten.exists(_.text == "Resume"))),
+        !commands.contains((77L, Some(802L), BotCommand.Cancel(90L))),
+        sent.count(_.text.contains("Task controls are unavailable for #90.")) == 3,
       )
     },
-    test("send formats long response and supports show more callback") {
+    test("send keeps long response without custom show more callback") {
       for
         updatesRef  <- Ref.make(List.empty[TelegramUpdate])
         sentRef     <- Ref.make(List.empty[TelegramSendMessage])
@@ -364,14 +362,9 @@ object TelegramChannelSpec extends ZIOSpecDefault:
         session      = SessionScopeStrategy.PerConversation.build("telegram", "88")
         _           <- channel.send(outboundMessage(session, "line\n" * 300))
         sent1       <- sentRef.get
-        showMore     = sent1.lastOption.flatMap(_.reply_markup).flatMap(_.inline_keyboard.flatten.headOption)
-        token        = showMore.map(_.callback_data.stripPrefix("more:")).getOrElse("missing")
-        _           <- channel.ingestUpdate(callbackUpdate(42L, 88L, 912L, s"more:$token"))
-        sent2       <- sentRef.get
       yield assertTrue(
         sent1.nonEmpty,
-        showMore.exists(_.text == "Show More"),
-        sent2.length >= 2,
+        sent1.lastOption.flatMap(_.reply_markup).isEmpty,
       )
     },
     test("send uploads generated attachments as zip document") {
