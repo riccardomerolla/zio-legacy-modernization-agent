@@ -14,7 +14,11 @@ object SettingsView:
 
   private val sectionCls = "bg-white/5 ring-1 ring-white/10 rounded-lg p-6 mb-6"
 
-  def page(settings: Map[String, String], flash: Option[String] = None): String =
+  def page(
+    settings: Map[String, String],
+    flash: Option[String] = None,
+    errors: Map[String, String] = Map.empty,
+  ): String =
     Layout.page("Settings", "/settings")(
       div(cls := "max-w-2xl")(
         h1(cls := "text-2xl font-bold text-white mb-6")("Settings"),
@@ -23,12 +27,18 @@ object SettingsView:
             p(cls := "text-sm text-green-400")(msg)
           )
         },
+        if errors.nonEmpty then
+          div(cls := "mb-6 rounded-md bg-red-500/10 border border-red-500/30 p-4")(
+            p(cls := "text-sm font-semibold text-red-400")("Validation Errors"),
+            ul(cls := "text-xs text-red-300 mt-2 space-y-1")(
+              errors.map { case (key, msg) => li(s"$key: $msg") }.toSeq*
+            ),
+          )
+        else (),
         tag("form")(method := "post", action := "/settings", cls := "space-y-6")(
-          aiProviderSection(settings),
-          processingSection(settings),
-          discoverySection(settings),
-          featuresSection(settings),
-          projectSection(settings),
+          aiProviderSection(settings, errors),
+          gatewaySection(settings, errors),
+          telegramSection(settings, errors),
           div(cls := "flex gap-4 pt-2")(
             button(
               `type` := "submit",
@@ -36,10 +46,44 @@ object SettingsView:
             )("Save Settings")
           ),
         ),
-      )
+        div(cls := "mt-8 pt-6 border-t border-white/10")(
+          div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg p-4")(
+            p(cls := "text-sm text-gray-300")(
+              "💡 For advanced configuration with validation, diff, history, and hot reload, use the ",
+              a(href := "/config", cls := "text-indigo-400 hover:text-indigo-300 underline")("Config Editor"),
+              ".",
+            )
+          )
+        ),
+      ),
+      tag("script")(
+        raw("""
+          |document.addEventListener('DOMContentLoaded', function() {
+          |  const modeSelect = document.getElementById('telegram.mode');
+          |  const webhookGroup = document.getElementById('telegram-webhook-group');
+          |  const pollingGroup = document.getElementById('telegram-polling-group');
+          |
+          |  function updateFieldVisibility() {
+          |    const mode = modeSelect.value;
+          |    if (mode === 'Webhook') {
+          |      webhookGroup.style.display = 'block';
+          |      pollingGroup.style.display = 'none';
+          |    } else if (mode === 'Polling') {
+          |      webhookGroup.style.display = 'none';
+          |      pollingGroup.style.display = 'block';
+          |    }
+          |  }
+          |
+          |  if (modeSelect) {
+          |    updateFieldVisibility();
+          |    modeSelect.addEventListener('change', updateFieldVisibility);
+          |  }
+          |});
+        """.stripMargin)
+      ),
     )
 
-  private def aiProviderSection(s: Map[String, String]): Frag =
+  private def aiProviderSection(s: Map[String, String], errors: Map[String, String] = Map.empty): Frag =
     tag("section")(cls := sectionCls)(
       h2(cls := "text-lg font-semibold text-white mb-4")("AI Provider"),
       div(cls := "space-y-4")(
@@ -56,13 +100,21 @@ object SettingsView:
           p(cls := "text-xs text-gray-400 mt-1")(
             "LM Studio and Ollama run locally. Cloud providers require API keys."
           ),
+          showError(errors.get("ai.provider")),
         ),
-        textField("ai.model", "Model", s, placeholder = "gemini-2.5-flash (or llama3 for local)"),
+        textField(
+          "ai.model",
+          "Model",
+          s,
+          placeholder = "gemini-2.5-flash (or llama3 for local)",
+          error = errors.get("ai.model"),
+        ),
         textField(
           "ai.baseUrl",
           "Base URL",
           s,
           placeholder = "Optional: http://localhost:1234 (LM Studio), http://localhost:11434 (Ollama)",
+          error = errors.get("ai.baseUrl"),
         ),
         div(
           label(cls := labelCls, `for` := "ai.apiKey")("API Key"),
@@ -74,16 +126,57 @@ object SettingsView:
             placeholder := "Enter API key (optional)",
             cls         := inputCls,
           ),
+          showError(errors.get("ai.apiKey")),
         ),
         div(cls := "grid grid-cols-2 gap-4")(
-          numberField("ai.timeout", "Timeout (seconds)", s, default = "300", min = "10", max = "900"),
-          numberField("ai.maxRetries", "Max Retries", s, default = "3", min = "0", max = "10"),
+          numberField(
+            "ai.timeout",
+            "Timeout (seconds)",
+            s,
+            default = "300",
+            min = "10",
+            max = "900",
+            error = errors.get("ai.timeout"),
+          ),
+          numberField(
+            "ai.maxRetries",
+            "Max Retries",
+            s,
+            default = "3",
+            min = "0",
+            max = "10",
+            error = errors.get("ai.maxRetries"),
+          ),
         ),
         div(cls := "grid grid-cols-2 gap-4")(
-          numberField("ai.requestsPerMinute", "Requests/min", s, default = "60", min = "1", max = "600"),
-          numberField("ai.burstSize", "Burst Size", s, default = "10", min = "1", max = "100"),
+          numberField(
+            "ai.requestsPerMinute",
+            "Requests/min",
+            s,
+            default = "60",
+            min = "1",
+            max = "600",
+            error = errors.get("ai.requestsPerMinute"),
+          ),
+          numberField(
+            "ai.burstSize",
+            "Burst Size",
+            s,
+            default = "10",
+            min = "1",
+            max = "100",
+            error = errors.get("ai.burstSize"),
+          ),
         ),
-        numberField("ai.acquireTimeout", "Acquire Timeout (seconds)", s, default = "30", min = "1", max = "300"),
+        numberField(
+          "ai.acquireTimeout",
+          "Acquire Timeout (seconds)",
+          s,
+          default = "30",
+          min = "1",
+          max = "300",
+          error = errors.get("ai.acquireTimeout"),
+        ),
         div(cls := "grid grid-cols-2 gap-4")(
           numberField(
             "ai.temperature",
@@ -94,6 +187,7 @@ object SettingsView:
             max = "2",
             step = "0.1",
             placeholder = "Optional (0.0 - 2.0)",
+            error = errors.get("ai.temperature"),
           ),
           numberField(
             "ai.maxTokens",
@@ -103,76 +197,123 @@ object SettingsView:
             min = "1",
             max = "1048576",
             placeholder = "Optional",
+            error = errors.get("ai.maxTokens"),
           ),
         ),
+        div(cls := "flex gap-3 pt-4 border-t border-white/10")(
+          button(
+            `type`             := "button",
+            cls                := "rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed",
+            attr("hx-post")    := "/api/settings/test-ai",
+            attr("hx-include") := "[name^='ai.']",
+            attr("hx-target")  := "#ai-test-result",
+            attr("hx-swap")    := "innerHTML",
+          )("Test Connection")
+        ),
+        div(id := "ai-test-result", cls := "mt-3")(),
       ),
     )
 
-  private def processingSection(s: Map[String, String]): Frag =
+  private def gatewaySection(s: Map[String, String], errors: Map[String, String] = Map.empty): Frag =
     tag("section")(cls := sectionCls)(
-      h2(cls := "text-lg font-semibold text-white mb-4")("Processing"),
-      div(cls := "grid grid-cols-2 gap-4")(
-        numberField("processing.parallelism", "Parallelism", s, default = "4", min = "1", max = "64"),
-        numberField("processing.batchSize", "Batch Size", s, default = "10", min = "1", max = "100"),
-      ),
-    )
-
-  private def discoverySection(s: Map[String, String]): Frag =
-    tag("section")(cls := sectionCls)(
-      h2(cls := "text-lg font-semibold text-white mb-4")("Discovery"),
+      h2(cls := "text-lg font-semibold text-white mb-4")("Gateway"),
       div(cls := "space-y-4")(
-        numberField("discovery.maxDepth", "Max Depth", s, default = "25", min = "1", max = "100"),
-        div(
-          label(cls := labelCls, `for` := "discovery.excludePatterns")("Exclude Patterns"),
-          p(cls := "text-xs text-gray-500 mb-2")("One glob pattern per line"),
-          tag("textarea")(
-            name := "discovery.excludePatterns",
-            id   := "discovery.excludePatterns",
-            rows := "6",
-            cls  := inputCls,
-          )(
-            s.getOrElse(
-              "discovery.excludePatterns",
-              "**/.git/**\n**/target/**\n**/node_modules/**\n**/.idea/**\n**/.vscode/**\n**/backup/**\n**/*.bak\n**/*.tmp\n**/*~",
-            )
-          ),
-        ),
+        textField("gateway.name", "Gateway Name", s, placeholder = "My Gateway", error = errors.get("gateway.name"))
       ),
-    )
-
-  private def featuresSection(s: Map[String, String]): Frag =
-    tag("section")(cls := sectionCls)(
-      h2(cls := "text-lg font-semibold text-white mb-4")("Features"),
-      div(cls := "space-y-3")(
+      div(cls := "space-y-3 mt-4")(
         checkboxField(
-          "features.enableCheckpointing",
-          "Enable Checkpointing",
-          s,
-          default = true,
-        ),
-        checkboxField(
-          "features.enableBusinessLogicExtractor",
-          "Enable Business Logic Extractor in Dry Run",
+          "gateway.dryRun",
+          "Dry Run Mode",
           s,
           default = false,
+          error = errors.get("gateway.dryRun"),
         ),
         checkboxField(
-          "features.verbose",
+          "gateway.verbose",
           "Verbose Logging",
           s,
           default = false,
+          error = errors.get("gateway.verbose"),
         ),
       ),
     )
 
-  private def projectSection(s: Map[String, String]): Frag =
+  private def telegramSection(s: Map[String, String], errors: Map[String, String] = Map.empty): Frag =
     tag("section")(cls := sectionCls)(
-      h2(cls := "text-lg font-semibold text-white mb-4")("Project"),
+      h2(cls := "text-lg font-semibold text-white mb-4")("Telegram"),
       div(cls := "space-y-4")(
-        textField("project.basePackage", "Base Package", s, placeholder = "com.example"),
-        textField("project.name", "Project Name", s, placeholder = "Optional — derived from COBOL filename"),
-        textField("project.version", "Project Version", s, placeholder = "0.0.1-SNAPSHOT"),
-        numberField("project.maxCompileRetries", "Max Compile Retries", s, default = "3", min = "0", max = "10"),
+        checkboxField(
+          "telegram.enabled",
+          "Enable Telegram Bot",
+          s,
+          default = false,
+          error = errors.get("telegram.enabled"),
+        ),
+        passwordField(
+          "telegram.botToken",
+          "Bot Token",
+          s,
+          placeholder = "Telegram bot token from @BotFather",
+          error = errors.get("telegram.botToken"),
+        ),
+        div(
+          label(cls := labelCls, `for` := "telegram.mode")("Mode"),
+          tag("select")(name := "telegram.mode", id := "telegram.mode", cls := selectCls)(
+            modeOption("Webhook", "Webhook", s.get("telegram.mode")),
+            modeOption("Polling", "Polling", s.get("telegram.mode")),
+          ),
+          p(cls := "text-xs text-gray-400 mt-1")("Webhook: Push updates; Polling: Pull updates"),
+          showError(errors.get("telegram.mode")),
+        ),
+      ),
+      div(id := "telegram-webhook-group", cls := "space-y-4 mt-4 pt-4 border-t border-white/10")(
+        p(cls := "text-sm font-medium text-gray-300")("Webhook Configuration"),
+        textField(
+          "telegram.webhookUrl",
+          "Webhook URL",
+          s,
+          placeholder = "https://your-domain.com/telegram/webhook",
+          error = errors.get("telegram.webhookUrl"),
+        ),
+        passwordField(
+          "telegram.secretToken",
+          "Secret Token",
+          s,
+          placeholder = "Optional: secret token for webhook validation",
+          error = errors.get("telegram.secretToken"),
+        ),
+      ),
+      div(id := "telegram-polling-group", cls := "space-y-4 mt-4 pt-4 border-t border-white/10")(
+        p(cls := "text-sm font-medium text-gray-300")("Polling Configuration"),
+        div(cls := "grid grid-cols-2 gap-4")(
+          numberField(
+            "telegram.polling.interval",
+            "Poll Interval (seconds)",
+            s,
+            default = "1",
+            min = "1",
+            max = "60",
+            error = errors.get("telegram.polling.interval"),
+          ),
+          numberField(
+            "telegram.polling.batchSize",
+            "Batch Size",
+            s,
+            default = "100",
+            min = "1",
+            max = "1000",
+            error = errors.get("telegram.polling.batchSize"),
+          ),
+        ),
+        numberField(
+          "telegram.polling.timeout",
+          "Timeout (seconds)",
+          s,
+          default = "30",
+          min = "1",
+          max = "120",
+          error = errors.get("telegram.polling.timeout"),
+        ),
       ),
     )
 
@@ -185,6 +326,7 @@ object SettingsView:
     labelText: String,
     s: Map[String, String],
     placeholder: String = "",
+    error: Option[String] = None,
   ): Frag =
     div(
       label(cls := labelCls, `for` := fieldName)(labelText),
@@ -196,6 +338,7 @@ object SettingsView:
         attr("placeholder") := placeholder,
         cls                 := inputCls,
       ),
+      showError(error),
     )
 
   private def numberField(
@@ -207,6 +350,7 @@ object SettingsView:
     max: String = "",
     step: String = "1",
     placeholder: String = "",
+    error: Option[String] = None,
   ): Frag =
     div(
       label(cls := labelCls, `for` := fieldName)(labelText),
@@ -221,6 +365,7 @@ object SettingsView:
         attr("placeholder") := (if placeholder.nonEmpty then placeholder else default),
         cls                 := inputCls,
       ),
+      showError(error),
     )
 
   private def checkboxField(
@@ -228,17 +373,21 @@ object SettingsView:
     labelText: String,
     s: Map[String, String],
     default: Boolean,
+    error: Option[String] = None,
   ): Frag =
     val checked = s.get(fieldName).map(_ == "true").getOrElse(default)
-    div(cls := "flex items-center gap-3")(
-      input(
-        `type` := "checkbox",
-        name   := fieldName,
-        id     := fieldName,
-        cls    := "h-4 w-4 rounded border-white/10 bg-white/5 text-indigo-600 focus:ring-indigo-600",
-        if checked then attr("checked") := "checked" else (),
+    div(
+      div(cls := "flex items-center gap-3")(
+        input(
+          `type` := "checkbox",
+          name   := fieldName,
+          id     := fieldName,
+          cls    := "h-4 w-4 rounded border-white/10 bg-white/5 text-indigo-600 focus:ring-indigo-600",
+          if checked then attr("checked") := "checked" else (),
+        ),
+        label(cls := "text-sm text-gray-400", `for` := fieldName)(labelText),
       ),
-      label(cls := "text-sm text-gray-400", `for` := fieldName)(labelText),
+      showError(error),
     )
 
   private def providerOption(value: String, labelText: String, current: Option[String]): Frag =
@@ -247,3 +396,50 @@ object SettingsView:
       attr("value") := value,
       if isSelected then attr("selected") := "selected" else (),
     )(labelText)
+
+  private def modeOption(value: String, labelText: String, current: Option[String]): Frag =
+    val isSelected = current.contains(value) || (current.isEmpty && value == "Webhook")
+    tag("option")(
+      attr("value") := value,
+      if isSelected then attr("selected") := "selected" else (),
+    )(labelText)
+
+  private def passwordField(
+    fieldName: String,
+    labelText: String,
+    s: Map[String, String],
+    placeholder: String = "",
+    error: Option[String] = None,
+  ): Frag =
+    div(
+      label(cls := labelCls, `for` := fieldName)(labelText),
+      input(
+        `type`              := "password",
+        name                := fieldName,
+        id                  := fieldName,
+        value               := s.getOrElse(fieldName, ""),
+        attr("placeholder") := placeholder,
+        cls                 := inputCls,
+      ),
+      showError(error),
+    )
+
+  private def showError(error: Option[String]): Frag =
+    error.map { msg =>
+      p(cls := "text-xs text-red-400 mt-1")(msg)
+    }.getOrElse(())
+
+  def testConnectionSuccess(model: String, latencyMs: Long): String =
+    div(cls := "inline-flex items-center gap-2 rounded-full bg-emerald-500/20 border border-emerald-500/50 px-4 py-2")(
+      span(cls := "text-emerald-400 text-sm font-medium")("✓ Connection successful"),
+      span(cls := "text-emerald-300 text-xs")("("),
+      span(cls := "text-emerald-300 text-xs font-mono")(model),
+      span(cls := "text-emerald-300 text-xs")(s", ${latencyMs}ms)"),
+    ).toString
+
+  def testConnectionError(error: String): String =
+    div(cls := "inline-flex items-center gap-2 rounded-full bg-red-500/20 border border-red-500/50 px-4 py-2")(
+      span(cls := "text-red-400 text-sm font-medium")("✗ Connection failed"),
+      span(cls := "text-red-300 text-xs")("–"),
+      span(cls := "text-red-300 text-xs")(error),
+    ).toString

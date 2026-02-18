@@ -4,6 +4,7 @@ import zio.*
 import zio.http.netty.NettyConfig
 import zio.http.{ Client, DnsResolver, ZClient }
 
+import _root_.config.SettingsApplier
 import _root_.models.*
 import agents.*
 import core.*
@@ -21,6 +22,7 @@ object ApplicationDI:
   type CommonServices =
     FileService &
       GatewayConfig &
+      Ref[GatewayConfig] &
       HttpAIClient &
       LlmService &
       StateService &
@@ -85,6 +87,8 @@ object ApplicationDI:
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       TaskRepository.live,
+      // Create runtime config ref with merged DB settings
+      configRefLayer,
       WorkflowService.live,
       ActivityRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
       ActivityHub.live,
@@ -101,6 +105,21 @@ object ApplicationDI:
       GatewayService.live,
       TelegramPollingService.live,
     )
+
+  /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */
+  private val configRefLayer: ZLayer[GatewayConfig & TaskRepository, Nothing, Ref[GatewayConfig]] =
+    ZLayer.fromZIO {
+      for
+        baseConfig  <- ZIO.service[GatewayConfig]
+        repository  <- ZIO.service[TaskRepository]
+        dbSettings  <- repository.getAllSettings
+                         .mapError(_ => ())
+                         .orElseSucceed(Seq.empty)
+        settingsMap  = dbSettings.map(r => r.key -> r.value).toMap
+        mergedConfig = if settingsMap.nonEmpty then SettingsApplier.toGatewayConfig(settingsMap) else baseConfig
+        ref         <- Ref.make(mergedConfig)
+      yield ref
+    }
 
   private def httpClientLayer(config: GatewayConfig): ZLayer[Any, Throwable, Client] =
     val timeout      = config.resolvedProviderConfig.timeout

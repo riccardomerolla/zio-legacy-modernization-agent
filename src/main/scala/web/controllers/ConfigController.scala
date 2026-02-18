@@ -142,7 +142,7 @@ final case class ConfigControllerLive(
                            ActivityEvent(
                              eventType = ActivityEventType.ConfigChanged,
                              source = "config-editor",
-                             summary = "Configuration updated and hot reloaded",
+                             summary = "Gateway configuration updated and hot reloaded",
                              createdAt = now,
                            )
                          )
