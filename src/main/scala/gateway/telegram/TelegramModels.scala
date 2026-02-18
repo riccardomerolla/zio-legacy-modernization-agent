@@ -50,7 +50,8 @@ case class TelegramUpdate(
 
 case class TelegramInlineKeyboardButton(
   text: String,
-  callback_data: String,
+  callback_data: Option[String] = None,
+  url: Option[String] = None,
 ) derives JsonCodec
 
 case class TelegramInlineKeyboardMarkup(

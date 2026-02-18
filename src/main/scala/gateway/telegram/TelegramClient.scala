@@ -189,7 +189,8 @@ final case class TelegramClientLive(
   private def toBotInlineKeyboardButton(button: TelegramInlineKeyboardButton): InlineKeyboardButton =
     InlineKeyboardButton(
       text = button.text,
-      callbackData = Some(button.callback_data),
+      callbackData = button.callback_data,
+      url = button.url,
     )
 
   private def parseModeFromString(raw: String): Option[ParseMode.Value] =

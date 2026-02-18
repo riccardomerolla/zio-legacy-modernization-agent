@@ -365,7 +365,7 @@ object TelegramChannelSpec extends ZIOSpecDefault:
         _           <- channel.send(outboundMessage(session, "line\n" * 300))
         sent1       <- sentRef.get
         showMore     = sent1.lastOption.flatMap(_.reply_markup).flatMap(_.inline_keyboard.flatten.headOption)
-        token        = showMore.map(_.callback_data.stripPrefix("more:")).getOrElse("missing")
+        token        = showMore.flatMap(_.callback_data).map(_.stripPrefix("more:")).getOrElse("missing")
         _           <- channel.ingestUpdate(callbackUpdate(42L, 88L, 912L, s"more:$token"))
         sent2       <- sentRef.get
       yield assertTrue(

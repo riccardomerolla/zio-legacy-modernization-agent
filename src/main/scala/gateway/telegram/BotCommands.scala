@@ -3,31 +3,31 @@ package gateway.telegram
 enum BotCommand:
   case Start
   case Help
-  case ListRuns
-  case Status(runId: Long)
-  case Logs(runId: Long)
-  case Cancel(runId: Long)
+  case ListTasks
+  case Status(taskId: Long)
+  case Logs(taskId: Long)
+  case Cancel(taskId: Long)
 
   def toWorkflowOperation: BotWorkflowOperation =
     this match
-      case BotCommand.Start         => BotWorkflowOperation.ShowWelcome
-      case BotCommand.Help          => BotWorkflowOperation.ShowHelp
-      case BotCommand.ListRuns      => BotWorkflowOperation.ListRuns
-      case BotCommand.Status(runId) => BotWorkflowOperation.ShowRunStatus(runId)
-      case BotCommand.Logs(runId)   => BotWorkflowOperation.ShowRunLogs(runId)
-      case BotCommand.Cancel(runId) => BotWorkflowOperation.CancelRun(runId)
+      case BotCommand.Start          => BotWorkflowOperation.ShowWelcome
+      case BotCommand.Help           => BotWorkflowOperation.ShowHelp
+      case BotCommand.ListTasks      => BotWorkflowOperation.ListTasks
+      case BotCommand.Status(taskId) => BotWorkflowOperation.ShowTaskStatus(taskId)
+      case BotCommand.Logs(taskId)   => BotWorkflowOperation.ShowTaskLogs(taskId)
+      case BotCommand.Cancel(taskId) => BotWorkflowOperation.CancelTask(taskId)
 
 enum BotWorkflowOperation:
   case ShowWelcome
   case ShowHelp
-  case ListRuns
-  case ShowRunStatus(runId: Long)
-  case ShowRunLogs(runId: Long)
-  case CancelRun(runId: Long)
+  case ListTasks
+  case ShowTaskStatus(taskId: Long)
+  case ShowTaskLogs(taskId: Long)
+  case CancelTask(taskId: Long)
 
 enum CommandParseError:
   case EmptyInput
   case NotACommand(input: String)
   case UnknownCommand(command: String)
   case MissingParameter(command: String, parameter: String)
-  case InvalidRunId(command: String, rawValue: String)
+  case InvalidTaskId(command: String, rawValue: String)

@@ -9,6 +9,7 @@ import zio.*
 import zio.test.*
 
 import agents.AgentRegistry
+import db.*
 import gateway.MessageChannelError
 import gateway.models.*
 
@@ -73,7 +74,7 @@ object TelegramE2ESpec extends ZIOSpecDefault:
   )
 
   private def makeHarness(
-    notifierFactory: (TelegramClient, AgentRegistry) => WorkflowNotifier = (_, _) =>
+    notifierFactory: (TelegramClient, AgentRegistry, TaskRepository) => WorkflowNotifier = (_, _, _) =>
       WorkflowNotifier.noop,
     failSendMessage: TelegramSendMessage => Option[TelegramClientError] = _ => None,
     failSendDocument: TelegramSendDocument => Option[TelegramClientError] = _ => None,
@@ -92,11 +93,54 @@ object TelegramE2ESpec extends ZIOSpecDefault:
                             failSendDocument = failSendDocument,
                           )
       agentRegistry    <- AgentRegistry.live.build.map(_.get[AgentRegistry])
+      repository        = TestTaskRepository.empty
       channel          <- TelegramChannel.make(
                             client = client,
-                            workflowNotifier = notifierFactory(client, agentRegistry),
+                            workflowNotifier = notifierFactory(client, agentRegistry, repository),
                           )
     yield Harness(channel, client, sentMessagesRef, sentDocumentsRef)
+
+  private object TestTaskRepository:
+    val empty: TaskRepository = new TaskRepository:
+      private val now = Instant.EPOCH
+
+      override def createRun(run: TaskRunRow): IO[PersistenceError, Long]                           =
+        ZIO.fail(PersistenceError.QueryFailed("createRun", "not implemented in test repository"))
+      override def updateRun(run: TaskRunRow): IO[PersistenceError, Unit]                           = ZIO.unit
+      override def getRun(id: Long): IO[PersistenceError, Option[TaskRunRow]]                       = ZIO.none
+      override def listRuns(offset: Int, limit: Int): IO[PersistenceError, List[TaskRunRow]]       = ZIO.succeed(Nil)
+      override def deleteRun(id: Long): IO[PersistenceError, Unit]                                   = ZIO.unit
+      override def saveReport(report: TaskReportRow): IO[PersistenceError, Long]                     =
+        ZIO.fail(PersistenceError.QueryFailed("saveReport", "not implemented in test repository"))
+      override def getReport(reportId: Long): IO[PersistenceError, Option[TaskReportRow]]           = ZIO.none
+      override def getReportsByTask(taskRunId: Long): IO[PersistenceError, List[TaskReportRow]]     = ZIO.succeed(Nil)
+      override def saveArtifact(artifact: TaskArtifactRow): IO[PersistenceError, Long]               =
+        ZIO.fail(PersistenceError.QueryFailed("saveArtifact", "not implemented in test repository"))
+      override def getArtifactsByTask(taskRunId: Long): IO[PersistenceError, List[TaskArtifactRow]] = ZIO.succeed(Nil)
+      override def getAllSettings: IO[PersistenceError, List[SettingRow]]                             =
+        ZIO.succeed(
+          List(
+            SettingRow("gateway.name", "Test Gateway", now),
+            SettingRow("telegram.enabled", "true", now),
+          )
+        )
+      override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]]                 =
+        getAllSettings.map(_.find(_.key == key))
+      override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit]            = ZIO.unit
+      override def createWorkflow(workflow: WorkflowRow): IO[PersistenceError, Long]                  =
+        ZIO.fail(PersistenceError.QueryFailed("createWorkflow", "not implemented in test repository"))
+      override def getWorkflow(id: Long): IO[PersistenceError, Option[WorkflowRow]]                  = ZIO.none
+      override def getWorkflowByName(name: String): IO[PersistenceError, Option[WorkflowRow]]        = ZIO.none
+      override def listWorkflows: IO[PersistenceError, List[WorkflowRow]]                            = ZIO.succeed(Nil)
+      override def updateWorkflow(workflow: WorkflowRow): IO[PersistenceError, Unit]                 = ZIO.unit
+      override def deleteWorkflow(id: Long): IO[PersistenceError, Unit]                              = ZIO.unit
+      override def createCustomAgent(agent: CustomAgentRow): IO[PersistenceError, Long]               =
+        ZIO.fail(PersistenceError.QueryFailed("createCustomAgent", "not implemented in test repository"))
+      override def getCustomAgent(id: Long): IO[PersistenceError, Option[CustomAgentRow]]            = ZIO.none
+      override def getCustomAgentByName(name: String): IO[PersistenceError, Option[CustomAgentRow]]  = ZIO.none
+      override def listCustomAgents: IO[PersistenceError, List[CustomAgentRow]]                      = ZIO.succeed(Nil)
+      override def updateCustomAgent(agent: CustomAgentRow): IO[PersistenceError, Unit]              = ZIO.unit
+      override def deleteCustomAgent(id: Long): IO[PersistenceError, Unit]                           = ZIO.unit
 
   private def textUpdate(
     updateId: Long,
@@ -230,7 +274,7 @@ object TelegramE2ESpec extends ZIOSpecDefault:
         _        <- harness.channel.send(outbound(session, "Run 91 completed successfully"))
         sentMsgs <- harness.sentMessagesRef.get
       yield assertTrue(
-        sentMsgs.exists(_.text.contains("Workflow controls for run 91")),
+        sentMsgs.exists(_.text.contains("Task #91 was not found")),
         sentMsgs.exists(_.text.contains("Pause requested for run 91")),
         sentMsgs.exists(_.text.contains("Resume requested for run 91")),
         sentMsgs.exists(_.text.contains("Run 91 completed successfully")),
@@ -245,7 +289,7 @@ object TelegramE2ESpec extends ZIOSpecDefault:
         _        <- harness.channel.send(outbound(session, "Retry execution finished successfully"))
         sentMsgs <- harness.sentMessagesRef.get
       yield assertTrue(
-        sentMsgs.exists(_.text.contains("Invalid run id")),
+        sentMsgs.exists(_.text.contains("Invalid task id")),
         sentMsgs.exists(_.text.contains("Retry requested for run 77")),
         sentMsgs.exists(_.text.contains("Retry execution finished successfully")),
       )

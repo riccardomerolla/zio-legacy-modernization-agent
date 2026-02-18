@@ -93,7 +93,7 @@ object ResponseFormatter:
         List(
           TelegramInlineKeyboardButton(
             text = "Show More",
-            callback_data = s"more:$token",
+            callback_data = Some(s"more:$token"),
           )
         )
       )

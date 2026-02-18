@@ -18,21 +18,21 @@ object InlineKeyboards:
         List(
           TelegramInlineKeyboardButton(
             text = "View Details",
-            callback_data = encode("details", runId, paused),
+            callback_data = Some(encode("details", runId, paused)),
           ),
           TelegramInlineKeyboardButton(
             text = if paused then "Resume" else "Pause",
-            callback_data = encode("toggle", runId, paused),
+            callback_data = Some(encode("toggle", runId, paused)),
           ),
         ),
         List(
           TelegramInlineKeyboardButton(
             text = "Cancel",
-            callback_data = encode("cancel", runId, paused),
+            callback_data = Some(encode("cancel", runId, paused)),
           ),
           TelegramInlineKeyboardButton(
             text = "Retry",
-            callback_data = encode("retry", runId, paused),
+            callback_data = Some(encode("retry", runId, paused)),
           ),
         ),
       )
