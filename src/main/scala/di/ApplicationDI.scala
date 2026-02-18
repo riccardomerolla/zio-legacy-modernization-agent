@@ -184,3 +184,9 @@ object ApplicationDI:
         timeout: Duration,
       ): IO[TelegramClientError, TelegramMessage] =
         ZIO.fail(TelegramClientError.Network("telegram client is not configured"))
+
+      override def sendDocument(
+        request: TelegramSendDocument,
+        timeout: Duration,
+      ): IO[TelegramClientError, TelegramMessage] =
+        ZIO.fail(TelegramClientError.Network("telegram client is not configured"))

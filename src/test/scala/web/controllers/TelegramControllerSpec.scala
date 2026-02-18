@@ -41,6 +41,12 @@ object TelegramControllerSpec extends ZIOSpecDefault:
       ): IO[TelegramClientError, TelegramMessage] =
         ZIO.fail(TelegramClientError.Network("unused in webhook test"))
 
+      override def sendDocument(
+        request: TelegramSendDocument,
+        timeout: Duration,
+      ): IO[TelegramClientError, TelegramMessage] =
+        ZIO.fail(TelegramClientError.Network("unused in webhook test"))
+
   private def makeController(
     expectedBotToken: Option[String],
     expectedSecretToken: Option[String],

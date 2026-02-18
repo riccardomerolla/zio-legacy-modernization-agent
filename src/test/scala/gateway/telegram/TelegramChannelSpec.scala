@@ -1,5 +1,7 @@
 package gateway.telegram
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.time.Instant
 
 import zio.*
@@ -12,6 +14,7 @@ object TelegramChannelSpec extends ZIOSpecDefault:
   final private case class StubTelegramClient(
     updatesRef: Ref[List[TelegramUpdate]],
     sentRef: Ref[List[TelegramSendMessage]],
+    sentDocumentsRef: Ref[List[TelegramSendDocument]],
     response: TelegramSendMessage => TelegramMessage,
   ) extends TelegramClient:
 
@@ -28,6 +31,20 @@ object TelegramChannelSpec extends ZIOSpecDefault:
       timeout: Duration,
     ): IO[TelegramClientError, TelegramMessage] =
       sentRef.update(_ :+ request) *> ZIO.succeed(response(request))
+
+    override def sendDocument(
+      request: TelegramSendDocument,
+      timeout: Duration,
+    ): IO[TelegramClientError, TelegramMessage] =
+      sentDocumentsRef.update(_ :+ request) *>
+        ZIO.succeed(
+          TelegramMessage(
+            message_id = 950L,
+            date = 1710000000L,
+            chat = TelegramChat(id = request.chat_id, `type` = "private"),
+            text = request.caption,
+          )
+        )
 
   final private case class CapturingNotifier(
     commandsRef: Ref[List[(Long, Option[Long], BotCommand)]],
@@ -92,6 +109,35 @@ object TelegramChannelSpec extends ZIOSpecDefault:
       ),
     )
 
+  private def documentUpdate(
+    updateId: Long,
+    chatId: Long,
+    messageId: Long,
+    fileName: String,
+    caption: Option[String] = None,
+  ): TelegramUpdate =
+    TelegramUpdate(
+      update_id = updateId,
+      message = Some(
+        TelegramMessage(
+          message_id = messageId,
+          date = 1710000000L,
+          chat = TelegramChat(id = chatId, `type` = "private"),
+          caption = caption,
+          document = Some(
+            TelegramDocument(
+              file_id = s"file-$updateId",
+              file_unique_id = s"uniq-$updateId",
+              file_name = Some(fileName),
+              mime_type = Some("application/pdf"),
+              file_size = Some(128L),
+            )
+          ),
+          from = Some(TelegramUser(id = 1L, is_bot = false, first_name = "Alice", username = Some("alice"))),
+        )
+      ),
+    )
+
   private def outboundMessage(
     session: SessionKey,
     content: String,
@@ -111,22 +157,24 @@ object TelegramChannelSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("TelegramChannelSpec")(
     test("ingestUpdate normalizes inbound message and opens scoped session") {
       for
-        updatesRef <- Ref.make(List.empty[TelegramUpdate])
-        sentRef    <- Ref.make(List.empty[TelegramSendMessage])
-        client      = StubTelegramClient(
-                        updatesRef = updatesRef,
-                        sentRef = sentRef,
-                        response = req =>
-                          TelegramMessage(
-                            message_id = 500L,
-                            date = 1710000000L,
-                            chat = TelegramChat(id = req.chat_id, `type` = "private"),
-                            text = Some(req.text),
-                          ),
-                      )
-        channel    <- TelegramChannel.make(client)
-        normalized <- channel.ingestUpdate(update(updateId = 10L, chatId = 42L, messageId = 100L, text = Some("hello")))
-        sessions   <- channel.activeSessions
+        updatesRef  <- Ref.make(List.empty[TelegramUpdate])
+        sentRef     <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef <- Ref.make(List.empty[TelegramSendDocument])
+        client       = StubTelegramClient(
+                         updatesRef = updatesRef,
+                         sentRef = sentRef,
+                         sentDocumentsRef = sentDocsRef,
+                         response = req =>
+                           TelegramMessage(
+                             message_id = 500L,
+                             date = 1710000000L,
+                             chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                             text = Some(req.text),
+                           ),
+                       )
+        channel     <- TelegramChannel.make(client)
+        normalized  <- channel.ingestUpdate(update(updateId = 10L, chatId = 42L, messageId = 100L, text = Some("hello")))
+        sessions    <- channel.activeSessions
       yield assertTrue(
         normalized.exists(_.sessionKey.value == "conversation:42"),
         normalized.exists(_.direction == MessageDirection.Inbound),
@@ -138,27 +186,29 @@ object TelegramChannelSpec extends ZIOSpecDefault:
     },
     test("send resolves chat and reply routing from inbound metadata") {
       for
-        updatesRef <- Ref.make(List.empty[TelegramUpdate])
-        sentRef    <- Ref.make(List.empty[TelegramSendMessage])
-        client      = StubTelegramClient(
-                        updatesRef = updatesRef,
-                        sentRef = sentRef,
-                        response = req =>
-                          TelegramMessage(
-                            message_id = 777L,
-                            date = 1710000000L,
-                            chat = TelegramChat(id = req.chat_id, `type` = "private"),
-                            text = Some(req.text),
-                          ),
-                      )
-        channel    <- TelegramChannel.make(client)
-        _          <- channel.ingestUpdate(update(updateId = 11L, chatId = 99L, messageId = 321L, text = Some("question")))
-        session     = SessionScopeStrategy.PerConversation.build("telegram", "99")
-        fiber      <- channel.outbound(session).take(1).runCollect.fork
-        _          <- ZIO.yieldNow.repeatN(20)
-        _          <- channel.send(outboundMessage(session, "answer"))
-        sent       <- sentRef.get
-        out        <- fiber.join
+        updatesRef  <- Ref.make(List.empty[TelegramUpdate])
+        sentRef     <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef <- Ref.make(List.empty[TelegramSendDocument])
+        client       = StubTelegramClient(
+                         updatesRef = updatesRef,
+                         sentRef = sentRef,
+                         sentDocumentsRef = sentDocsRef,
+                         response = req =>
+                           TelegramMessage(
+                             message_id = 777L,
+                             date = 1710000000L,
+                             chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                             text = Some(req.text),
+                           ),
+                       )
+        channel     <- TelegramChannel.make(client)
+        _           <- channel.ingestUpdate(update(updateId = 11L, chatId = 99L, messageId = 321L, text = Some("question")))
+        session      = SessionScopeStrategy.PerConversation.build("telegram", "99")
+        fiber       <- channel.outbound(session).take(1).runCollect.fork
+        _           <- ZIO.yieldNow.repeatN(20)
+        _           <- channel.send(outboundMessage(session, "answer"))
+        sent        <- sentRef.get
+        out         <- fiber.join
       yield assertTrue(
         sent.length == 1,
         sent.head.chat_id == 99L,
@@ -167,29 +217,56 @@ object TelegramChannelSpec extends ZIOSpecDefault:
         out.head.metadata.get("telegram.message_id").contains("777"),
       )
     },
+    test("ingestUpdate accepts document upload and keeps file metadata") {
+      for
+        updatesRef  <- Ref.make(List.empty[TelegramUpdate])
+        sentRef     <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef <- Ref.make(List.empty[TelegramSendDocument])
+        client       = StubTelegramClient(
+                         updatesRef = updatesRef,
+                         sentRef = sentRef,
+                         sentDocumentsRef = sentDocsRef,
+                         response = req =>
+                           TelegramMessage(
+                             message_id = 600L,
+                             date = 1710000000L,
+                             chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                             text = Some(req.text),
+                           ),
+                       )
+        channel     <- TelegramChannel.make(client)
+        normalized  <- channel.ingestUpdate(documentUpdate(12L, 66L, 222L, "inventory.pdf"))
+      yield assertTrue(
+        normalized.exists(_.content.contains("Uploaded file: inventory.pdf")),
+        normalized.exists(_.metadata.get("telegram.document.file_name").contains("inventory.pdf")),
+        normalized.exists(_.metadata.get("telegram.document.file_id").contains("file-12")),
+      )
+    },
     test("pollInbound ingests only updates that contain non-empty text") {
       for
-        updatesRef <- Ref.make(
-                        List(
-                          update(updateId = 1L, chatId = 10L, messageId = 100L, text = Some("hi")),
-                          update(updateId = 2L, chatId = 10L, messageId = 101L, text = Some("   ")),
-                          TelegramUpdate(update_id = 3L, message = None),
-                        )
-                      )
-        sentRef    <- Ref.make(List.empty[TelegramSendMessage])
-        client      = StubTelegramClient(
-                        updatesRef = updatesRef,
-                        sentRef = sentRef,
-                        response = req =>
-                          TelegramMessage(
-                            message_id = 400L,
-                            date = 1710000000L,
-                            chat = TelegramChat(id = req.chat_id, `type` = "private"),
-                            text = Some(req.text),
-                          ),
-                      )
-        channel    <- TelegramChannel.make(client)
-        messages   <- channel.pollInbound()
+        updatesRef  <- Ref.make(
+                         List(
+                           update(updateId = 1L, chatId = 10L, messageId = 100L, text = Some("hi")),
+                           update(updateId = 2L, chatId = 10L, messageId = 101L, text = Some("   ")),
+                           TelegramUpdate(update_id = 3L, message = None),
+                         )
+                       )
+        sentRef     <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef <- Ref.make(List.empty[TelegramSendDocument])
+        client       = StubTelegramClient(
+                         updatesRef = updatesRef,
+                         sentRef = sentRef,
+                         sentDocumentsRef = sentDocsRef,
+                         response = req =>
+                           TelegramMessage(
+                             message_id = 400L,
+                             date = 1710000000L,
+                             chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                             text = Some(req.text),
+                           ),
+                       )
+        channel     <- TelegramChannel.make(client)
+        messages    <- channel.pollInbound()
       yield assertTrue(
         messages.length == 1,
         messages.head.content == "hi",
@@ -200,12 +277,14 @@ object TelegramChannelSpec extends ZIOSpecDefault:
       for
         updatesRef     <- Ref.make(List.empty[TelegramUpdate])
         sentRef        <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef    <- Ref.make(List.empty[TelegramSendDocument])
         commandsRef    <- Ref.make(List.empty[(Long, Option[Long], BotCommand)])
         parseErrorsRef <- Ref.make(List.empty[(Long, Option[Long], CommandParseError)])
         notifier        = CapturingNotifier(commandsRef, parseErrorsRef)
         client          = StubTelegramClient(
                             updatesRef = updatesRef,
                             sentRef = sentRef,
+                            sentDocumentsRef = sentDocsRef,
                             response = req =>
                               TelegramMessage(
                                 message_id = 900L,
@@ -232,12 +311,14 @@ object TelegramChannelSpec extends ZIOSpecDefault:
       for
         updatesRef     <- Ref.make(List.empty[TelegramUpdate])
         sentRef        <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef    <- Ref.make(List.empty[TelegramSendDocument])
         commandsRef    <- Ref.make(List.empty[(Long, Option[Long], BotCommand)])
         parseErrorsRef <- Ref.make(List.empty[(Long, Option[Long], CommandParseError)])
         notifier        = CapturingNotifier(commandsRef, parseErrorsRef)
         client          = StubTelegramClient(
                             updatesRef = updatesRef,
                             sentRef = sentRef,
+                            sentDocumentsRef = sentDocsRef,
                             response = req =>
                               TelegramMessage(
                                 message_id = 901L,
@@ -263,32 +344,71 @@ object TelegramChannelSpec extends ZIOSpecDefault:
     },
     test("send formats long response and supports show more callback") {
       for
-        updatesRef <- Ref.make(List.empty[TelegramUpdate])
-        sentRef    <- Ref.make(List.empty[TelegramSendMessage])
-        client      = StubTelegramClient(
-                        updatesRef = updatesRef,
-                        sentRef = sentRef,
-                        response = req =>
-                          TelegramMessage(
-                            message_id = req.reply_to_message_id.getOrElse(950L),
-                            date = 1710000000L,
-                            chat = TelegramChat(id = req.chat_id, `type` = "private"),
-                            text = Some(req.text),
-                          ),
-                      )
-        channel    <- TelegramChannel.make(client, workflowNotifier = WorkflowNotifier.noop)
-        _          <- channel.ingestUpdate(update(updateId = 41L, chatId = 88L, messageId = 911L, text = Some("hello")))
-        session     = SessionScopeStrategy.PerConversation.build("telegram", "88")
-        _          <- channel.send(outboundMessage(session, "line\n" * 300))
-        sent1      <- sentRef.get
-        showMore    = sent1.lastOption.flatMap(_.reply_markup).flatMap(_.inline_keyboard.flatten.headOption)
-        token       = showMore.map(_.callback_data.stripPrefix("more:")).getOrElse("missing")
-        _          <- channel.ingestUpdate(callbackUpdate(42L, 88L, 912L, s"more:$token"))
-        sent2      <- sentRef.get
+        updatesRef  <- Ref.make(List.empty[TelegramUpdate])
+        sentRef     <- Ref.make(List.empty[TelegramSendMessage])
+        sentDocsRef <- Ref.make(List.empty[TelegramSendDocument])
+        client       = StubTelegramClient(
+                         updatesRef = updatesRef,
+                         sentRef = sentRef,
+                         sentDocumentsRef = sentDocsRef,
+                         response = req =>
+                           TelegramMessage(
+                             message_id = req.reply_to_message_id.getOrElse(950L),
+                             date = 1710000000L,
+                             chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                             text = Some(req.text),
+                           ),
+                       )
+        channel     <- TelegramChannel.make(client, workflowNotifier = WorkflowNotifier.noop)
+        _           <- channel.ingestUpdate(update(updateId = 41L, chatId = 88L, messageId = 911L, text = Some("hello")))
+        session      = SessionScopeStrategy.PerConversation.build("telegram", "88")
+        _           <- channel.send(outboundMessage(session, "line\n" * 300))
+        sent1       <- sentRef.get
+        showMore     = sent1.lastOption.flatMap(_.reply_markup).flatMap(_.inline_keyboard.flatten.headOption)
+        token        = showMore.map(_.callback_data.stripPrefix("more:")).getOrElse("missing")
+        _           <- channel.ingestUpdate(callbackUpdate(42L, 88L, 912L, s"more:$token"))
+        sent2       <- sentRef.get
       yield assertTrue(
         sent1.nonEmpty,
         showMore.exists(_.text == "Show More"),
         sent2.length >= 2,
       )
+    },
+    test("send uploads generated attachments as zip document") {
+      ZIO.acquireRelease(
+        ZIO.attemptBlocking {
+          val path = Files.createTempFile("telegram-attachment", ".pdf")
+          Files.writeString(path, "sample-pdf-content", StandardCharsets.UTF_8)
+          path
+        }.orDie
+      )(path => ZIO.attemptBlocking(Files.deleteIfExists(path)).ignore).flatMap { tempPdf =>
+        for
+          updatesRef  <- Ref.make(List.empty[TelegramUpdate])
+          sentRef     <- Ref.make(List.empty[TelegramSendMessage])
+          sentDocsRef <- Ref.make(List.empty[TelegramSendDocument])
+          client       = StubTelegramClient(
+                           updatesRef = updatesRef,
+                           sentRef = sentRef,
+                           sentDocumentsRef = sentDocsRef,
+                           response = req =>
+                             TelegramMessage(
+                               message_id = req.reply_to_message_id.getOrElse(960L),
+                               date = 1710000000L,
+                               chat = TelegramChat(id = req.chat_id, `type` = "private"),
+                               text = Some(req.text),
+                             ),
+                         )
+          channel     <- TelegramChannel.make(client)
+          _           <- channel.ingestUpdate(update(updateId = 51L, chatId = 98L, messageId = 811L, text = Some("hello")))
+          session      = SessionScopeStrategy.PerConversation.build("telegram", "98")
+          outbound     = outboundMessage(session, "done", metadata = Map("report.path" -> tempPdf.toString))
+          _           <- channel.send(outbound)
+          sentDocs    <- sentDocsRef.get
+        yield assertTrue(
+          sentDocs.nonEmpty,
+          sentDocs.head.document_path.nonEmpty,
+          sentDocs.head.caption.exists(_.contains("Generated files archive")),
+        )
+      }
     },
   ) @@ TestAspect.sequential @@ TestAspect.timeout(10.seconds)

@@ -5,7 +5,7 @@ import scala.concurrent.{ ExecutionContext, Future }
 import zio.*
 
 import com.bot4s.telegram.api.RequestHandler
-import com.bot4s.telegram.methods.{ GetUpdates, ParseMode, SendMessage }
+import com.bot4s.telegram.methods.{ GetUpdates, ParseMode, SendDocument, SendMessage }
 import com.bot4s.telegram.models.{ Chat as BotChat, Message as BotMessage, Update as BotUpdate, User as BotUser, * }
 
 trait TelegramClient:
@@ -19,6 +19,11 @@ trait TelegramClient:
   def sendMessage(
     request: TelegramSendMessage,
     timeout: Duration = 30.seconds,
+  ): IO[TelegramClientError, TelegramMessage]
+
+  def sendDocument(
+    request: TelegramSendDocument,
+    timeout: Duration = 120.seconds,
   ): IO[TelegramClientError, TelegramMessage]
 
 object TelegramClient:
@@ -35,6 +40,12 @@ object TelegramClient:
     timeout: Duration = 30.seconds,
   ): ZIO[TelegramClient, TelegramClientError, TelegramMessage] =
     ZIO.serviceWithZIO[TelegramClient](_.sendMessage(request, timeout))
+
+  def sendDocument(
+    request: TelegramSendDocument,
+    timeout: Duration = 120.seconds,
+  ): ZIO[TelegramClient, TelegramClientError, TelegramMessage] =
+    ZIO.serviceWithZIO[TelegramClient](_.sendDocument(request, timeout))
 
   def fromRequestHandler(
     requestHandler: RequestHandler[Future]
@@ -85,6 +96,19 @@ final case class TelegramClientLive(
     )
     executeFuture(requestHandler.sendRequest(method), timeout).map(fromBotMessage)
 
+  override def sendDocument(
+    request: TelegramSendDocument,
+    timeout: Duration,
+  ): IO[TelegramClientError, TelegramMessage] =
+    val method: SendDocument = SendDocument(
+      chatId = ChatId(request.chat_id),
+      document = InputFile(java.nio.file.Paths.get(request.document_path)),
+      caption = request.caption,
+      parseMode = request.parse_mode.flatMap(parseModeFromString),
+      replyToMessageId = request.reply_to_message_id,
+    )
+    executeFuture(requestHandler.sendRequest(method), timeout).map(fromBotMessage)
+
   private def executeFuture[A](
     future: => Future[A],
     timeout: Duration,
@@ -119,7 +143,18 @@ final case class TelegramClientLive(
       date = message.date.toLong,
       chat = fromBotChat(message.chat),
       text = message.text,
+      caption = message.caption,
+      document = message.document.map(fromBotDocument),
       from = message.from.map(fromBotUser),
+    )
+
+  private def fromBotDocument(document: Document): TelegramDocument =
+    TelegramDocument(
+      file_id = document.fileId,
+      file_unique_id = document.fileUniqueId,
+      file_name = document.fileName,
+      mime_type = document.mimeType,
+      file_size = document.fileSize.flatMap(anyToLong),
     )
 
   private def fromBotChat(chat: BotChat): TelegramChat =
@@ -167,3 +202,13 @@ final case class TelegramClientLive(
   private def longToInt(value: Long): Option[Int] =
     if value >= Int.MinValue.toLong && value <= Int.MaxValue.toLong then Some(value.toInt)
     else None
+
+  private def anyToLong(value: Any): Option[Long] =
+    value match
+      case long: Long                       => Some(long)
+      case int: Int                         => Some(int.toLong)
+      case short: Short                     => Some(short.toLong)
+      case double: Double if double.isWhole => Some(double.toLong)
+      case float: Float if float.isWhole    => Some(float.toLong)
+      case string: String                   => string.toLongOption
+      case _                                => None

@@ -23,6 +23,12 @@ object TelegramPollingServiceSpec extends ZIOSpecDefault:
     ): IO[TelegramClientError, TelegramMessage] =
       ZIO.fail(TelegramClientError.Network("unused"))
 
+    override def sendDocument(
+      request: TelegramSendDocument,
+      timeout: Duration,
+    ): IO[TelegramClientError, TelegramMessage] =
+      ZIO.fail(TelegramClientError.Network("unused"))
+
   final private case class CapturingGateway(messagesRef: Ref[List[NormalizedMessage]]) extends GatewayService:
     override def enqueueInbound(message: NormalizedMessage): UIO[Unit]  = ZIO.unit
     override def enqueueOutbound(message: NormalizedMessage): UIO[Unit] = ZIO.unit

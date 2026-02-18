@@ -10,6 +10,7 @@ final case class TelegramChannel(
   name: String,
   scopeStrategy: SessionScopeStrategy,
   client: TelegramClient,
+  fileTransfer: FileTransfer,
   workflowNotifier: WorkflowNotifier,
   showMoreRef: Ref[Map[String, String]],
   sessionsRef: Ref[Set[SessionKey]],
@@ -88,6 +89,11 @@ final case class TelegramChannel(
                          state.copy(lastOutboundMessage = TelegramMetadata.fromMap(normalized.metadata)),
                        )
                      }
+      _           <- maybeSendGeneratedFiles(
+                       chatId = chatId,
+                       replyToMessageId = telegramMsg.message_id,
+                       metadata = message.metadata,
+                     )
       _           <- offerToSessionQueue(message.sessionKey, normalized)
     yield ()
 
@@ -111,7 +117,7 @@ final case class TelegramChannel(
       case None          => ZIO.none
       case Some(message) =>
         val sessionKey = sessionForChat(message.chat.id)
-        val content    = message.text.map(_.trim).filter(_.nonEmpty)
+        val content    = inboundContent(message)
         content match
           case None       => ZIO.none
           case Some(text) =>
@@ -131,7 +137,7 @@ final case class TelegramChannel(
                            update = update,
                            message = message,
                            content = text,
-                           metadata = metadata,
+                           metadata = metadata ++ documentMetadata(message),
                            now = now,
                          )
             yield routed
@@ -203,6 +209,30 @@ final case class TelegramChannel(
 
   private def extractMessage(update: TelegramUpdate): Option[TelegramMessage] =
     update.message.orElse(update.edited_message)
+
+  private def inboundContent(message: TelegramMessage): Option[String] =
+    message.text
+      .orElse(message.caption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .orElse {
+        message.document.map { document =>
+          val filename = document.file_name.getOrElse("document")
+          s"Uploaded file: $filename"
+        }
+      }
+
+  private def documentMetadata(message: TelegramMessage): Map[String, String] =
+    message.document match
+      case None           => Map.empty
+      case Some(document) =>
+        Map(
+          "telegram.document.file_id"        -> document.file_id,
+          "telegram.document.file_unique_id" -> document.file_unique_id,
+        ) ++
+          document.file_name.map("telegram.document.file_name" -> _) ++
+          document.mime_type.map("telegram.document.mime_type" -> _) ++
+          document.file_size.map(size => "telegram.document.file_size" -> size.toString)
 
   private def routeInboundOrCommand(
     sessionKey: SessionKey,
@@ -403,12 +433,70 @@ final case class TelegramChannel(
   private def notifierError(error: WorkflowNotifierError): MessageChannelError =
     MessageChannelError.InvalidMessage(s"telegram workflow notifier failed: $error")
 
+  private def maybeSendGeneratedFiles(
+    chatId: Long,
+    replyToMessageId: Long,
+    metadata: Map[String, String],
+  ): IO[MessageChannelError, Unit] =
+    (for
+      paths <- FileTransfer.attachmentPaths(metadata)
+      _     <-
+        if paths.isEmpty then ZIO.unit
+        else
+          notifyTransferProgress(
+            chatId,
+            replyToMessageId,
+            FileTransferProgress("prepare", 0, "Preparing file transfer..."),
+          ) *>
+            fileTransfer
+              .sendAsZip(
+                chatId = chatId,
+                replyToMessageId = Some(replyToMessageId),
+                files = paths,
+                caption = Some("Generated files archive"),
+                onProgress = progress => notifyTransferProgress(chatId, replyToMessageId, progress),
+              )
+              .mapError(err => MessageChannelError.InvalidMessage(s"telegram file transfer failed: $err"))
+              .unit
+    yield ()).catchAll(err => ZIO.logWarning(s"telegram file transfer failed: $err"))
+
+  private def notifyTransferProgress(
+    chatId: Long,
+    replyToMessageId: Long,
+    progress: FileTransferProgress,
+  ): UIO[Unit] =
+    client
+      .sendMessage(
+        TelegramSendMessage(
+          chat_id = chatId,
+          text = s"File transfer: ${progress.percentage}% (${progress.detail})",
+          reply_to_message_id = Some(replyToMessageId),
+        )
+      )
+      .unit
+      .ignore
+
 object TelegramChannel:
   def make(
     client: TelegramClient,
     workflowNotifier: WorkflowNotifier = WorkflowNotifier.noop,
     name: String = "telegram",
     scopeStrategy: SessionScopeStrategy = SessionScopeStrategy.PerConversation,
+  ): UIO[TelegramChannel] =
+    make(
+      client = client,
+      fileTransfer = FileTransferLive(client),
+      workflowNotifier = workflowNotifier,
+      name = name,
+      scopeStrategy = scopeStrategy,
+    )
+
+  def make(
+    client: TelegramClient,
+    fileTransfer: FileTransfer,
+    workflowNotifier: WorkflowNotifier,
+    name: String,
+    scopeStrategy: SessionScopeStrategy,
   ): UIO[TelegramChannel] =
     for
       sessions <- Ref.make(Set.empty[SessionKey])
@@ -420,6 +508,7 @@ object TelegramChannel:
       name = name,
       scopeStrategy = scopeStrategy,
       client = client,
+      fileTransfer = fileTransfer,
       workflowNotifier = workflowNotifier,
       showMoreRef = showMore,
       sessionsRef = sessions,
@@ -432,6 +521,7 @@ object TelegramChannel:
     ZLayer.fromZIO {
       for
         client  <- ZIO.service[TelegramClient]
-        channel <- make(client)
+        transfer = FileTransferLive(client)
+        channel <- make(client, transfer, WorkflowNotifier.noop, "telegram", SessionScopeStrategy.PerConversation)
       yield channel
     }
