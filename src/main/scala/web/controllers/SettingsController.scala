@@ -6,8 +6,9 @@ import java.nio.charset.StandardCharsets
 import zio.*
 import zio.http.*
 
+import _root_.config.SettingsApplier
 import db.*
-import models.{ ActivityEvent, ActivityEventType }
+import models.{ ActivityEvent, ActivityEventType, GatewayConfig }
 import web.views.HtmlViews
 import web.{ ActivityHub, ErrorHandlingMiddleware }
 
@@ -19,12 +20,13 @@ object SettingsController:
   def routes: ZIO[SettingsController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[SettingsController](_.routes)
 
-  val live: ZLayer[TaskRepository & ActivityHub, Nothing, SettingsController] =
+  val live: ZLayer[TaskRepository & ActivityHub & Ref[GatewayConfig], Nothing, SettingsController] =
     ZLayer.fromFunction(SettingsControllerLive.apply)
 
 final case class SettingsControllerLive(
   repository: TaskRepository,
   activityHub: ActivityHub,
+  configRef: Ref[GatewayConfig],
 ) extends SettingsController:
 
   private val settingsKeys: List[String] = List(
@@ -64,29 +66,31 @@ final case class SettingsControllerLive(
     Method.POST / "settings" -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          form <- parseForm(req)
-          _    <- ZIO.foreachDiscard(settingsKeys) { key =>
-                    val value = key match
-                      case "gateway.dryRun" | "gateway.verbose" | "telegram.enabled" =>
-                        if form.get(key).exists(_.equalsIgnoreCase("on")) then "true" else "false"
-                      case _                                                         =>
-                        form.getOrElse(key, "")
-                    if value.nonEmpty || key.startsWith("ai.") || key.startsWith("gateway.") || key.startsWith("telegram.")
-                    then
-                      repository.upsertSetting(key, value)
-                    else ZIO.unit
-                  }
-          now  <- Clock.instant
-          _    <- activityHub.publish(
-                    ActivityEvent(
-                      eventType = ActivityEventType.ConfigChanged,
-                      source = "settings",
-                      summary = "Application settings updated",
-                      createdAt = now,
-                    )
-                  )
-          rows <- repository.getAllSettings
-          saved = rows.map(r => r.key -> r.value).toMap
+          form     <- parseForm(req)
+          _        <- ZIO.foreachDiscard(settingsKeys) { key =>
+                        val value = key match
+                          case "gateway.dryRun" | "gateway.verbose" | "telegram.enabled" =>
+                            if form.get(key).exists(_.equalsIgnoreCase("on")) then "true" else "false"
+                          case _                                                         =>
+                            form.getOrElse(key, "")
+                        if value.nonEmpty || key.startsWith("ai.") || key.startsWith("gateway.") || key.startsWith("telegram.")
+                        then
+                          repository.upsertSetting(key, value)
+                        else ZIO.unit
+                      }
+          rows     <- repository.getAllSettings
+          saved     = rows.map(r => r.key -> r.value).toMap
+          newConfig = SettingsApplier.toGatewayConfig(saved)
+          _        <- configRef.set(newConfig)
+          now      <- Clock.instant
+          _        <- activityHub.publish(
+                        ActivityEvent(
+                          eventType = ActivityEventType.ConfigChanged,
+                          source = "settings",
+                          summary = "Application settings updated",
+                          createdAt = now,
+                        )
+                      )
         yield html(HtmlViews.settingsPage(saved, Some("Settings saved successfully.")))
       }
     },
