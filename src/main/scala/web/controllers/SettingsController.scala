@@ -2,15 +2,18 @@ package web.controllers
 
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.nio.file.{ Files, Paths, StandardOpenOption }
 
 import zio.*
 import zio.http.*
+import zio.json.*
 
 import _root_.config.SettingsApplier
 import db.*
+import io.github.riccardomerolla.zio.eclipsestore.service.{ LifecycleCommand, LifecycleStatus }
 import llm4zio.core.{ LlmError, LlmService }
 import models.{ ActivityEvent, ActivityEventType, GatewayConfig }
-import store.{ DataStoreModule, StoreConfig }
+import store.{ ConfigStoreModule, DataStoreModule, StoreConfig }
 import web.views.{ HtmlViews, SettingsView }
 import web.{ ActivityHub, ErrorHandlingMiddleware }
 
@@ -24,7 +27,8 @@ object SettingsController:
 
   val live
     : ZLayer[
-      ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService & DataStoreModule.DataStoreService & StoreConfig &
+      ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService & ConfigStoreModule.ConfigStoreService &
+        DataStoreModule.DataStoreService & StoreConfig &
         DataStoreModule.TaskRunsStore &
         DataStoreModule.TaskReportsStore &
         DataStoreModule.TaskArtifactsStore &
@@ -45,6 +49,7 @@ final case class SettingsControllerLive(
   activityHub: ActivityHub,
   configRef: Ref[GatewayConfig],
   llmService: LlmService,
+  configStoreService: ConfigStoreModule.ConfigStoreService,
   dataStoreService: DataStoreModule.DataStoreService,
   storeConfig: StoreConfig,
   taskRunsStore: DataStoreModule.TaskRunsStore,
@@ -115,10 +120,12 @@ final case class SettingsControllerLive(
                           repository.upsertSetting(key, value)
                         else ZIO.unit
                       }
+          _        <- checkpointConfigStore
           rows     <- repository.getAllSettings
           saved     = rows.map(r => r.key -> r.value).toMap
           newConfig = SettingsApplier.toGatewayConfig(saved)
           _        <- configRef.set(newConfig)
+          _        <- writeSettingsSnapshot(saved)
           now      <- Clock.instant
           _        <- activityHub.publish(
                         ActivityEvent(
@@ -173,6 +180,40 @@ final case class SettingsControllerLive(
 
   private def safeReset(name: String)(effect: ZIO[Any, Any, Unit]): UIO[Unit] =
     effect.catchAll(err => ZIO.logWarning(s"data reset step '$name' failed: $err"))
+
+  private def checkpointConfigStore: IO[PersistenceError, Unit] =
+    for
+      status <- configStoreService.store
+                  .maintenance(LifecycleCommand.Checkpoint)
+                  .mapError(err => PersistenceError.QueryFailed("config_checkpoint", err.toString))
+      _      <- status match
+                  case LifecycleStatus.Failed(message) =>
+                    ZIO.fail(PersistenceError.QueryFailed("config_checkpoint", s"checkpoint failed: $message"))
+                  case _                               => ZIO.unit
+      _      <- configStoreService.store
+                  .reloadRoots
+                  .mapError(err => PersistenceError.QueryFailed("config_checkpoint", s"reloadRoots failed: $err"))
+    yield ()
+
+  private def writeSettingsSnapshot(settings: Map[String, String]): IO[PersistenceError, Unit] =
+    ZIO
+      .attemptBlocking {
+        val configStorePath = Paths.get(storeConfig.configStorePath)
+        Files.createDirectories(configStorePath)
+        val snapshot        = configStorePath.resolve("settings.snapshot.json")
+        Files.writeString(
+          snapshot,
+          settings.toJson,
+          StandardCharsets.UTF_8,
+          StandardOpenOption.CREATE,
+          StandardOpenOption.TRUNCATE_EXISTING,
+          StandardOpenOption.WRITE,
+        )
+      }
+      .mapError(err =>
+        PersistenceError.QueryFailed("settings_snapshot", Option(err.getMessage).getOrElse(err.toString))
+      )
+      .unit
 
   private def testAIConnection(req: Request): UIO[Response] =
     val test =

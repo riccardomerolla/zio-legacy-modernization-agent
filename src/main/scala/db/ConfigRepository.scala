@@ -7,6 +7,7 @@ import zio.json.*
 
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.domain.GigaMapQuery
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.service.GigaMap
+import io.github.riccardomerolla.zio.eclipsestore.service.{ LifecycleCommand, LifecycleStatus }
 import store.{ AgentId, ConfigStoreModule, WorkflowId }
 
 trait ConfigRepository:
@@ -100,7 +101,8 @@ object ConfigRepository:
 
   val live
     : ZLayer[
-      ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore & ConfigStoreModule.CustomAgentsStore,
+      ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore &
+        ConfigStoreModule.CustomAgentsStore,
       Nothing,
       ConfigRepository,
     ] =
@@ -171,6 +173,7 @@ object ConfigRepository:
     )
 
 final case class ConfigRepositoryES(
+  configStore: ConfigStoreModule.ConfigStoreService,
   settings: GigaMap[String, String],
   workflows: GigaMap[WorkflowId, store.WorkflowRow],
   agents: GigaMap[AgentId, store.CustomAgentRow],
@@ -204,10 +207,11 @@ final case class ConfigRepositoryES(
       _   <- settings
                .put(key, StoredSetting(value, now).toJson)
                .mapError(storeError("upsertSetting"))
+      _   <- checkpointConfigStore("upsertSetting")
     yield ()
 
   override def deleteSetting(key: String): IO[PersistenceError, Unit] =
-    settings.remove(key).unit.mapError(storeError("deleteSetting"))
+    settings.remove(key).unit.mapError(storeError("deleteSetting")) *> checkpointConfigStore("deleteSetting")
 
   override def deleteSettingsByPrefix(prefix: String): IO[PersistenceError, Unit] =
     for
@@ -215,6 +219,7 @@ final case class ConfigRepositoryES(
       _    <- ZIO.foreachDiscard(keys.filter(_.startsWith(prefix))) { key =>
                 settings.remove(key).unit.mapError(storeError("deleteSettingsByPrefix"))
               }
+      _    <- checkpointConfigStore("deleteSettingsByPrefix")
     yield ()
 
   override def createWorkflow(workflow: WorkflowRow): IO[PersistenceError, Long] =
@@ -387,17 +392,30 @@ final case class ConfigRepositoryES(
       case Right(stored) => SettingRow(key = key, value = stored.value, updatedAt = stored.updatedAt)
       case Left(_)       => SettingRow(key = key, value = raw, updatedAt = fallbackUpdatedAt)
 
+  private def checkpointConfigStore(op: String): IO[PersistenceError, Unit] =
+    for
+      status <- configStore.store
+                  .maintenance(LifecycleCommand.Checkpoint)
+                  .mapError(err => PersistenceError.QueryFailed(op, err.toString))
+      _      <- status match
+                  case LifecycleStatus.Failed(message) =>
+                    ZIO.fail(PersistenceError.QueryFailed(op, s"Config store checkpoint failed: $message"))
+                  case _                               => ZIO.unit
+    yield ()
+
 object ConfigRepositoryES:
   val live
     : ZLayer[
-      ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore & ConfigStoreModule.CustomAgentsStore,
+      ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore &
+        ConfigStoreModule.CustomAgentsStore,
       Nothing,
       ConfigRepository,
     ] =
     ZLayer.fromZIO {
       for
+        configSvc <- ZIO.service[ConfigStoreModule.ConfigStoreService]
         settings  <- ConfigStoreModule.settingsMap
         workflows <- ConfigStoreModule.workflowsMap
         agents    <- ConfigStoreModule.customAgentsMap
-      yield ConfigRepositoryES(settings, workflows, agents)
+      yield ConfigRepositoryES(configSvc, settings, workflows, agents)
     }

@@ -141,7 +141,8 @@ object TaskRepository:
   val live
     : ZLayer[
       DataStoreModule.TaskRunsStore & DataStoreModule.TaskReportsStore & DataStoreModule.TaskArtifactsStore &
-        ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore & ConfigStoreModule.CustomAgentsStore,
+        ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore &
+        ConfigStoreModule.CustomAgentsStore,
       Nothing,
       TaskRepository,
     ] =

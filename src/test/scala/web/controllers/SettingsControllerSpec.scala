@@ -11,7 +11,7 @@ import db.*
 import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import models.*
-import store.{ DataStoreModule, StoreConfig }
+import store.{ ConfigStoreModule, DataStoreModule, StoreConfig }
 import web.ActivityHub
 
 object SettingsControllerSpec extends ZIOSpecDefault:
@@ -97,6 +97,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
                      override def subscribe: UIO[Dequeue[ActivityEvent]]   = Queue.unbounded[ActivityEvent].map(identity)
     yield ZLayer.make[SettingsController & ConfigRepository & StoreConfig & DataStoreModule.TaskRunsStore](
       ZLayer.succeed(storeCfg),
+      ConfigStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
       DataStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
       ZLayer.succeed(configRepo),
       ZLayer.succeed(hub),

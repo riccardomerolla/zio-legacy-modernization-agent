@@ -43,6 +43,13 @@ object MemoryControllerSpec extends ZIOSpecDefault:
     ): IO[Throwable, List[MemoryEntry]] =
       ZIO.succeed(List(seeded).slice(page * pageSize, (page + 1) * pageSize))
 
+    override def listAll(
+      filter: MemoryFilter,
+      page: Int,
+      pageSize: Int,
+    ): IO[Throwable, List[MemoryEntry]] =
+      ZIO.succeed(List(seeded).slice(page * pageSize, (page + 1) * pageSize))
+
     override def deleteById(userId: UserId, id: MemoryId): IO[Throwable, Unit] =
       ZIO.unit
 

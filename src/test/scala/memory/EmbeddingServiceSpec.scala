@@ -1,41 +1,45 @@
 package memory
 
 import zio.*
-import zio.stream.ZStream
 import zio.test.*
 
-import llm4zio.core.*
-import llm4zio.tools.{ AnyTool, JsonSchema }
+import llm4zio.providers.HttpClient
+import models.{ AIProvider, AIProviderConfig, GatewayConfig }
 
 object EmbeddingServiceSpec extends ZIOSpecDefault:
 
-  private val mockLlmLayer: ULayer[LlmService] =
+  private val mockHttpLayer: ULayer[HttpClient] =
     ZLayer.succeed(
-      new LlmService:
-        override def execute(prompt: String): IO[LlmError, LlmResponse] =
-          if prompt.contains("second") then ZIO.succeed(LlmResponse(content = "[0.3,0.4]"))
-          else ZIO.succeed(LlmResponse(content = "[0.1,0.2]"))
+      new HttpClient:
+        override def postJson(
+          url: String,
+          body: String,
+          headers: Map[String, String],
+          timeout: Duration,
+        ): IO[llm4zio.core.LlmError, String] =
+          if url.contains("/embeddings") then
+            if body.contains("second") then ZIO.succeed("""{"data":[{"embedding":[0.3,0.4]}]}""")
+            else ZIO.succeed("""{"data":[{"embedding":[0.1,0.2]}]}""")
+          else ZIO.fail(llm4zio.core.LlmError.InvalidRequestError(s"Unexpected URL: $url"))
+    )
 
-        override def executeStream(prompt: String): zio.stream.Stream[LlmError, LlmChunk] =
-          ZStream.empty
-
-        override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
-          ZIO.succeed(LlmResponse(content = "history"))
-
-        override def executeStreamWithHistory(messages: List[Message]): zio.stream.Stream[LlmError, LlmChunk] =
-          ZStream.empty
-
-        override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
-          ZIO.succeed(ToolCallResponse(content = Some("ok"), toolCalls = Nil, finishReason = "stop"))
-
-        override def executeStructured[A: zio.json.JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
-          ZIO.fail(LlmError.InvalidRequestError("unused in test"))
-
-        override def isAvailable: UIO[Boolean] = ZIO.succeed(true)
+  private val configLayer: ULayer[Ref[GatewayConfig]] =
+    ZLayer.fromZIO(
+      Ref.make(
+        GatewayConfig(
+          aiProvider = Some(
+            AIProviderConfig(
+              provider = AIProvider.OpenAi,
+              baseUrl = Some("https://api.openai.com/v1"),
+              apiKey = Some("test-key"),
+            )
+          )
+        )
+      )
     )
 
   private val embeddingLayer: ULayer[EmbeddingService] =
-    mockLlmLayer >>> EmbeddingService.live
+    configLayer ++ mockHttpLayer >>> EmbeddingService.live
 
   def spec: Spec[TestEnvironment & Scope, Any] =
     suite("EmbeddingServiceSpec")(

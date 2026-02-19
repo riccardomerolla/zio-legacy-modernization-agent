@@ -3,6 +3,7 @@ package memory
 import zio.*
 
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.domain.GigaMapQuery
+import io.github.riccardomerolla.zio.eclipsestore.gigamap.error.GigaMapError
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.service.GigaMap
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.vector.{
   SimilarityFunction,
@@ -58,11 +59,27 @@ final case class MemoryRepositoryES(
     page: Int,
     pageSize: Int,
   ): IO[Throwable, List[MemoryEntry]] =
+    queryEntriesForUser(userId)
+      .map(
+        _.toList
+          .filter(entry => filter.sessionId.forall(_ == entry.sessionId))
+          .filter(entry => filter.kind.forall(_ == entry.kind))
+          .filter(entry => filter.tags.forall(tag => entry.tags.contains(tag)))
+          .sortBy(_.createdAt)(Ordering[java.time.Instant].reverse)
+          .slice(math.max(0, page) * math.max(1, pageSize), math.max(0, page + 1) * math.max(1, pageSize))
+      )
+
+  override def listAll(
+    filter: MemoryFilter,
+    page: Int,
+    pageSize: Int,
+  ): IO[Throwable, List[MemoryEntry]] =
     memoryMap
-      .query(GigaMapQuery.ByIndex("userId", userId.value))
+      .query(GigaMapQuery.All[MemoryEntry]())
       .mapError(toThrowable)
       .map(
         _.toList
+          .filter(entry => filter.userId.forall(_ == entry.userId))
           .filter(entry => filter.sessionId.forall(_ == entry.sessionId))
           .filter(entry => filter.kind.forall(_ == entry.kind))
           .filter(entry => filter.tags.forall(tag => entry.tags.contains(tag)))
@@ -108,6 +125,16 @@ final case class MemoryRepositoryES(
           vectorizer = MemoryVectorizer,
         )
       )
+      .mapError(toThrowable)
+
+  private def queryEntriesForUser(userId: UserId): IO[Throwable, Chunk[MemoryEntry]] =
+    memoryMap
+      .query(GigaMapQuery.ByIndex("userId", userId.value))
+      .catchSome {
+        case GigaMapError.IndexNotDefined("userId") =>
+          ZIO.logWarning("memoryEntries 'userId' index missing; falling back to full scan") *>
+            memoryMap.query(GigaMapQuery.All[MemoryEntry]()).map(_.filter(_.userId == userId))
+      }
       .mapError(toThrowable)
 
   private def vectorChunk(values: Vector[Float]): Chunk[Float] =

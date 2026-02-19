@@ -7,9 +7,11 @@ import zio.json.*
 
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.domain.GigaMapQuery
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.service.GigaMap
+import io.github.riccardomerolla.zio.eclipsestore.service.{ LifecycleCommand, LifecycleStatus }
 import store.*
 
 final case class TaskRepositoryES(
+  configStore: ConfigStoreModule.ConfigStoreService,
   taskRuns: GigaMap[TaskRunId, store.TaskRunRow],
   taskReports: GigaMap[ReportId, store.TaskReportRow],
   taskArtifacts: GigaMap[ArtifactId, store.TaskArtifactRow],
@@ -116,6 +118,7 @@ final case class TaskRepositoryES(
       _   <- settings
                .put(key, StoredSetting(value, now).toJson)
                .mapError(storeError("upsertSetting"))
+      _   <- checkpointConfigStore("upsertSetting")
     yield ()
 
   override def getSettingsByPrefix(prefix: String): IO[PersistenceError, List[db.SettingRow]] =
@@ -127,6 +130,7 @@ final case class TaskRepositoryES(
       _    <- ZIO.foreachDiscard(keys.filter(_.startsWith(prefix))) { key =>
                 settings.remove(key).unit.mapError(storeError("deleteSettingsByPrefix"))
               }
+      _    <- checkpointConfigStore("deleteSettingsByPrefix")
     yield ()
 
   override def createWorkflow(workflow: db.WorkflowRow): IO[PersistenceError, Long] =
@@ -374,21 +378,34 @@ final case class TaskRepositoryES(
       case Right(stored) => db.SettingRow(key = key, value = stored.value, updatedAt = stored.updatedAt)
       case Left(_)       => db.SettingRow(key = key, value = raw, updatedAt = fallbackUpdatedAt)
 
+  private def checkpointConfigStore(op: String): IO[PersistenceError, Unit] =
+    for
+      status <- configStore.store
+                  .maintenance(LifecycleCommand.Checkpoint)
+                  .mapError(err => PersistenceError.QueryFailed(op, err.toString))
+      _      <- status match
+                  case LifecycleStatus.Failed(message) =>
+                    ZIO.fail(PersistenceError.QueryFailed(op, s"Config store checkpoint failed: $message"))
+                  case _                               => ZIO.unit
+    yield ()
+
 object TaskRepositoryES:
   val live
     : ZLayer[
       DataStoreModule.TaskRunsStore & DataStoreModule.TaskReportsStore & DataStoreModule.TaskArtifactsStore &
-        ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore & ConfigStoreModule.CustomAgentsStore,
+        ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore &
+        ConfigStoreModule.CustomAgentsStore,
       Nothing,
       TaskRepository,
     ] =
     ZLayer.fromZIO {
       for
+        configStore   <- ZIO.service[ConfigStoreModule.ConfigStoreService]
         taskRuns      <- DataStoreModule.taskRunsMap
         taskReports   <- ZIO.serviceWith[DataStoreModule.TaskReportsStore](_.map)
         taskArtifacts <- ZIO.serviceWith[DataStoreModule.TaskArtifactsStore](_.map)
         settings      <- ConfigStoreModule.settingsMap
         workflows     <- ConfigStoreModule.workflowsMap
         agents        <- ConfigStoreModule.customAgentsMap
-      yield TaskRepositoryES(taskRuns, taskReports, taskArtifacts, settings, workflows, agents)
+      yield TaskRepositoryES(configStore, taskRuns, taskReports, taskArtifacts, settings, workflows, agents)
     }

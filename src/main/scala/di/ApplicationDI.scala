@@ -1,10 +1,14 @@
 package di
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.{ Files, Paths }
+
 import scala.concurrent.{ ExecutionContext, Future }
 
 import zio.*
 import zio.http.netty.NettyConfig
 import zio.http.{ Client, DnsResolver, ZClient }
+import zio.json.*
 
 import _root_.config.SettingsApplier
 import _root_.models.*
@@ -29,6 +33,7 @@ object ApplicationDI:
   type CommonServices =
     FileService &
       StoreConfig &
+      ConfigStoreModule.ConfigStoreService &
       DataStoreModule.DataStoreService &
       DataStoreModule.TaskRunsStore &
       DataStoreModule.TaskReportsStore &
@@ -136,16 +141,32 @@ object ApplicationDI:
     )
 
   /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */
-  private val configRefLayer: ZLayer[GatewayConfig & ConfigRepository, Nothing, Ref[GatewayConfig]] =
+  private val configRefLayer: ZLayer[GatewayConfig & ConfigRepository & StoreConfig, Nothing, Ref[GatewayConfig]] =
     ZLayer.fromZIO {
       for
-        baseConfig  <- ZIO.service[GatewayConfig]
-        configRepo  <- ZIO.service[ConfigRepository]
-        dbSettings  <- configRepo.getAllSettings.orElseSucceed(Nil)
-        settingsMap  = dbSettings.map(row => row.key -> row.value).toMap
-        mergedConfig = if settingsMap.nonEmpty then SettingsApplier.toGatewayConfig(settingsMap) else baseConfig
-        ref         <- Ref.make(mergedConfig)
+        baseConfig   <- ZIO.service[GatewayConfig]
+        configRepo   <- ZIO.service[ConfigRepository]
+        storeConfig  <- ZIO.service[StoreConfig]
+        dbSettings   <- configRepo.getAllSettings.orElseSucceed(Nil)
+        dbMap         = dbSettings.map(row => row.key -> row.value).toMap
+        snapshotMap  <- loadSettingsSnapshot(storeConfig).orElseSucceed(Map.empty)
+        effectiveMap <-
+          if dbMap.nonEmpty then ZIO.succeed(dbMap)
+          else if snapshotMap.nonEmpty then
+            configRepo.upsertSettings(snapshotMap).orElseSucceed(()) *> ZIO.succeed(snapshotMap)
+          else ZIO.succeed(Map.empty[String, String])
+        mergedConfig  = if effectiveMap.nonEmpty then SettingsApplier.toGatewayConfig(effectiveMap) else baseConfig
+        ref          <- Ref.make(mergedConfig)
       yield ref
+    }
+
+  private def loadSettingsSnapshot(storeConfig: StoreConfig): IO[Throwable, Map[String, String]] =
+    ZIO.attemptBlocking {
+      val snapshot = Paths.get(storeConfig.configStorePath).resolve("settings.snapshot.json")
+      if Files.exists(snapshot) then
+        val raw = Files.readString(snapshot, StandardCharsets.UTF_8)
+        raw.fromJson[Map[String, String]].getOrElse(Map.empty)
+      else Map.empty
     }
 
   private def httpClientLayer(config: GatewayConfig): ZLayer[Any, Throwable, Client] =

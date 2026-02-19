@@ -22,7 +22,6 @@ final case class MemoryControllerLive(
   repository: MemoryRepository
 ) extends MemoryController:
 
-  private val defaultUserId      = UserId("web:default")
   private val defaultPageSize    = 20
   private val defaultLimit       = 10
   private val defaultRetentionDs = 90
@@ -30,12 +29,11 @@ final case class MemoryControllerLive(
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "memory"                           -> handler { (req: Request) =>
       execute {
-        val userId = readUserId(req)
+        val userId = readUserIdOpt(req)
+        val filter = MemoryFilter(userId = userId)
         for
-          entries <-
-            repository.listForUser(userId, MemoryFilter(userId = Some(userId)), page = 0, pageSize = defaultPageSize)
-          total   <-
-            repository.listForUser(userId, MemoryFilter(userId = Some(userId)), page = 0, pageSize = 10000).map(_.size)
+          entries <- listEntries(filter, page = 0, pageSize = defaultPageSize)
+          total   <- listEntries(filter, page = 0, pageSize = 10000).map(_.size)
           oldest   = entries.lastOption.map(_.createdAt.toString)
           newest   = entries.headOption.map(_.createdAt.toString)
         yield html(MemoryView.page(userId, entries, total, oldest, newest, defaultRetentionDs))
@@ -43,17 +41,27 @@ final case class MemoryControllerLive(
     },
     Method.GET / "api" / "memory" / "search"        -> handler { (req: Request) =>
       execute {
-        val userId = readUserId(req)
+        val userId = readUserIdOpt(req)
         val q      = req.queryParam("q").map(_.trim).getOrElse("")
         val limit  = req.queryParam("limit").flatMap(_.toIntOption).map(v => Math.max(1, v)).getOrElse(defaultLimit)
-        val filter = MemoryFilter(userId = Some(userId), kind = parseKind(req.queryParam("kind")))
+        val filter = MemoryFilter(userId = userId, kind = parseKind(req.queryParam("kind")))
 
         val effect =
           if q.isEmpty then
-            repository.listForUser(userId, filter, page = 0, pageSize = limit).map(_.map(entry =>
+            listEntries(filter, page = 0, pageSize = limit).map(_.map(entry =>
               ScoredMemory(entry, 0.0f)
             ))
-          else repository.searchRelevant(userId, q, limit, filter)
+          else
+            userId match
+              case Some(uid) => repository.searchRelevant(uid, q, limit, filter)
+              case None      =>
+                listEntries(filter, page = 0, pageSize = 10000).map { entries =>
+                  val needle = q.toLowerCase
+                  entries
+                    .filter(entry => entry.text.toLowerCase.contains(needle))
+                    .take(limit)
+                    .map(entry => ScoredMemory(entry, 0.0f))
+                }
 
         effect.map { results =>
           req.queryParam("format").map(_.trim.toLowerCase) match
@@ -65,12 +73,12 @@ final case class MemoryControllerLive(
     },
     Method.GET / "api" / "memory" / "list"          -> handler { (req: Request) =>
       execute {
-        val userId   = readUserId(req)
+        val userId   = readUserIdOpt(req)
         val page     = req.queryParam("page").flatMap(_.toIntOption).map(v => Math.max(0, v)).getOrElse(0)
         val pageSize =
           req.queryParam("pageSize").flatMap(_.toIntOption).map(v => Math.max(1, v)).getOrElse(defaultPageSize)
-        val filter   = MemoryFilter(userId = Some(userId), kind = parseKind(req.queryParam("kind")))
-        repository.listForUser(userId, filter, page, pageSize).map { entries =>
+        val filter   = MemoryFilter(userId = userId, kind = parseKind(req.queryParam("kind")))
+        listEntries(filter, page, pageSize).map { entries =>
           req.queryParam("format").map(_.trim.toLowerCase) match
             case Some("html") => html(MemoryView.entriesFragment(entries, userId))
             case _            => Response.json(ListResponse(entries.map(ListItem.fromEntry), page, pageSize).toJson)
@@ -79,15 +87,20 @@ final case class MemoryControllerLive(
     },
     Method.DELETE / "api" / "memory" / string("id") -> handler { (id: String, req: Request) =>
       execute {
-        val userId = readUserId(req)
-        repository.deleteById(userId, MemoryId(id)).as(
-          Response(
-            status = Status.NoContent,
-            headers = Headers(
-              Header.Custom("HX-Reswap", "delete")
-            ),
-          )
-        )
+        readUserIdOpt(req) match
+          case Some(userId) =>
+            repository.deleteById(userId, MemoryId(id)).as(
+              Response(
+                status = Status.NoContent,
+                headers = Headers(
+                  Header.Custom("HX-Reswap", "delete")
+                ),
+              )
+            )
+          case None         =>
+            ZIO.succeed(
+              Response.json(Map("error" -> "userId query parameter is required").toJson).status(Status.BadRequest)
+            )
       }
     },
   )
@@ -95,8 +108,19 @@ final case class MemoryControllerLive(
   private def parseKind(raw: Option[String]): Option[MemoryKind] =
     raw.map(_.trim).filter(v => v.nonEmpty && !v.equalsIgnoreCase("all")).map(MemoryKind.apply)
 
-  private def readUserId(req: Request): UserId =
-    req.queryParam("userId").map(_.trim).filter(_.nonEmpty).map(UserId.apply).getOrElse(defaultUserId)
+  private def readUserIdOpt(req: Request): Option[UserId] =
+    req.queryParam("userId").map(_.trim).filter(_.nonEmpty).map(UserId.apply)
+
+  private def listEntries(
+    filter: MemoryFilter,
+    page: Int,
+    pageSize: Int,
+  ): IO[Throwable, List[MemoryEntry]] =
+    filter.userId match
+      case Some(userId) =>
+        repository.listForUser(userId, filter, page, pageSize)
+      case None         =>
+        repository.listAll(filter, page, pageSize)
 
   private def html(content: String): Response =
     Response.text(content).contentType(MediaType.text.html)

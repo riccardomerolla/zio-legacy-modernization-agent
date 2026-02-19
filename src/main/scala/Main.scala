@@ -17,11 +17,15 @@ object Main extends ZIOAppDefault:
   override val bootstrap: ZLayer[ZIOAppArgs, Any, Any] =
     Runtime.removeDefaultLoggers >>> SLF4J.slf4j
 
+  private val defaultStateRoot: Path =
+    Paths.get(sys.props.getOrElse("user.home", ".")).resolve(".llm4zio-gateway").resolve("data")
+
   private type ServeOpts = (Option[BigInt], Option[String], Option[String])
 
   private val portOpt      = Options.integer("port").optional ?? "HTTP server port (default: 8080)"
   private val hostOpt      = Options.text("host").optional ?? "HTTP server host (default: 0.0.0.0)"
-  private val statePathOpt = Options.text("state").optional ?? "Store root path (default: ./data)"
+  private val statePathOpt = Options.text("state").optional ??
+    s"Store root path (default: ${defaultStateRoot.toAbsolutePath.toString})"
 
   private val serveCmd: Command[ServeOpts] =
     Command("serve", portOpt ++ hostOpt ++ statePathOpt)
@@ -36,7 +40,7 @@ object Main extends ZIOAppDefault:
     executeServe(
       port = opts._1.map(_.toInt).getOrElse(8080),
       host = opts._2.getOrElse("0.0.0.0"),
-      storeConfig = buildStoreConfig(Paths.get(opts._3.getOrElse("./data"))),
+      storeConfig = buildStoreConfig(Paths.get(opts._3.getOrElse(defaultStateRoot.toString))),
     )
   }
 
@@ -45,6 +49,9 @@ object Main extends ZIOAppDefault:
       baseConfig <- loadConfig
       validated  <- ConfigLoader.validate(baseConfig).mapError(msg => new IllegalArgumentException(msg))
       _          <- printLine(s"Starting web server on http://$host:$port")
+      _          <- printLine(s"Store root: ${Paths.get(storeConfig.dataStorePath).getParent.toAbsolutePath}")
+      _          <- printLine(s"Config store: ${Paths.get(storeConfig.configStorePath).toAbsolutePath}")
+      _          <- printLine(s"Data store: ${Paths.get(storeConfig.dataStorePath).toAbsolutePath}")
       _          <- WebServer.start(host, port).provide(ApplicationDI.webServerLayer(validated, storeConfig))
     yield ()
 
