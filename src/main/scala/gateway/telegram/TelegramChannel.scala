@@ -4,10 +4,10 @@ import zio.*
 import zio.json.*
 import zio.stream.ZStream
 
+import _root_.models.*
 import db.*
 import gateway.*
 import gateway.models.{ MessageDirection, MessageRole, NormalizedMessage, SessionKey, SessionScopeStrategy }
-import _root_.models.*
 import orchestration.TaskExecutor
 
 final case class TelegramPollBatch(
@@ -550,7 +550,7 @@ final case class TelegramChannel(
                  markup = InlineKeyboards.taskStatusKeyboard(run.id, RunStatus.Paused),
                )
         yield ()
-      case _                                  =>
+      case _                                     =>
         sendCallbackFeedback(
           chatId = chatId,
           replyToMessageId = replyToMessageId,
@@ -657,7 +657,7 @@ final case class TelegramChannel(
       wf         <- decodeWorkflow(row)
     yield wf
 
-  private final case class WorkflowStoragePayload(
+  final private case class WorkflowStoragePayload(
     steps: List[TaskStep],
     stepAgents: Map[String, String] = Map.empty,
     dynamicGraph: Option[WorkflowGraph] = None,
@@ -689,7 +689,7 @@ final case class TelegramChannel(
                 isBuiltin = row.isBuiltin,
               )
             )
-          case Left(error) =>
+          case Left(error)  =>
             ZIO.fail(MessageChannelError.InvalidMessage(s"invalid workflow payload for ${row.name}: $error"))
 
   private def sendCallbackFeedback(

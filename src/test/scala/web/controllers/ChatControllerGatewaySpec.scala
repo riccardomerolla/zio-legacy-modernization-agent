@@ -7,8 +7,8 @@ import zio.json.EncoderOps
 import zio.stream.ZStream
 import zio.test.*
 
-import agents.AgentRegistry
 import _root_.models.*
+import agents.AgentRegistry
 import db.*
 import gateway.*
 import gateway.models.*

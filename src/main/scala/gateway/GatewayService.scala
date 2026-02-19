@@ -75,7 +75,8 @@ object GatewayService:
       yield GatewayServiceLive(queue, router, agentRegistry, llmService, metrics, None, intents)
     }
 
-  val liveWithSteeringQueue: ZLayer[MessageRouter & Queue[NormalizedMessage] & AgentRegistry & LlmService, Nothing, GatewayService] =
+  val liveWithSteeringQueue
+    : ZLayer[MessageRouter & Queue[NormalizedMessage] & AgentRegistry & LlmService, Nothing, GatewayService] =
     ZLayer.scoped {
       for
         router        <- ZIO.service[MessageRouter]
@@ -155,7 +156,9 @@ object GatewayService:
   private def updateChannelMetrics(
     snapshot: GatewayMetricsSnapshot,
     channelName: String,
-  )(update: ChannelMetrics => ChannelMetrics): GatewayMetricsSnapshot =
+  )(
+    update: ChannelMetrics => ChannelMetrics
+  ): GatewayMetricsSnapshot =
     val current = snapshot.perChannel.getOrElse(channelName, ChannelMetrics())
     snapshot.copy(perChannel = snapshot.perChannel.updated(channelName, update(current)))
 
@@ -285,25 +288,25 @@ final case class GatewayServiceLive(
         decision        <- IntentParser.parse(message.content, current, availableAgents).provideEnvironment(
                              ZEnvironment(llmService)
                            )
-        _       <- decision match
-                     case IntentDecision.Route(agentName, rationale) =>
-                       val text =
-                         s"Routing request to `$agentName` ($rationale). " +
-                           "Send another message if you want to switch agent."
-                       sendAssistantReply(message, text, Some(agentName)) *>
-                         updateIntentState(message, current.copy(pendingOptions = Nil, lastAgent = Some(agentName))) *>
-                         executeRoutedAgentReply(
-                           inbound = message,
-                           selectedAgent = agentName,
-                           skipExecution = current.pendingOptions.nonEmpty,
-                         )
-                     case IntentDecision.Clarify(question, options)  =>
-                       val numbered = options.zipWithIndex.map { case (option, idx) => s"${idx + 1}. $option" }.mkString("\n")
-                       val text     = s"$question\n$numbered"
-                       sendAssistantReply(message, text, None) *>
-                         updateIntentState(message, current.copy(pendingOptions = options))
-                     case IntentDecision.Unknown                     =>
-                       ZIO.unit
+        _               <- decision match
+                             case IntentDecision.Route(agentName, rationale) =>
+                               val text =
+                                 s"Routing request to `$agentName` ($rationale). " +
+                                   "Send another message if you want to switch agent."
+                               sendAssistantReply(message, text, Some(agentName)) *>
+                                 updateIntentState(message, current.copy(pendingOptions = Nil, lastAgent = Some(agentName))) *>
+                                 executeRoutedAgentReply(
+                                   inbound = message,
+                                   selectedAgent = agentName,
+                                   skipExecution = current.pendingOptions.nonEmpty,
+                                 )
+                             case IntentDecision.Clarify(question, options)  =>
+                               val numbered = options.zipWithIndex.map { case (option, idx) => s"${idx + 1}. $option" }.mkString("\n")
+                               val text     = s"$question\n$numbered"
+                               sendAssistantReply(message, text, None) *>
+                                 updateIntentState(message, current.copy(pendingOptions = options))
+                             case IntentDecision.Unknown                     =>
+                               ZIO.unit
       yield ()
     else ZIO.unit
 

@@ -256,7 +256,8 @@ final case class TasksControllerLive(
   private def loadWorkflowsWithDefault: IO[PersistenceError, List[WorkflowDefinition]] =
     val defaultName = WorkflowDefinition.default.name
     for
-      maybeDefault <- workflowService.getWorkflowByName(defaultName).mapError(workflowAsPersistence("getWorkflowByName"))
+      maybeDefault <-
+        workflowService.getWorkflowByName(defaultName).mapError(workflowAsPersistence("getWorkflowByName"))
       _            <-
         maybeDefault match
           case Some(_) =>

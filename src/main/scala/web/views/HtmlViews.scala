@@ -8,8 +8,8 @@ object HtmlViews:
   def dashboard(runs: List[TaskRunRow], workflowCount: Int): String =
     DashboardView.dashboard(runs, workflowCount)
 
-  def channelsPage(cards: List[ChannelCardData]): String =
-    ChannelView.page(cards)
+  def channelsPage(cards: List[ChannelCardData], nowMs: Long): String =
+    ChannelView.page(cards, nowMs)
 
   def recentRunsFragment(runs: List[TaskRunRow]): String =
     DashboardView.recentRunsContent(runs).render

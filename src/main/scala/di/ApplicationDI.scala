@@ -140,7 +140,8 @@ object ApplicationDI:
     (ZLayer.succeed(clientConfig) ++ ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++
       DnsResolver.default) >>> Client.live
 
-  private val configAwareLlmServiceLayer: ZLayer[Ref[GatewayConfig] & HttpClient & GeminiCliExecutor, Nothing, LlmService] =
+  private val configAwareLlmServiceLayer
+    : ZLayer[Ref[GatewayConfig] & HttpClient & GeminiCliExecutor, Nothing, LlmService] =
     ZLayer.fromZIO {
       for
         configRef <- ZIO.service[Ref[GatewayConfig]]

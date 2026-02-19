@@ -108,21 +108,21 @@ object ChatView:
           cls := "sticky bottom-0 mt-3 rounded-lg bg-gray-900/95 ring-1 ring-white/10 p-3 backdrop-blur"
         )(
           form(
-            method                       := "post",
-            action                       := s"/chat/${conversation.id.get}/messages",
-            attr("hx-post")              := s"/chat/${conversation.id.get}/messages",
-            attr("hx-target")            := s"#messages-${conversation.id.get}",
-            attr("hx-swap")              := "innerHTML",
-            attr("hx-disabled-elt")      := "button[type='submit']",
+            method                        := "post",
+            action                        := s"/chat/${conversation.id.get}/messages",
+            attr("hx-post")               := s"/chat/${conversation.id.get}/messages",
+            attr("hx-target")             := s"#messages-${conversation.id.get}",
+            attr("hx-swap")               := "innerHTML",
+            attr("hx-disabled-elt")       := "button[type='submit']",
             attr("hx-on::before-request") := s"""
               |document.getElementById('messages-${conversation.id.get}')?.markPending?.();
             """.stripMargin.trim,
-            attr("hx-on::after-request") := s"""
+            attr("hx-on::after-request")  := """
               |this.reset();
             """.stripMargin.trim,
-            cls                          := "space-y-2",
+            cls                           := "space-y-2",
           )(
-            input(`type`  := "hidden", name := "fragment", value := "true"),
+            input(`type` := "hidden", name := "fragment", value := "true"),
             div(
               id                           := "chat-composer",
               cls                          := "space-y-2",
@@ -156,11 +156,11 @@ object ChatView:
               div(cls := "relative")(
                 div(attr("data-role") := "write-pane")(
                   textarea(
-                    id          := s"chat-input-${conversation.id.get}",
-                    name        := "content",
-                    placeholder := "Type your message... Use @agent-name to route directly.",
-                    rows        := 5,
-                    cls         := "w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm",
+                    id                   := s"chat-input-${conversation.id.get}",
+                    name                 := "content",
+                    placeholder          := "Type your message... Use @agent-name to route directly.",
+                    rows                 := 5,
+                    cls                  := "w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm",
                     required,
                     attr("autocomplete") := "off",
                     attr("spellcheck")   := "false",
@@ -574,7 +574,7 @@ if (!customElements.get('chat-message-stream')) {
         ),
       ),
       div(cls := "pt-2")(
-        p(cls := "text-gray-300 text-sm mb-2 truncate")(preview),
+        p(cls := "text-gray-300 text-sm mb-2 truncate")(preview)
       ),
       div(cls := "flex items-center justify-between text-xs text-gray-500")(
         span(s"${conv.messages.length} message${if conv.messages.length != 1 then "s" else ""}"),
@@ -605,7 +605,7 @@ if (!customElements.get('chat-message-stream')) {
             p(span(cls := "text-gray-400 mr-2")("Session Key:"), meta.sessionKey),
             p(
               span(cls := "text-gray-400 mr-2")("Linked Task:"),
-              meta.linkedTaskRunId.map(id => s"#$id").getOrElse("none")
+              meta.linkedTaskRunId.map(id => s"#$id").getOrElse("none"),
             ),
             p(span(cls := "text-gray-400 mr-2")("Updated:"), formatTimestamp(meta.updatedAt)),
           ),

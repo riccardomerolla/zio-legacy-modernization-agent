@@ -41,7 +41,7 @@ final case class AgentsControllerLive(repository: TaskRepository) extends Agents
   )
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / "api" / "agents"                                  -> handler { (_: Request) =>
+    Method.GET / "api" / "agents"                                -> handler { (_: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           custom <- repository.listCustomAgents

@@ -148,7 +148,8 @@ object ChatRepository:
   ): ZIO[ChatRepository, PersistenceError, Option[String]] =
     ZIO.serviceWithZIO[ChatRepository](_.getSessionContext(channelName, sessionKey))
 
-  def getSessionContextByConversation(conversationId: Long): ZIO[ChatRepository, PersistenceError, Option[SessionContextLink]] =
+  def getSessionContextByConversation(conversationId: Long)
+    : ZIO[ChatRepository, PersistenceError, Option[SessionContextLink]] =
     ZIO.serviceWithZIO[ChatRepository](_.getSessionContextByConversation(conversationId))
 
   def getSessionContextByTaskRunId(taskRunId: Long): ZIO[ChatRepository, PersistenceError, Option[SessionContextLink]] =
@@ -235,17 +236,20 @@ final case class ChatRepositoryLive(
 
     withConnection { conn =>
       for
-        contextJsons <- queryMany(conn, contextsSql)(_.setString(1, channelName.trim))(rs =>
-                         executeBlocking(contextsSql)(rs.getString("context_json"))
-                       )
-        ids           = contextJsons.flatMap(extractConversationId).distinct
+        contextJsons  <- queryMany(conn, contextsSql)(_.setString(1, channelName.trim))(rs =>
+                           executeBlocking(contextsSql)(rs.getString("context_json"))
+                         )
+        ids            = contextJsons.flatMap(extractConversationId).distinct
         conversations <- ZIO.foreach(ids) { id =>
                            val conversationSql =
                              """SELECT id, run_id, title, description, status, created_at, updated_at, created_by
                                |FROM chat_conversations
                                |WHERE id = ?
                                |""".stripMargin
-                           queryOne(conn, conversationSql)(_.setLong(1, id))(readChatConversationRow(_, conversationSql))
+                           queryOne(
+                             conn,
+                             conversationSql,
+                           )(_.setLong(1, id))(readChatConversationRow(_, conversationSql))
                              .flatMap {
                                case Some(value) => hydrateConversationMessages(conn, value).map(Some(_))
                                case None        => ZIO.none

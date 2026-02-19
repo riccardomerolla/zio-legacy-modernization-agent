@@ -110,13 +110,13 @@ final case class ChatControllerLive(
                            .fromOption(form.get("content").map(_.trim).filter(_.nonEmpty))
                            .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
           mention      = parsePreferredAgentMention(rawContent)
-          content       = mention.content
+          content      = mention.content
           now         <- Clock.instant
           _           <- chatRepository.addMessage(
                            ConversationMessage(
                              conversationId = id,
                              sender = "user",
-                              senderType = SenderType.User,
+                             senderType = SenderType.User,
                              content = rawContent,
                              messageType = MessageType.Text,
                              createdAt = now,
@@ -637,11 +637,12 @@ final case class ChatControllerLive(
         case SenderType.System    => GatewayMessageRole.System
       ,
       content = content,
-      metadata = Map("conversationId" -> conversationId.toString) ++ metadata.map("raw" -> _).toMap ++ additionalMetadata,
+      metadata =
+        Map("conversationId" -> conversationId.toString) ++ metadata.map("raw" -> _).toMap ++ additionalMetadata,
       timestamp = now,
     )
 
-  private final case class PreferredAgentMention(
+  final private case class PreferredAgentMention(
     content: String,
     metadata: Map[String, String],
   )
@@ -657,7 +658,7 @@ final case class ChatControllerLive(
             "intent.agent"   -> agentName,
           ),
         )
-      case _                                                       =>
+      case _                                                               =>
         PreferredAgentMention(
           content = rawContent,
           metadata = Map.empty,
