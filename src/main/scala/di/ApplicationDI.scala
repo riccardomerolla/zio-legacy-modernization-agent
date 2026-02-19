@@ -18,6 +18,7 @@ import llm4zio.core.*
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import orchestration.*
+import store.{ DataStoreModule, StoreConfig }
 import sttp.client4.DefaultFutureBackend
 import web.controllers.*
 import web.{ ActivityHub, StreamAbortRegistry, WebServer }
@@ -91,14 +92,21 @@ object ApplicationDI:
       GeminiCliExecutor.live,
       StateService.live(config.stateDir),
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
+      ZLayer.succeed(
+        StoreConfig(
+          configStorePath = storeRoot(dbPath).resolve("config-store").toString,
+          dataStorePath = storeRoot(dbPath).resolve("data-store").toString,
+        )
+      ),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      DataStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
       TaskRepository.live,
       ConfigRepository.fromTaskRepository,
       // Create runtime config ref with merged DB settings
       configRefLayer,
       configAwareLlmServiceLayer,
       WorkflowService.live,
-      ActivityRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      ActivityRepository.live,
       ActivityHub.live,
       ProgressTracker.live,
       ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
@@ -116,6 +124,9 @@ object ApplicationDI:
       TelegramPollingService.live,
       TaskProgressNotifier.live,
     )
+
+  private def storeRoot(dbPath: java.nio.file.Path): java.nio.file.Path =
+    Option(dbPath.toAbsolutePath.getParent).getOrElse(java.nio.file.Paths.get(".")).resolve("data")
 
   /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */
   private val configRefLayer: ZLayer[GatewayConfig & ConfigRepository, Nothing, Ref[GatewayConfig]] =
