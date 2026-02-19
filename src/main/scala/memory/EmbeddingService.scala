@@ -67,7 +67,7 @@ final case class EmbeddingServiceLive(
       headers  = authorizationHeaders(config.apiKey)
       body    <- httpClient
                    .postJson(
-                     url = s"${baseUrl.stripSuffix("/")}/embeddings",
+                     url = openAiCompatibleEmbeddingsUrl(config.provider, baseUrl),
                      body = request.toJson,
                      headers = headers,
                      timeout = config.timeout,
@@ -161,6 +161,12 @@ final case class EmbeddingServiceLive(
 
   private def authorizationHeaders(apiKey: Option[String]): Map[String, String] =
     apiKey.map(_.trim).filter(_.nonEmpty).map(value => Map("Authorization" -> s"Bearer $value")).getOrElse(Map.empty)
+
+  private def openAiCompatibleEmbeddingsUrl(provider: AIProvider, baseUrl: String): String =
+    val normalized = baseUrl.stripSuffix("/")
+    provider match
+      case AIProvider.LmStudio => s"$normalized/v1/embeddings"
+      case _                   => s"$normalized/embeddings"
 
   private def dimensionFromEnvironment: Int =
     sys.env
