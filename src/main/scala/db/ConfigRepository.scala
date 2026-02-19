@@ -98,6 +98,14 @@ object ConfigRepository:
   def deleteCustomAgent(id: Long): ZIO[ConfigRepository, PersistenceError, Unit] =
     ZIO.serviceWithZIO[ConfigRepository](_.deleteCustomAgent(id))
 
+  val live
+    : ZLayer[
+      ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore & ConfigStoreModule.CustomAgentsStore,
+      Nothing,
+      ConfigRepository,
+    ] =
+    ConfigRepositoryES.live
+
   val fromTaskRepository: ZLayer[TaskRepository, Nothing, ConfigRepository] =
     ZLayer.fromFunction((taskRepository: TaskRepository) =>
       new ConfigRepository:

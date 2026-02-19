@@ -19,7 +19,7 @@ import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import memory.*
 import orchestration.*
-import store.{ DataStoreModule, StoreConfig }
+import store.{ ConfigStoreModule, DataStoreModule, StoreConfig }
 import sttp.client4.DefaultFutureBackend
 import web.controllers.*
 import web.{ ActivityHub, StreamAbortRegistry, WebServer }
@@ -33,7 +33,6 @@ object ApplicationDI:
       HttpAIClient &
       LlmService &
       StateService &
-      javax.sql.DataSource &
       TaskRepository &
       ConfigRepository &
       WorkflowService &
@@ -82,7 +81,7 @@ object ApplicationDI:
       maxTokens = aiConfig.maxTokens,
     )
 
-  def commonLayers(config: GatewayConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, CommonServices] =
+  def commonLayers(config: GatewayConfig, storeConfig: StoreConfig): ZLayer[Any, Nothing, CommonServices] =
     ZLayer.make[CommonServices](
       // Core services and configuration
       FileService.live,
@@ -94,17 +93,11 @@ object ApplicationDI:
       HttpClient.live,
       GeminiCliExecutor.live,
       StateService.live(config.stateDir),
-      ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
-      ZLayer.succeed(
-        StoreConfig(
-          configStorePath = storeRoot(dbPath).resolve("config-store").toString,
-          dataStorePath = storeRoot(dbPath).resolve("data-store").toString,
-        )
-      ),
-      Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      ZLayer.succeed(storeConfig),
+      ConfigStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
       DataStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      ConfigRepository.live,
       TaskRepository.live,
-      ConfigRepository.fromTaskRepository,
       // Create runtime config ref with merged DB settings
       configRefLayer,
       configAwareLlmServiceLayer,
@@ -114,7 +107,7 @@ object ApplicationDI:
       ActivityRepository.live,
       ActivityHub.live,
       ProgressTracker.live,
-      ChatRepository.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      ChatRepository.live,
       AgentRegistry.live,
       WorkflowEngine.live,
       AgentDispatcher.live,
@@ -130,19 +123,16 @@ object ApplicationDI:
       TaskProgressNotifier.live,
     )
 
-  private def storeRoot(dbPath: java.nio.file.Path): java.nio.file.Path =
-    Option(dbPath.toAbsolutePath.getParent).getOrElse(java.nio.file.Paths.get(".")).resolve("data")
-
   /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */
   private val configRefLayer: ZLayer[GatewayConfig & ConfigRepository, Nothing, Ref[GatewayConfig]] =
     ZLayer.fromZIO {
       for
-        baseConfig   <- ZIO.service[GatewayConfig]
-        mergedConfig <- SettingsApplier
-                          .loadGatewayConfig(baseConfig)
-                          .mapError(_ => ())
-                          .orElseSucceed(baseConfig)
-        ref          <- Ref.make(mergedConfig)
+        baseConfig  <- ZIO.service[GatewayConfig]
+        configRepo  <- ZIO.service[ConfigRepository]
+        dbSettings  <- configRepo.getAllSettings.orElseSucceed(Nil)
+        settingsMap  = dbSettings.map(row => row.key -> row.value).toMap
+        mergedConfig = if settingsMap.nonEmpty then SettingsApplier.toGatewayConfig(settingsMap) else baseConfig
+        ref         <- Ref.make(mergedConfig)
       yield ref
     }
 
@@ -167,9 +157,9 @@ object ApplicationDI:
       yield ConfigAwareLlmService(configRef, http, cliExec, cache)
     }
 
-  def webServerLayer(config: GatewayConfig, dbPath: java.nio.file.Path): ZLayer[Any, Nothing, WebServer] =
+  def webServerLayer(config: GatewayConfig, storeConfig: StoreConfig): ZLayer[Any, Nothing, WebServer] =
     ZLayer.make[WebServer](
-      commonLayers(config, dbPath),
+      commonLayers(config, storeConfig),
       ZLayer.succeed(config.resolvedProviderConfig),
       DashboardController.live,
       TasksController.live,

@@ -9,6 +9,7 @@ import zio.logging.backend.SLF4J
 import _root_.config.ConfigLoader
 import di.ApplicationDI
 import models.GatewayConfig
+import store.StoreConfig
 import web.WebServer
 
 object Main extends ZIOAppDefault:
@@ -18,12 +19,12 @@ object Main extends ZIOAppDefault:
 
   private type ServeOpts = (Option[BigInt], Option[String], Option[String])
 
-  private val portOpt   = Options.integer("port").optional ?? "HTTP server port (default: 8080)"
-  private val hostOpt   = Options.text("host").optional ?? "HTTP server host (default: 0.0.0.0)"
-  private val dbPathOpt = Options.text("db").optional ?? "SQLite DB path (default: ./gateway.db)"
+  private val portOpt      = Options.integer("port").optional ?? "HTTP server port (default: 8080)"
+  private val hostOpt      = Options.text("host").optional ?? "HTTP server host (default: 0.0.0.0)"
+  private val statePathOpt = Options.text("state").optional ?? "Store root path (default: ./data)"
 
   private val serveCmd: Command[ServeOpts] =
-    Command("serve", portOpt ++ hostOpt ++ dbPathOpt)
+    Command("serve", portOpt ++ hostOpt ++ statePathOpt)
       .withHelp("Start the web portal")
 
   private val cliApp = CliApp.make(
@@ -35,17 +36,23 @@ object Main extends ZIOAppDefault:
     executeServe(
       port = opts._1.map(_.toInt).getOrElse(8080),
       host = opts._2.getOrElse("0.0.0.0"),
-      dbPath = Paths.get(opts._3.getOrElse("./gateway.db")),
+      storeConfig = buildStoreConfig(Paths.get(opts._3.getOrElse("./data"))),
     )
   }
 
-  private def executeServe(port: Int, host: String, dbPath: Path): ZIO[Any, Throwable, Unit] =
+  private def executeServe(port: Int, host: String, storeConfig: StoreConfig): ZIO[Any, Throwable, Unit] =
     for
       baseConfig <- loadConfig
       validated  <- ConfigLoader.validate(baseConfig).mapError(msg => new IllegalArgumentException(msg))
       _          <- printLine(s"Starting web server on http://$host:$port")
-      _          <- WebServer.start(host, port).provide(ApplicationDI.webServerLayer(validated, dbPath))
+      _          <- WebServer.start(host, port).provide(ApplicationDI.webServerLayer(validated, storeConfig))
     yield ()
+
+  private def buildStoreConfig(root: Path): StoreConfig =
+    StoreConfig(
+      configStorePath = root.resolve("config-store").toString,
+      dataStorePath = root.resolve("data-store").toString,
+    )
 
   private def loadConfig: ZIO[Any, Throwable, GatewayConfig] =
     ConfigLoader
