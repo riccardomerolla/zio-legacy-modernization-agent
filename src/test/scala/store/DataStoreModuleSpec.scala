@@ -27,9 +27,13 @@ object DataStoreModuleSpec extends ZIOSpecDefault:
 
   private def layerFor(
     dataDir: Path
-  ): ZLayer[Any, EclipseStoreError | GigaMapError, DataStoreModule.DataStoreService & DataStoreModule.TaskRunsStore &
-    DataStoreModule.TaskReportsStore & DataStoreModule.TaskArtifactsStore & DataStoreModule.ConversationsStore &
-    DataStoreModule.MessagesStore & DataStoreModule.SessionContextsStore & DataStoreModule.ActivityEventsStore] =
+  ): ZLayer[
+    Any,
+    EclipseStoreError | GigaMapError,
+    DataStoreModule.DataStoreService & DataStoreModule.TaskRunsStore &
+      DataStoreModule.TaskReportsStore & DataStoreModule.TaskArtifactsStore & DataStoreModule.ConversationsStore &
+      DataStoreModule.MessagesStore & DataStoreModule.SessionContextsStore & DataStoreModule.ActivityEventsStore,
+  ] =
     ZLayer.succeed(
       StoreConfig(
         configStorePath = dataDir.resolve("config-store").toString,

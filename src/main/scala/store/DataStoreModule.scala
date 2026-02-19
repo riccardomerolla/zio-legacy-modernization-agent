@@ -139,7 +139,7 @@ object DataStoreModule:
   private val taskArtifactsDefinition = GigaMapDefinition[ArtifactId, TaskArtifactRow](
     name = "taskArtifacts",
     indexes = Chunk(
-      GigaMapIndex.single("taskRunId", _.taskRunId),
+      GigaMapIndex.single("taskRunId", _.taskRunId)
     ),
   )
 
@@ -160,7 +160,7 @@ object DataStoreModule:
   )
 
   private val sessionContextsDefinition = GigaMapDefinition[String, SessionContextRow](
-    name = "sessionContexts",
+    name = "sessionContexts"
   )
 
   private val activityEventsDefinition = GigaMapDefinition[EventId, ActivityEventRow](
@@ -235,9 +235,10 @@ object DataStoreModule:
     DataStoreService & TaskRunsStore & TaskReportsStore & TaskArtifactsStore & ConversationsStore & MessagesStore &
       SessionContextsStore & ActivityEventsStore,
   ] =
-    ZLayer.makeSome[EclipseStoreService,
+    ZLayer.makeSome[
+      EclipseStoreService,
       DataStoreService & TaskRunsStore & TaskReportsStore & TaskArtifactsStore & ConversationsStore & MessagesStore &
-        SessionContextsStore & ActivityEventsStore
+        SessionContextsStore & ActivityEventsStore,
     ](
       dataStore,
       taskRuns,
