@@ -84,6 +84,7 @@ final case class WorkflowServiceLive(
       validated <- validateWorkflow(workflow)
       id        <- ZIO
                      .fromOption(validated.id)
+                     .map(_.toLongOption.getOrElse(0L))
                      .orElseFail(
                        WorkflowServiceError.ValidationFailed(List("Workflow id is required for update"))
                      )
@@ -120,7 +121,7 @@ final case class WorkflowServiceLive(
     decodeStorage(row.name, row.steps).map {
       case (parsedSteps, parsedAgents, parsedGraph) =>
         WorkflowDefinition(
-          id = row.id,
+          id = row.id.map(_.toString),
           name = row.name,
           description = row.description,
           steps = parsedSteps,
@@ -145,7 +146,7 @@ final case class WorkflowServiceLive(
       dynamicGraph = workflow.dynamicGraph,
     )
     WorkflowRow(
-      id = workflow.id,
+      id = workflow.id.flatMap(_.toLongOption),
       name = workflow.name,
       description = workflow.description.filter(_.trim.nonEmpty),
       steps = payload.toJson,

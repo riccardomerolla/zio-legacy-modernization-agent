@@ -7,7 +7,7 @@ import zio.stream.ZStream
 import _root_.models.*
 import db.*
 import gateway.*
-import gateway.models.{ MessageDirection, MessageRole, NormalizedMessage, SessionKey, SessionScopeStrategy }
+import gateway.models.{ GatewayMessageRole, MessageDirection, NormalizedMessage, SessionKey, SessionScopeStrategy }
 import orchestration.TaskExecutor
 
 final case class TelegramPollBatch(
@@ -279,7 +279,7 @@ final case class TelegramChannel(
           channelName = name,
           sessionKey = sessionKey,
           direction = MessageDirection.Inbound,
-          role = MessageRole.User,
+          role = GatewayMessageRole.User,
           content = content,
           metadata = metadata,
           timestamp = now,
@@ -668,7 +668,7 @@ final case class TelegramChannel(
       case Right(payload) =>
         ZIO.succeed(
           WorkflowDefinition(
-            id = row.id,
+            id = row.id.map(_.toString),
             name = row.name,
             description = row.description,
             steps = payload.steps,
@@ -682,7 +682,7 @@ final case class TelegramChannel(
           case Right(steps) =>
             ZIO.succeed(
               WorkflowDefinition(
-                id = row.id,
+                id = row.id.map(_.toString),
                 name = row.name,
                 description = row.description,
                 steps = steps,

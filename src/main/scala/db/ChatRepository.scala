@@ -17,9 +17,9 @@ trait ChatRepository:
   def deleteConversation(id: Long): IO[PersistenceError, Unit]
 
   // Chat Messages
-  def addMessage(message: ConversationMessage): IO[PersistenceError, Long]
-  def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationMessage]]
-  def getMessagesSince(conversationId: Long, since: Instant): IO[PersistenceError, List[ConversationMessage]]
+  def addMessage(message: ConversationEntry): IO[PersistenceError, Long]
+  def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationEntry]]
+  def getMessagesSince(conversationId: Long, since: Instant): IO[PersistenceError, List[ConversationEntry]]
 
   // Agent Issues
   def createIssue(issue: AgentIssue): IO[PersistenceError, Long]
@@ -88,14 +88,14 @@ object ChatRepository:
   def deleteConversation(id: Long): ZIO[ChatRepository, PersistenceError, Unit] =
     ZIO.serviceWithZIO[ChatRepository](_.deleteConversation(id))
 
-  def addMessage(message: ConversationMessage): ZIO[ChatRepository, PersistenceError, Long] =
+  def addMessage(message: ConversationEntry): ZIO[ChatRepository, PersistenceError, Long] =
     ZIO.serviceWithZIO[ChatRepository](_.addMessage(message))
 
-  def getMessages(conversationId: Long): ZIO[ChatRepository, PersistenceError, List[ConversationMessage]] =
+  def getMessages(conversationId: Long): ZIO[ChatRepository, PersistenceError, List[ConversationEntry]] =
     ZIO.serviceWithZIO[ChatRepository](_.getMessages(conversationId))
 
   def getMessagesSince(conversationId: Long, since: Instant)
-    : ZIO[ChatRepository, PersistenceError, List[ConversationMessage]] =
+    : ZIO[ChatRepository, PersistenceError, List[ConversationEntry]] =
     ZIO.serviceWithZIO[ChatRepository](_.getMessagesSince(conversationId, since))
 
   def createIssue(issue: AgentIssue): ZIO[ChatRepository, PersistenceError, Long] =

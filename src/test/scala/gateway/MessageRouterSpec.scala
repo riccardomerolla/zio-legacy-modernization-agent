@@ -51,7 +51,8 @@ object MessageRouterSpec extends ZIOSpecDefault:
       ): IO[PersistenceError, Option[String]] =
         ref.get.map(_.sessionContexts.get((channelName, sessionKey)).map(_.contextJson))
 
-      override def getSessionContextByConversation(conversationId: Long): IO[PersistenceError, Option[SessionContextLink]] =
+      override def getSessionContextByConversation(conversationId: Long)
+        : IO[PersistenceError, Option[SessionContextLink]] =
         ref.get.map(_.sessionContexts.values.find(_.contextJson.contains(s""""conversationId":$conversationId""")))
 
       override def getSessionContextByTaskRunId(taskRunId: Long): IO[PersistenceError, Option[SessionContextLink]] =
@@ -63,56 +64,57 @@ object MessageRouterSpec extends ZIOSpecDefault:
       ): IO[PersistenceError, Unit] =
         ref.update(state => state.copy(sessionContexts = state.sessionContexts - ((channelName, sessionKey))))
 
-      override def createConversation(conversation: ChatConversation): IO[PersistenceError, Long] =
+      override def createConversation(conversation: ChatConversation): IO[PersistenceError, Long]               =
         ZIO.fail(PersistenceError.QueryFailed("createConversation", "unused"))
-      override def getConversation(id: Long): IO[PersistenceError, Option[ChatConversation]] =
+      override def getConversation(id: Long): IO[PersistenceError, Option[ChatConversation]]                    =
         ZIO.fail(PersistenceError.QueryFailed("getConversation", "unused"))
-      override def listConversations(offset: Int, limit: Int): IO[PersistenceError, List[ChatConversation]] =
+      override def listConversations(offset: Int, limit: Int): IO[PersistenceError, List[ChatConversation]]     =
         ZIO.fail(PersistenceError.QueryFailed("listConversations", "unused"))
       override def getConversationsByChannel(channelName: String): IO[PersistenceError, List[ChatConversation]] =
         ZIO.fail(PersistenceError.QueryFailed("getConversationsByChannel", "unused"))
-      override def listConversationsByRun(runId: Long): IO[PersistenceError, List[ChatConversation]] =
+      override def listConversationsByRun(runId: Long): IO[PersistenceError, List[ChatConversation]]            =
         ZIO.fail(PersistenceError.QueryFailed("listConversationsByRun", "unused"))
-      override def updateConversation(conversation: ChatConversation): IO[PersistenceError, Unit] =
+      override def updateConversation(conversation: ChatConversation): IO[PersistenceError, Unit]               =
         ZIO.fail(PersistenceError.QueryFailed("updateConversation", "unused"))
-      override def deleteConversation(id: Long): IO[PersistenceError, Unit] =
+      override def deleteConversation(id: Long): IO[PersistenceError, Unit]                                     =
         ZIO.fail(PersistenceError.QueryFailed("deleteConversation", "unused"))
-      override def addMessage(message: ConversationMessage): IO[PersistenceError, Long] =
+      override def addMessage(message: ConversationEntry): IO[PersistenceError, Long]                           =
         ZIO.fail(PersistenceError.QueryFailed("addMessage", "unused"))
-      override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationMessage]] =
+      override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationEntry]]             =
         ZIO.fail(PersistenceError.QueryFailed("getMessages", "unused"))
-      override def getMessagesSince(conversationId: Long, since: Instant): IO[PersistenceError, List[ConversationMessage]] =
+      override def getMessagesSince(conversationId: Long, since: Instant)
+        : IO[PersistenceError, List[ConversationEntry]] =
         ZIO.fail(PersistenceError.QueryFailed("getMessagesSince", "unused"))
-      override def createIssue(issue: AgentIssue): IO[PersistenceError, Long] =
+      override def createIssue(issue: AgentIssue): IO[PersistenceError, Long]                                   =
         ZIO.fail(PersistenceError.QueryFailed("createIssue", "unused"))
-      override def getIssue(id: Long): IO[PersistenceError, Option[AgentIssue]] =
+      override def getIssue(id: Long): IO[PersistenceError, Option[AgentIssue]]                                 =
         ZIO.fail(PersistenceError.QueryFailed("getIssue", "unused"))
-      override def listIssues(offset: Int, limit: Int): IO[PersistenceError, List[AgentIssue]] =
+      override def listIssues(offset: Int, limit: Int): IO[PersistenceError, List[AgentIssue]]                  =
         ZIO.fail(PersistenceError.QueryFailed("listIssues", "unused"))
-      override def listIssuesByRun(runId: Long): IO[PersistenceError, List[AgentIssue]] =
+      override def listIssuesByRun(runId: Long): IO[PersistenceError, List[AgentIssue]]                         =
         ZIO.fail(PersistenceError.QueryFailed("listIssuesByRun", "unused"))
-      override def listIssuesByStatus(status: IssueStatus): IO[PersistenceError, List[AgentIssue]] =
+      override def listIssuesByStatus(status: IssueStatus): IO[PersistenceError, List[AgentIssue]]              =
         ZIO.fail(PersistenceError.QueryFailed("listIssuesByStatus", "unused"))
-      override def listUnassignedIssues(runId: Long): IO[PersistenceError, List[AgentIssue]] =
+      override def listUnassignedIssues(runId: Long): IO[PersistenceError, List[AgentIssue]]                    =
         ZIO.fail(PersistenceError.QueryFailed("listUnassignedIssues", "unused"))
-      override def updateIssue(issue: AgentIssue): IO[PersistenceError, Unit] =
+      override def updateIssue(issue: AgentIssue): IO[PersistenceError, Unit]                                   =
         ZIO.fail(PersistenceError.QueryFailed("updateIssue", "unused"))
-      override def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit] =
+      override def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit]             =
         ZIO.fail(PersistenceError.QueryFailed("assignIssueToAgent", "unused"))
-      override def createAssignment(assignment: AgentAssignment): IO[PersistenceError, Long] =
+      override def createAssignment(assignment: AgentAssignment): IO[PersistenceError, Long]                    =
         ZIO.fail(PersistenceError.QueryFailed("createAssignment", "unused"))
-      override def getAssignment(id: Long): IO[PersistenceError, Option[AgentAssignment]] =
+      override def getAssignment(id: Long): IO[PersistenceError, Option[AgentAssignment]]                       =
         ZIO.fail(PersistenceError.QueryFailed("getAssignment", "unused"))
-      override def listAssignmentsByIssue(issueId: Long): IO[PersistenceError, List[AgentAssignment]] =
+      override def listAssignmentsByIssue(issueId: Long): IO[PersistenceError, List[AgentAssignment]]           =
         ZIO.fail(PersistenceError.QueryFailed("listAssignmentsByIssue", "unused"))
-      override def updateAssignment(assignment: AgentAssignment): IO[PersistenceError, Unit] =
+      override def updateAssignment(assignment: AgentAssignment): IO[PersistenceError, Unit]                    =
         ZIO.fail(PersistenceError.QueryFailed("updateAssignment", "unused"))
 
   private def makeMessage(
     id: String,
     session: SessionKey,
     direction: MessageDirection,
-    role: MessageRole,
+    role: GatewayMessageRole,
     content: String,
     metadata: Map[String, String] = Map.empty,
   ): NormalizedMessage =
@@ -140,7 +142,7 @@ object MessageRouterSpec extends ZIOSpecDefault:
                         id = "in-1",
                         session = session,
                         direction = MessageDirection.Inbound,
-                        role = MessageRole.User,
+                        role = GatewayMessageRole.User,
                         content = "hello",
                         metadata = Map("conversationId" -> "42", "runId" -> "99"),
                       )
@@ -165,7 +167,7 @@ object MessageRouterSpec extends ZIOSpecDefault:
                         id = "out-1",
                         session = session,
                         direction = MessageDirection.Outbound,
-                        role = MessageRole.Assistant,
+                        role = GatewayMessageRole.Assistant,
                         content = "response",
                       )
                     )

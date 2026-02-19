@@ -6,7 +6,7 @@ import scalatags.Text.all.*
 object IssuesView:
 
   def list(
-    runId: Option[Long],
+    runId: Option[String],
     issues: List[AgentIssue],
     statusFilter: Option[String],
     query: Option[String],
@@ -58,7 +58,7 @@ object IssuesView:
       )
     )
 
-  def newForm(defaultRunId: Option[Long]): String =
+  def newForm(defaultRunId: Option[String]): String =
     Layout.page("New Issue", "/issues")(
       div(cls := "-mt-6 mx-auto max-w-4xl")(
         div(cls := "mb-5")(
@@ -102,7 +102,7 @@ object IssuesView:
 
   def detail(issue: AgentIssue, assignments: List[AgentAssignment], availableAgents: List[AgentInfo]): String =
     val selectedAgent = issue.preferredAgent.orElse(issue.assignedAgent).getOrElse("")
-    Layout.page(s"Issue #${issue.id.getOrElse(0L)}", "/issues")(
+    Layout.page(s"Issue #${issue.id.getOrElse("-")}", "/issues")(
       div(cls := "-mt-6 mx-auto max-w-5xl space-y-4")(
         a(href := "/issues", cls := "text-sm font-medium text-indigo-300 hover:text-indigo-200")("← Back to issues"),
         div(cls := "rounded-xl border border-white/10 bg-slate-900/70 p-6")(
@@ -124,7 +124,7 @@ object IssuesView:
               else (),
               form(
                 method   := "post",
-                action   := s"/issues/${issue.id.getOrElse(0L)}/assign",
+                action   := s"/issues/${issue.id.getOrElse("-")}/assign",
                 cls      := "flex items-center gap-2",
                 onsubmit := "const b=this.querySelector('button[type=submit]'); if(b){b.disabled=true;b.classList.add('opacity-60','cursor-not-allowed'); b.dataset.originalText=b.textContent; b.textContent='Assigning...';}",
               )(
@@ -180,7 +180,7 @@ object IssuesView:
     )
 
   private def filterBar(
-    runId: Option[Long],
+    runId: Option[String],
     statusFilter: Option[String],
     query: Option[String],
     tagFilter: Option[String],
@@ -238,7 +238,7 @@ object IssuesView:
         div(cls := "min-w-0 flex-1")(
           div(cls := "flex flex-wrap items-center gap-2")(
             a(
-              href := s"/issues/${issue.id.getOrElse(0L)}",
+              href := s"/issues/${issue.id.getOrElse("-")}",
               cls  := "text-base font-semibold text-slate-100 hover:text-indigo-300",
             )(issue.title),
             statusBadge(issue.status.toString),
@@ -247,7 +247,7 @@ object IssuesView:
           ),
           p(cls := "mt-1 line-clamp-2 text-sm text-slate-300")(issue.description),
           div(cls := "mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400")(
-            span(s"#${issue.id.getOrElse(0L)}"),
+            span(s"#${issue.id.getOrElse("-")}"),
             span(s"updated ${issue.updatedAt.toString.take(19).replace('T', ' ')}"),
             issue.runId.map(id => span(s"run:$id")),
             issue.preferredAgent.map(agent => span(s"agent:$agent")),

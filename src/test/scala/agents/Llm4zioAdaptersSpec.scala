@@ -17,7 +17,7 @@ object Llm4zioAdaptersSpec extends ZIOSpecDefault:
       nextConversationId: Long,
       nextMessageId: Long,
       conversations: Map[Long, ChatConversation],
-      messagesByConversation: Map[Long, List[ConversationMessage]],
+      messagesByConversation: Map[Long, List[ConversationEntry]],
     )
 
     val layer: ULayer[ChatRepository] =
@@ -29,7 +29,7 @@ object Llm4zioAdaptersSpec extends ZIOSpecDefault:
           val id      = state.nextConversationId
           val updated = state.copy(
             nextConversationId = id + 1,
-            conversations = state.conversations.updated(id, conversation.copy(id = Some(id))),
+            conversations = state.conversations.updated(id, conversation.copy(id = Some(id.toString))),
           )
           (id, updated)
         }
@@ -38,37 +38,43 @@ object Llm4zioAdaptersSpec extends ZIOSpecDefault:
         ref.get.map(_.conversations.get(id))
 
       override def listConversations(offset: Int, limit: Int): IO[PersistenceError, List[ChatConversation]] =
-        ref.get.map(_.conversations.values.toList.sortBy(_.id.getOrElse(0L)).slice(offset, offset + limit))
+        ref.get.map(_.conversations.values.toList.sortBy(_.id.getOrElse("")).slice(offset, offset + limit))
 
-      override def addMessage(message: ConversationMessage): IO[PersistenceError, Long] =
-        ref.modify { state =>
-          val id             = state.nextMessageId
-          val updatedMessage = message.copy(id = Some(id))
-          val existing       = state.messagesByConversation.getOrElse(message.conversationId, Nil)
-          val updated        = state.copy(
-            nextMessageId = id + 1,
-            messagesByConversation =
-              state.messagesByConversation.updated(message.conversationId, existing :+ updatedMessage),
-          )
-          (id, updated)
-        }
+      override def addMessage(message: ConversationEntry): IO[PersistenceError, Long] =
+        ZIO
+          .fromOption(message.conversationId.toLongOption)
+          .orElseFail(PersistenceError.QueryFailed("addMessage", s"Invalid conversationId: ${message.conversationId}"))
+          .flatMap { conversationId =>
+            ref.modify { state =>
+              val id             = state.nextMessageId
+              val updatedMessage = message.copy(id = Some(id.toString))
+              val existing       = state.messagesByConversation.getOrElse(conversationId, Nil)
+              val updated        = state.copy(
+                nextMessageId = id + 1,
+                messagesByConversation =
+                  state.messagesByConversation.updated(conversationId, existing :+ updatedMessage),
+              )
+              (id, updated)
+            }
+          }
 
-      override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationMessage]] =
+      override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationEntry]] =
         ref.get.map(_.messagesByConversation.getOrElse(conversationId, Nil))
 
       override def getMessagesSince(conversationId: Long, since: Instant)
-        : IO[PersistenceError, List[ConversationMessage]] =
+        : IO[PersistenceError, List[ConversationEntry]] =
         getMessages(conversationId).map(_.filter(_.createdAt.isAfter(since)))
 
       override def getConversationsByChannel(channelName: String): IO[PersistenceError, List[ChatConversation]]     =
         ZIO.succeed(Nil)
       override def listConversationsByRun(runId: Long): IO[PersistenceError, List[ChatConversation]]                =
-        ref.get.map(_.conversations.values.toList.filter(_.runId.contains(runId)))
+        ref.get.map(_.conversations.values.toList.filter(_.runId.contains(runId.toString)))
       override def updateConversation(conversation: ChatConversation): IO[PersistenceError, Unit]                   =
         conversation.id match
-          case Some(id) =>
-            ref.update(state => state.copy(conversations = state.conversations.updated(id, conversation)))
-          case None     => ZIO.fail(PersistenceError.QueryFailed("updateConversation", "Missing id"))
+          case Some(id) if id.toLongOption.isDefined =>
+            ref.update(state => state.copy(conversations = state.conversations.updated(id.toLong, conversation)))
+          case Some(_)                               => ZIO.fail(PersistenceError.QueryFailed("updateConversation", "Invalid id"))
+          case None                                  => ZIO.fail(PersistenceError.QueryFailed("updateConversation", "Missing id"))
       override def deleteConversation(id: Long): IO[PersistenceError, Unit]                                         =
         ref.update(state =>
           state.copy(

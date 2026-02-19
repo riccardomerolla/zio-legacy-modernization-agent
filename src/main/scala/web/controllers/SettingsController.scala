@@ -10,6 +10,7 @@ import _root_.config.SettingsApplier
 import db.*
 import llm4zio.core.{ LlmError, LlmService }
 import models.{ ActivityEvent, ActivityEventType, GatewayConfig }
+import store.{ DataStoreModule, StoreConfig }
 import web.views.{ HtmlViews, SettingsView }
 import web.{ ActivityHub, ErrorHandlingMiddleware }
 
@@ -21,7 +22,22 @@ object SettingsController:
   def routes: ZIO[SettingsController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[SettingsController](_.routes)
 
-  val live: ZLayer[ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService, Nothing, SettingsController] =
+  val live
+    : ZLayer[
+      ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService & DataStoreModule.DataStoreService & StoreConfig &
+        DataStoreModule.TaskRunsStore &
+        DataStoreModule.TaskReportsStore &
+        DataStoreModule.TaskArtifactsStore &
+        DataStoreModule.ConversationsStore &
+        DataStoreModule.MessagesStore &
+        DataStoreModule.SessionContextsStore &
+        DataStoreModule.ActivityEventsStore &
+        DataStoreModule.AgentIssuesStore &
+        DataStoreModule.AgentAssignmentsStore &
+        DataStoreModule.MemoryEntriesStore,
+      Nothing,
+      SettingsController,
+    ] =
     ZLayer.fromFunction(SettingsControllerLive.apply)
 
 final case class SettingsControllerLive(
@@ -29,6 +45,18 @@ final case class SettingsControllerLive(
   activityHub: ActivityHub,
   configRef: Ref[GatewayConfig],
   llmService: LlmService,
+  dataStoreService: DataStoreModule.DataStoreService,
+  storeConfig: StoreConfig,
+  taskRunsStore: DataStoreModule.TaskRunsStore,
+  taskReportsStore: DataStoreModule.TaskReportsStore,
+  taskArtifactsStore: DataStoreModule.TaskArtifactsStore,
+  conversationsStore: DataStoreModule.ConversationsStore,
+  messagesStore: DataStoreModule.MessagesStore,
+  sessionContextsStore: DataStoreModule.SessionContextsStore,
+  activityEventsStore: DataStoreModule.ActivityEventsStore,
+  agentIssuesStore: DataStoreModule.AgentIssuesStore,
+  agentAssignmentsStore: DataStoreModule.AgentAssignmentsStore,
+  memoryEntriesStore: DataStoreModule.MemoryEntriesStore,
 ) extends SettingsController:
 
   private val settingsKeys: List[String] = List(
@@ -103,10 +131,48 @@ final case class SettingsControllerLive(
         yield html(HtmlViews.settingsPage(saved, Some("Settings saved successfully.")))
       }
     },
+    Method.POST / "api" / "store" / "reset-data" -> handler { (_: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _   <- resetDataStore
+          now <- Clock.instant
+          _   <- activityHub.publish(
+                   ActivityEvent(
+                     eventType = ActivityEventType.ConfigChanged,
+                     source = "settings",
+                     summary = "Operational data store reset",
+                     createdAt = now,
+                   )
+                 )
+        yield Response(
+          status = Status.Ok,
+          headers = Headers(Header.Custom("HX-Redirect", "/")),
+          body = Body.fromString("Data store reset completed."),
+        )
+      }
+    },
     Method.POST / "api" / "settings" / "test-ai" -> handler { (req: Request) =>
       testAIConnection(req)
     },
   )
+
+  private def resetDataStore: IO[PersistenceError, Unit] =
+    for
+      _ <- safeReset("taskRuns")(taskRunsStore.map.clear)
+      _ <- safeReset("taskReports")(taskReportsStore.map.clear)
+      _ <- safeReset("taskArtifacts")(taskArtifactsStore.map.clear)
+      _ <- safeReset("conversations")(conversationsStore.map.clear)
+      _ <- safeReset("messages")(messagesStore.map.clear)
+      _ <- safeReset("sessionContexts")(sessionContextsStore.map.clear)
+      _ <- safeReset("activityEvents")(activityEventsStore.map.clear)
+      _ <- safeReset("agentIssues")(agentIssuesStore.map.clear)
+      _ <- safeReset("agentAssignments")(agentAssignmentsStore.map.clear)
+      _ <- safeReset("memoryEntries")(memoryEntriesStore.map.clear)
+      _ <- safeReset("reloadRoots")(dataStoreService.store.reloadRoots)
+    yield ()
+
+  private def safeReset(name: String)(effect: ZIO[Any, Any, Unit]): UIO[Unit] =
+    effect.catchAll(err => ZIO.logWarning(s"data reset step '$name' failed: $err"))
 
   private def testAIConnection(req: Request): UIO[Response] =
     val test =

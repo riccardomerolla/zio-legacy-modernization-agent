@@ -28,6 +28,18 @@ object ApplicationDI:
 
   type CommonServices =
     FileService &
+      StoreConfig &
+      DataStoreModule.DataStoreService &
+      DataStoreModule.TaskRunsStore &
+      DataStoreModule.TaskReportsStore &
+      DataStoreModule.TaskArtifactsStore &
+      DataStoreModule.ConversationsStore &
+      DataStoreModule.MessagesStore &
+      DataStoreModule.SessionContextsStore &
+      DataStoreModule.ActivityEventsStore &
+      DataStoreModule.AgentIssuesStore &
+      DataStoreModule.AgentAssignmentsStore &
+      DataStoreModule.MemoryEntriesStore &
       GatewayConfig &
       Ref[GatewayConfig] &
       HttpAIClient &

@@ -87,7 +87,7 @@ object HtmlViews:
 
   def chatDashboard(
     conversations: List[ChatConversation],
-    sessionMetaByConversation: Map[Long, ConversationSessionMeta] = Map.empty,
+    sessionMetaByConversation: Map[String, ConversationSessionMeta] = Map.empty,
   ): String =
     ChatView.dashboard(conversations, sessionMetaByConversation)
 
@@ -97,11 +97,11 @@ object HtmlViews:
   ): String =
     ChatView.detail(conversation, sessionMeta)
 
-  def chatMessagesFragment(messages: List[ConversationMessage]): String =
+  def chatMessagesFragment(messages: List[ConversationEntry]): String =
     ChatView.messagesFragment(messages)
 
   def issuesView(
-    runId: Option[Long],
+    runId: Option[String],
     issues: List[AgentIssue],
     statusFilter: Option[String],
     query: Option[String],
@@ -109,7 +109,7 @@ object HtmlViews:
   ): String =
     IssuesView.list(runId, issues, statusFilter, query, tagFilter)
 
-  def issueCreateForm(runId: Option[Long]): String =
+  def issueCreateForm(runId: Option[String]): String =
     IssuesView.newForm(runId)
 
   def issueDetail(

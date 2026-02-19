@@ -8,11 +8,11 @@ enum ActivityEventType derives JsonCodec:
   case RunStarted, RunCompleted, RunFailed, AgentAssigned, MessageSent, ConfigChanged
 
 case class ActivityEvent(
-  id: Option[Long] = None,
+  id: Option[String] = None,
   eventType: ActivityEventType,
   source: String,
-  runId: Option[Long] = None,
-  conversationId: Option[Long] = None,
+  runId: Option[String] = None,
+  conversationId: Option[String] = None,
   agentName: Option[String] = None,
   summary: String,
   payload: Option[String] = None,

@@ -1,13 +1,13 @@
 package web.views
 
-import models.{ ChatConversation, ConversationMessage, ConversationSessionMeta, SenderType }
+import models.{ ChatConversation, ConversationEntry, ConversationSessionMeta, SenderType }
 import scalatags.Text.all.*
 
 object ChatView:
 
   def dashboard(
     conversations: List[ChatConversation],
-    sessionMetaByConversation: Map[Long, ConversationSessionMeta],
+    sessionMetaByConversation: Map[String, ConversationSessionMeta],
   ): String =
     Layout.page("Chat — COBOL Modernization", "/chat")(
       div(cls := "mb-6")(
@@ -200,12 +200,12 @@ object ChatView:
       JsResources.inlineModuleScript("/static/client/components/message-composer.js"),
     )
 
-  def messagesFragment(messages: List[ConversationMessage]): String =
+  def messagesFragment(messages: List[ConversationEntry]): String =
     div(cls := "space-y-4 text-gray-100")(
       messages.map(messageCard)
     ).render
 
-  private def messageCard(message: ConversationMessage): Frag =
+  private def messageCard(message: ConversationEntry): Frag =
     val isUser                                           = message.senderType == SenderType.User
     val (containerClasses, bubbleClasses, senderClasses) =
       if isUser then
@@ -253,13 +253,13 @@ object ChatView:
     text.matches("(?s).*\\[[^\\]]+\\]\\((https?://|/|#)[^)]+\\).*")
 
   // scalafmt: { maxColumn = 500 }
-  private def streamingScript(conversationId: Long): Frag =
+  private def streamingScript(conversationId: String): Frag =
     script(attr("type") := "module")(raw(s"""
 import {LitElement} from 'https://cdn.jsdelivr.net/npm/lit@3/+esm';
 
 class ChatMessageStream extends LitElement {
   static properties = {
-    conversationId: {type: Number, attribute: 'conversation-id'},
+    conversationId: {type: String, attribute: 'conversation-id'},
     wsUrl: {type: String, attribute: 'ws-url'},
   };
 

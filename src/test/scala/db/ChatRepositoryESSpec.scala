@@ -49,7 +49,7 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
               conversationId  <- repo.createConversation(
                                    ChatConversation(
                                      title = "ES chat",
-                                     runId = Some(42L),
+                                     runId = Some("42"),
                                      description = Some("conversation test"),
                                      createdAt = createdAt,
                                      updatedAt = updatedAt,
@@ -59,8 +59,8 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
               messageCreatedAt = Instant.parse("2026-02-19T13:00:01Z")
               messageUpdatedAt = Instant.parse("2026-02-19T13:00:01Z")
               _               <- repo.addMessage(
-                                   ConversationMessage(
-                                     conversationId = conversationId,
+                                   ConversationEntry(
+                                     conversationId = conversationId.toString,
                                      sender = "tester",
                                      senderType = SenderType.User,
                                      content = "hello",
@@ -71,8 +71,8 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
                                    )
                                  )
               _               <- repo.addMessage(
-                                   ConversationMessage(
-                                     conversationId = conversationId,
+                                   ConversationEntry(
+                                     conversationId = conversationId.toString,
                                      sender = "assistant",
                                      senderType = SenderType.Assistant,
                                      content = "world",
@@ -89,7 +89,7 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
               messages.head.content == "hello",
               messages(1).content == "world",
               hydrated.exists(_.messages.length == 2),
-              hydrated.flatMap(_.runId).contains(42L),
+              hydrated.flatMap(_.runId).contains("42"),
             )
 
           program.provideLayer(layerFor(dir))

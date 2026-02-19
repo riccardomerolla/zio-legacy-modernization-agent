@@ -236,7 +236,7 @@ object TelegramE2ESpec extends ZIOSpecDefault:
       channelName = "telegram",
       sessionKey = session,
       direction = MessageDirection.Outbound,
-      role = MessageRole.Assistant,
+      role = GatewayMessageRole.Assistant,
       content = text,
       metadata = metadata,
       timestamp = Instant.EPOCH,

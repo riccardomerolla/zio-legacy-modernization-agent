@@ -352,7 +352,7 @@ final case class GatewayServiceLive(
   private def shouldParseIntent(message: NormalizedMessage): Boolean =
     message.channelName == "telegram" &&
     message.direction == gateway.models.MessageDirection.Inbound &&
-    message.role == gateway.models.MessageRole.User
+    message.role == gateway.models.GatewayMessageRole.User
 
   private def sendAssistantReply(
     inbound: NormalizedMessage,
@@ -366,7 +366,7 @@ final case class GatewayServiceLive(
                channelName = inbound.channelName,
                sessionKey = inbound.sessionKey,
                direction = gateway.models.MessageDirection.Outbound,
-               role = gateway.models.MessageRole.Assistant,
+               role = gateway.models.GatewayMessageRole.Assistant,
                content = text,
                metadata = inbound.metadata ++ routedAgent.map(value => "intent.agent" -> value).toMap,
                timestamp = now,
@@ -426,7 +426,7 @@ final case class GatewayServiceLive(
         }
 
   private def maybeScheduleSummarization(message: NormalizedMessage): UIO[Unit] =
-    if message.direction == gateway.models.MessageDirection.Inbound && message.role == gateway.models.MessageRole.User
+    if message.direction == gateway.models.MessageDirection.Inbound && message.role == gateway.models.GatewayMessageRole.User
     then
       (for
         settings <- loadMemorySettings

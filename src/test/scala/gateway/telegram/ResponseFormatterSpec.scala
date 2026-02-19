@@ -15,7 +15,7 @@ object ResponseFormatterSpec extends ZIOSpecDefault:
       channelName = "telegram",
       sessionKey = SessionKey("telegram", "conversation:1"),
       direction = MessageDirection.Outbound,
-      role = MessageRole.Assistant,
+      role = GatewayMessageRole.Assistant,
       content = content,
       metadata = metadata,
       timestamp = Instant.EPOCH,

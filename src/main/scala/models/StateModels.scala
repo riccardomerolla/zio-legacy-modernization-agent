@@ -33,7 +33,7 @@ enum TaskStatus derives JsonCodec:
   case Idle, Running, Paused, Done, Failed
 
 case class ProgressUpdate(
-  runId: Long,
+  runId: String,
   phase: String,
   itemsProcessed: Int,
   itemsTotal: Int,
@@ -84,9 +84,9 @@ case class GatewayConfig(
   enableCheckpointing: Boolean = true,
   enableBusinessLogicExtractor: Boolean = false,
   resumeFromCheckpoint: Option[String] = None,
-  retryFromRunId: Option[Long] = None,
+  retryFromRunId: Option[String] = None,
   retryFromStep: Option[TaskStep] = None,
-  workflowId: Option[Long] = None,
+  workflowId: Option[String] = None,
   basePackage: String = "com.example",
   projectName: Option[String] = None,
   projectVersion: String = "0.0.1-SNAPSHOT",
@@ -140,9 +140,9 @@ object MigrationConfig:
     enableCheckpointing: Boolean = true,
     enableBusinessLogicExtractor: Boolean = false,
     resumeFromCheckpoint: Option[String] = None,
-    retryFromRunId: Option[Long] = None,
+    retryFromRunId: Option[String] = None,
     retryFromStep: Option[TaskStep] = None,
-    workflowId: Option[Long] = None,
+    workflowId: Option[String] = None,
     basePackage: String = "com.example",
     projectName: Option[String] = None,
     projectVersion: String = "0.0.1-SNAPSHOT",
@@ -199,7 +199,7 @@ case class TaskState(
   workspace: Option[WorkspaceMetadata],
   status: TaskStatus,
   lastCheckpoint: Instant,
-  taskRunId: Option[Long] = None,
+  taskRunId: Option[String] = None,
   currentStepName: Option[String] = None,
 ) derives JsonCodec
 
@@ -221,7 +221,7 @@ case class TaskRunSummary(
   currentStep: TaskStep,
   completedSteps: Set[TaskStep],
   errorCount: Int = 0,
-  taskRunId: Option[Long] = None,
+  taskRunId: Option[String] = None,
   currentStepName: Option[String] = None,
   status: TaskStatus = TaskStatus.Idle,
   startedAt: Instant = Instant.EPOCH,

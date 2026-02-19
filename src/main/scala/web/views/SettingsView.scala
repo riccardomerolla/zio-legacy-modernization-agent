@@ -47,6 +47,19 @@ object SettingsView:
             )("Save Settings")
           ),
         ),
+        div(cls := "mt-8 rounded-lg border border-red-500/30 bg-red-950/30 p-5")(
+          h3(cls := "text-lg font-semibold text-red-200")("Reset Operational Data"),
+          p(cls := "mt-2 text-sm text-red-100/90")(
+            "Deletes all tasks, conversations, activity logs, and memory. Configuration is preserved."
+          ),
+          button(
+            `type`             := "button",
+            cls                := "mt-4 rounded-md border border-red-400/40 bg-red-500/20 px-4 py-2 text-sm font-semibold text-red-100 hover:bg-red-500/30",
+            attr("hx-post")    := "/api/store/reset-data",
+            attr("hx-confirm") := "This will permanently delete all tasks and conversations. Are you sure?",
+            attr("hx-swap")    := "none",
+          )("Reset Data Store"),
+        ),
         div(cls := "mt-8 pt-6 border-t border-white/10")(
           div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg p-4")(
             p(cls := "text-sm text-gray-300")(

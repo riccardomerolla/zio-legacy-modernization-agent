@@ -61,14 +61,13 @@ final case class ActivityRepositoryES(
 
   private def fromStoreRow(row: store.ActivityEventRow): Option[ActivityEvent] =
     for
-      id         <- row.id.toLongOption
       parsedType <- parseEventType(row.eventType)
     yield ActivityEvent(
-      id = Some(id),
+      id = Some(row.id),
       eventType = parsedType,
       source = row.source,
-      runId = row.runId.flatMap(_.toLongOption),
-      conversationId = row.conversationId.flatMap(_.toLongOption),
+      runId = row.runId,
+      conversationId = row.conversationId,
       agentName = row.agentName,
       summary = row.summary,
       payload = row.payload,

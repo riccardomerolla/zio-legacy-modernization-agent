@@ -195,7 +195,7 @@ final case class TasksControllerLive(
   ): IO[PersistenceError, List[TaskListItem]] =
     val workflowsById = workflows.flatMap(w => w.id.map(_ -> w)).toMap
     ZIO.foreach(runs) { run =>
-      toTaskItem(run, run.workflowId.flatMap(workflowsById.get))
+      toTaskItem(run, run.workflowId.map(_.toString).flatMap(workflowsById.get))
     }
 
   private def toTaskItem(

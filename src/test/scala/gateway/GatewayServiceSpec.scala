@@ -10,7 +10,7 @@ import _root_.models.*
 import agents.AgentRegistry
 import db.*
 import gateway.models.*
-import llm4zio.core.{ LlmChunk, LlmError, LlmResponse, LlmService, Message, ToolCallResponse }
+import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import memory.*
 
@@ -254,7 +254,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
   private object InMemoryChatRepo:
     final case class State(
       sessionContexts: Map[(String, String), SessionContextLink],
-      messagesByConversation: Map[Long, List[ConversationMessage]],
+      messagesByConversation: Map[Long, List[ConversationEntry]],
     )
 
     val layer: ULayer[ChatRepository] =
@@ -263,7 +263,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
       )
 
     final case class InMemoryChatRepoLive(ref: Ref[State]) extends ChatRepository:
-      override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationMessage]] =
+      override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationEntry]] =
         ref.get.map(_.messagesByConversation.getOrElse(conversationId, Nil))
 
       override def upsertSessionContext(
@@ -314,10 +314,10 @@ object GatewayServiceSpec extends ZIOSpecDefault:
         ZIO.fail(PersistenceError.QueryFailed("updateConversation", "unused"))
       override def deleteConversation(id: Long): IO[PersistenceError, Unit]                                     =
         ZIO.fail(PersistenceError.QueryFailed("deleteConversation", "unused"))
-      override def addMessage(message: ConversationMessage): IO[PersistenceError, Long]                         =
+      override def addMessage(message: ConversationEntry): IO[PersistenceError, Long]                           =
         ZIO.fail(PersistenceError.QueryFailed("addMessage", "unused"))
       override def getMessagesSince(conversationId: Long, since: Instant)
-        : IO[PersistenceError, List[ConversationMessage]] =
+        : IO[PersistenceError, List[ConversationEntry]] =
         ZIO.fail(PersistenceError.QueryFailed("getMessagesSince", "unused"))
       override def createIssue(issue: AgentIssue): IO[PersistenceError, Long]                                   =
         ZIO.fail(PersistenceError.QueryFailed("createIssue", "unused"))
@@ -350,7 +350,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
     session: SessionKey,
     content: String,
     direction: MessageDirection = MessageDirection.Outbound,
-    role: MessageRole = MessageRole.Assistant,
+    role: GatewayMessageRole = GatewayMessageRole.Assistant,
   ): NormalizedMessage =
     NormalizedMessage(
       id = id,
@@ -430,7 +430,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
                       session = session,
                       content = "please analyze this cobol program",
                       direction = MessageDirection.Inbound,
-                      role = MessageRole.User,
+                      role = GatewayMessageRole.User,
                     )
         fiber    <- channel.outbound(session).take(1).runCollect.fork
         _        <- gateway.processInbound(inbound)
@@ -453,7 +453,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
                       session = session,
                       content = "hello, I need some help",
                       direction = MessageDirection.Inbound,
-                      role = MessageRole.User,
+                      role = GatewayMessageRole.User,
                     )
         second    = message(
                       id = "in-nl-3",
@@ -461,7 +461,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
                       session = session,
                       content = "2",
                       direction = MessageDirection.Inbound,
-                      role = MessageRole.User,
+                      role = GatewayMessageRole.User,
                     )
         fiber    <- channel.outbound(session).take(2).runCollect.fork
         _        <- gateway.processInbound(first)
@@ -488,7 +488,7 @@ object GatewayServiceSpec extends ZIOSpecDefault:
                                    session = session,
                                    content = "please help with this migration",
                                    direction = MessageDirection.Inbound,
-                                   role = MessageRole.User,
+                                   role = GatewayMessageRole.User,
                                  )
                      fiber    <- channel.outbound(session).take(2).runCollect.fork
                      _        <- gateway.processInbound(inbound)

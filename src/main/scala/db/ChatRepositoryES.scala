@@ -36,7 +36,9 @@ final case class ChatRepositoryES(
       rows   <- queryAll(conversations, "listConversations")
       all     = rows.toList.map(fromConversationRow)
       page    = all.sortBy(_.createdAt)(Ordering[Instant].reverse).slice(offset, offset + limit)
-      filled <- ZIO.foreach(page)(conv => getMessages(conv.id.getOrElse(0L)).map(msgs => conv.copy(messages = msgs)))
+      filled <- ZIO.foreach(page)(conv =>
+                  getMessages(conv.id.flatMap(_.toLongOption).getOrElse(0L)).map(msgs => conv.copy(messages = msgs))
+                )
     yield filled
 
   override def getConversationsByChannel(channelName: String): IO[PersistenceError, List[ChatConversation]] =
@@ -54,14 +56,17 @@ final case class ChatRepositoryES(
       rows   <- queryAll(conversations, "listConversationsByRun")
       all     = rows.toList.map(
                   fromConversationRow
-                ).filter(_.runId.contains(runId)).sortBy(_.createdAt)(Ordering[Instant].reverse)
-      filled <- ZIO.foreach(all)(conv => getMessages(conv.id.getOrElse(0L)).map(msgs => conv.copy(messages = msgs)))
+                ).filter(_.runId.contains(runId.toString)).sortBy(_.createdAt)(Ordering[Instant].reverse)
+      filled <- ZIO.foreach(all)(conv =>
+                  getMessages(conv.id.flatMap(_.toLongOption).getOrElse(0L)).map(msgs => conv.copy(messages = msgs))
+                )
     yield filled
 
   override def updateConversation(conversation: ChatConversation): IO[PersistenceError, Unit] =
     for
       id       <- ZIO
                     .fromOption(conversation.id)
+                    .map(_.toLongOption.getOrElse(0L))
                     .orElseFail(PersistenceError.QueryFailed("updateConversation", "Conversation ID required for update"))
       existing <- conversations.get(id).mapError(storeError("updateConversation"))
       _        <- ZIO
@@ -83,19 +88,19 @@ final case class ChatRepositoryES(
       _           <- conversations.remove(id).unit.mapError(storeError("deleteConversation"))
     yield ()
 
-  override def addMessage(message: ConversationMessage): IO[PersistenceError, Long] =
+  override def addMessage(message: ConversationEntry): IO[PersistenceError, Long] =
     for
       id <- nextId("addMessage")
       _  <- messages.put(id, toMessageRow(id, message)).mapError(storeError("addMessage"))
     yield id
 
-  override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationMessage]] =
+  override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationEntry]] =
     messages
       .query(GigaMapQuery.ByIndex("conversationId", conversationId))
       .map(_.toList.map(fromMessageRow).sortBy(_.createdAt))
       .mapError(storeError("getMessages"))
 
-  override def getMessagesSince(conversationId: Long, since: Instant): IO[PersistenceError, List[ConversationMessage]] =
+  override def getMessagesSince(conversationId: Long, since: Instant): IO[PersistenceError, List[ConversationEntry]] =
     getMessages(conversationId).map(_.filter(msg => !msg.createdAt.isBefore(since)))
 
   override def createIssue(issue: AgentIssue): IO[PersistenceError, Long] =
@@ -133,6 +138,7 @@ final case class ChatRepositoryES(
     for
       id       <- ZIO
                     .fromOption(issue.id)
+                    .map(_.toLongOption.getOrElse(0L))
                     .orElseFail(PersistenceError.QueryFailed("updateIssue", "Issue ID required for update"))
       existing <- issues.get(id).mapError(storeError("updateIssue"))
       _        <- ZIO
@@ -177,6 +183,7 @@ final case class ChatRepositoryES(
     for
       id       <- ZIO
                     .fromOption(assignment.id)
+                    .map(_.toLongOption.getOrElse(0L))
                     .orElseFail(PersistenceError.QueryFailed("updateAssignment", "Assignment ID required for update"))
       existing <- assignments.get(id).mapError(storeError("updateAssignment"))
       _        <- ZIO
@@ -246,14 +253,14 @@ final case class ChatRepositoryES(
       status = conversation.status,
       createdAt = conversation.createdAt,
       updatedAt = conversation.updatedAt,
-      runId = conversation.runId,
+      runId = conversation.runId.flatMap(_.toLongOption),
       createdBy = conversation.createdBy,
     )
 
   private def fromConversationRow(row: ConversationRow): ChatConversation =
     ChatConversation(
-      id = Some(row.id),
-      runId = row.runId,
+      id = Some(row.id.toString),
+      runId = row.runId.map(_.toString),
       title = row.title,
       channel = row.channelName,
       description = row.description,
@@ -264,10 +271,10 @@ final case class ChatRepositoryES(
       createdBy = row.createdBy,
     )
 
-  private def toMessageRow(id: Long, message: ConversationMessage): ChatMessageRow =
+  private def toMessageRow(id: Long, message: ConversationEntry): ChatMessageRow =
     ChatMessageRow(
       id = id,
-      conversationId = message.conversationId,
+      conversationId = message.conversationId.toLongOption.getOrElse(0L),
       sender = message.sender,
       senderType = senderTypeToDb(message.senderType),
       content = message.content,
@@ -277,10 +284,10 @@ final case class ChatRepositoryES(
       updatedAt = message.updatedAt,
     )
 
-  private def fromMessageRow(row: ChatMessageRow): ConversationMessage =
-    ConversationMessage(
-      id = Some(row.id),
-      conversationId = row.conversationId,
+  private def fromMessageRow(row: ChatMessageRow): ConversationEntry =
+    ConversationEntry(
+      id = Some(row.id.toString),
+      conversationId = row.conversationId.toString,
       sender = row.sender,
       senderType = parseSenderType(row.senderType),
       content = row.content,
@@ -293,8 +300,8 @@ final case class ChatRepositoryES(
   private def toIssueRow(id: Long, issue: AgentIssue): AgentIssueRow =
     AgentIssueRow(
       id = id,
-      runId = issue.runId,
-      conversationId = issue.conversationId,
+      runId = issue.runId.flatMap(_.toLongOption),
+      conversationId = issue.conversationId.flatMap(_.toLongOption),
       title = issue.title,
       description = issue.description,
       issueType = issue.issueType,
@@ -315,9 +322,9 @@ final case class ChatRepositoryES(
 
   private def fromIssueRow(row: AgentIssueRow): AgentIssue =
     AgentIssue(
-      id = Some(row.id),
-      runId = row.runId,
-      conversationId = row.conversationId,
+      id = Some(row.id.toString),
+      runId = row.runId.map(_.toString),
+      conversationId = row.conversationId.map(_.toString),
       title = row.title,
       description = row.description,
       issueType = row.issueType,
@@ -339,7 +346,7 @@ final case class ChatRepositoryES(
   private def toAssignmentRow(id: Long, assignment: AgentAssignment): AgentAssignmentRow =
     AgentAssignmentRow(
       id = id,
-      issueId = assignment.issueId,
+      issueId = assignment.issueId.toLongOption.getOrElse(0L),
       agentName = assignment.agentName,
       status = assignment.status,
       assignedAt = assignment.assignedAt,
@@ -351,8 +358,8 @@ final case class ChatRepositoryES(
 
   private def fromAssignmentRow(row: AgentAssignmentRow): AgentAssignment =
     AgentAssignment(
-      id = Some(row.id),
-      issueId = row.issueId,
+      id = Some(row.id.toString),
+      issueId = row.issueId.toString,
       agentName = row.agentName,
       status = row.status,
       assignedAt = row.assignedAt,
