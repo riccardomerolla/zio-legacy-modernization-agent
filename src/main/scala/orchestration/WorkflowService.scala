@@ -46,11 +46,11 @@ object WorkflowService:
   def deleteWorkflow(id: Long): ZIO[WorkflowService, WorkflowServiceError, Unit] =
     ZIO.serviceWithZIO[WorkflowService](_.deleteWorkflow(id))
 
-  val live: ZLayer[TaskRepository, Nothing, WorkflowService] =
+  val live: ZLayer[ConfigRepository, Nothing, WorkflowService] =
     ZLayer.fromFunction(WorkflowServiceLive.apply)
 
 final case class WorkflowServiceLive(
-  repository: TaskRepository
+  repository: ConfigRepository
 ) extends WorkflowService:
   override def createWorkflow(workflow: WorkflowDefinition): IO[WorkflowServiceError, Long] =
     for

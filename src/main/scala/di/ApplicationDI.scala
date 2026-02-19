@@ -33,6 +33,7 @@ object ApplicationDI:
       StateService &
       javax.sql.DataSource &
       TaskRepository &
+      ConfigRepository &
       WorkflowService &
       ActivityRepository &
       ActivityHub &
@@ -92,6 +93,7 @@ object ApplicationDI:
       ZLayer.succeed(DatabaseConfig(s"jdbc:sqlite:$dbPath")),
       Database.live.mapError(err => new RuntimeException(err.toString)).orDie,
       TaskRepository.live,
+      ConfigRepository.fromTaskRepository,
       // Create runtime config ref with merged DB settings
       configRefLayer,
       configAwareLlmServiceLayer,
@@ -116,17 +118,15 @@ object ApplicationDI:
     )
 
   /** Create a Ref[GatewayConfig] that reads and merges DB settings on startup */
-  private val configRefLayer: ZLayer[GatewayConfig & TaskRepository, Nothing, Ref[GatewayConfig]] =
+  private val configRefLayer: ZLayer[GatewayConfig & ConfigRepository, Nothing, Ref[GatewayConfig]] =
     ZLayer.fromZIO {
       for
-        baseConfig  <- ZIO.service[GatewayConfig]
-        repository  <- ZIO.service[TaskRepository]
-        dbSettings  <- repository.getAllSettings
-                         .mapError(_ => ())
-                         .orElseSucceed(Seq.empty)
-        settingsMap  = dbSettings.map(r => r.key -> r.value).toMap
-        mergedConfig = if settingsMap.nonEmpty then SettingsApplier.toGatewayConfig(settingsMap) else baseConfig
-        ref         <- Ref.make(mergedConfig)
+        baseConfig   <- ZIO.service[GatewayConfig]
+        mergedConfig <- SettingsApplier
+                          .loadGatewayConfig(baseConfig)
+                          .mapError(_ => ())
+                          .orElseSucceed(baseConfig)
+        ref          <- Ref.make(mergedConfig)
       yield ref
     }
 
