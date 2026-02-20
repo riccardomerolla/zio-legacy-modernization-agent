@@ -561,7 +561,11 @@ if (!customElements.get('chat-message-stream')) {
     val conversationId = conv.id.getOrElse("unknown")
     val lastMessage    = conv.messages.lastOption
     val preview        = lastMessage.map(_.content.trim).filter(_.nonEmpty).map(compactPreview).getOrElse("No messages yet")
-    val channel        = conv.channel.orElse(sessionMeta.map(_.channelName)).getOrElse("web")
+    val channel        = conv.channel
+                           .orElse(sessionMeta.map(_.channelName))
+                           .flatMap(Option(_))   // normalise Some(null) → None
+                           .filter(_.nonEmpty)
+                           .getOrElse("web")
     a(
       href := s"/chat/$conversationId",
       cls  := "bg-white/5 hover:bg-white/10 ring-1 ring-white/10 rounded-lg p-4 transition-all hover:ring-indigo-500/50 cursor-pointer block",

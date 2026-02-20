@@ -269,7 +269,11 @@ object DataStoreModule:
       ZIO.serviceWith[StoreConfig] { storeConfig =>
         EclipseStoreConfig(
           storageTarget = StorageTarget.FileSystem(Paths.get(storeConfig.dataStorePath)),
-          autoCheckpointInterval = Some(java.time.Duration.ofSeconds(60L)),
+          // Aggressive checkpoint: flush to disk every 5 seconds to ensure data persistence
+          // This is critical for durability - the auto-checkpoint thread runs in the background
+          // and flushes buffered writes to the filesystem. A shorter interval provides better
+          // durability guarantees at the cost of slightly more I/O.
+          autoCheckpointInterval = Some(java.time.Duration.ofSeconds(5L)),
         )
       }
     ) >>> EclipseStoreService.live

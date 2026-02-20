@@ -20,5 +20,20 @@ object IssuesViewSpec extends ZIOSpecDefault:
         rendered.contains("<tbody"),
         rendered.contains("Alice"),
       )
-    }
+    },
+    test("markdownFragment renders inline markdown and breaks inside table cells") {
+      val markdown =
+        """| Aspect | Details |
+          || --- | --- |
+          || **Primary** | Line one<br>Line **two** |
+          |""".stripMargin
+
+      val rendered = IssuesView.markdownFragment(markdown).render
+      assertTrue(
+        rendered.contains("<strong>Primary</strong>"),
+        rendered.contains("Line one"),
+        rendered.contains("Line <strong>two</strong>"),
+        rendered.contains("<br"),
+      )
+    },
   )

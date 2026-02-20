@@ -7,6 +7,7 @@ import zio.*
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.domain.GigaMapQuery
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.error.GigaMapError
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.service.GigaMap
+import io.github.riccardomerolla.zio.eclipsestore.service.{ LifecycleCommand, LifecycleStatus }
 import models.*
 import store.*
 
@@ -16,185 +17,146 @@ final case class ChatRepositoryES(
   sessionContexts: GigaMap[String, SessionContextRow],
   issues: GigaMap[Long, AgentIssueRow],
   assignments: GigaMap[Long, AgentAssignmentRow],
+  dataStore: store.DataStoreModule.DataStoreService,
 ) extends ChatRepository:
 
   override def createConversation(conversation: ChatConversation): IO[PersistenceError, Long] =
     for
-      id <- nextId("createConversation")
-      _  <- conversations.put(id, toConversationRow(id, conversation)).mapError(storeError("createConversation"))
+      id <- nextId
+      _  <- conversations.put(id, toConversationRow(id, conversation)).mapError(storeErr("createConversation"))
+      _  <- checkpoint("createConversation")
     yield id
 
   override def getConversation(id: Long): IO[PersistenceError, Option[ChatConversation]] =
     for
-      maybeConversation <- conversations.get(id).mapError(storeError("getConversation"))
-      hydrated          <- ZIO.foreach(maybeConversation) { row =>
-                             fromConversationRowSafe(row, "getConversation").flatMap {
-                               case Some(conversation) =>
-                                 getMessages(id).map(messages => Some(conversation.copy(messages = messages)))
-                               case None               => ZIO.succeed(None)
-                             }
-                           }
-    yield hydrated.flatten
+      row      <- conversations.get(id).mapError(storeErr("getConversation"))
+      hydrated <- ZIO.foreach(row)(r => fromConversationRow(r).flatMap(conv => getMessages(r.id).map(msgs => conv.copy(messages = msgs))))
+    yield hydrated
 
   override def listConversations(offset: Int, limit: Int): IO[PersistenceError, List[ChatConversation]] =
     for
-      rows   <- queryAll(conversations, "listConversations")
-      mapped <- ZIO.foreach(rows.toList)(row => fromConversationRowSafe(row, "listConversations"))
-      all     = mapped.flatten
-      page    = all.sortBy(_.createdAt)(Ordering[Instant].reverse).slice(offset, offset + limit)
-      filled <- ZIO.foreach(page)(conv =>
-                  getMessages(conv.id.flatMap(_.toLongOption).getOrElse(0L)).map(msgs => conv.copy(messages = msgs))
-                )
-    yield filled
+      rows  <- queryAll(conversations, "listConversations")
+      page   = rows.toList.sortBy(_.createdAt)(Ordering[Instant].reverse).slice(offset, offset + limit)
+      convs <- ZIO.foreach(page)(r => fromConversationRow(r).flatMap(conv => getMessages(r.id).map(msgs => conv.copy(messages = msgs))))
+    yield convs
 
   override def getConversationsByChannel(channelName: String): IO[PersistenceError, List[ChatConversation]] =
     for
-      links <- listSessionContextLinks
+      links <- allSessionContextLinks
       ids    = links
                  .filter(_.channelName == channelName.trim)
-                 .flatMap(link => extractConversationId(link.contextJson))
+                 .flatMap(l => extractLongField(l.contextJson, "conversationId"))
                  .distinct
       convs <- ZIO.foreach(ids)(getConversation).map(_.flatten)
     yield convs.sortBy(_.updatedAt)(Ordering[Instant].reverse)
 
   override def listConversationsByRun(runId: Long): IO[PersistenceError, List[ChatConversation]] =
     for
-      rows   <- queryAll(conversations, "listConversationsByRun")
-      mapped <- ZIO.foreach(rows.toList)(row => fromConversationRowSafe(row, "listConversationsByRun"))
-      all     = mapped
-                  .flatten
-                  .filter(_.runId.contains(runId.toString))
-                  .sortBy(_.createdAt)(Ordering[Instant].reverse)
-      filled <- ZIO.foreach(all)(conv =>
-                  getMessages(conv.id.flatMap(_.toLongOption).getOrElse(0L)).map(msgs => conv.copy(messages = msgs))
-                )
-    yield filled
+      rows  <- queryAll(conversations, "listConversationsByRun")
+      page   = rows.toList.filter(_.runId.contains(runId)).sortBy(_.createdAt)(Ordering[Instant].reverse)
+      convs <- ZIO.foreach(page)(r => fromConversationRow(r).flatMap(conv => getMessages(r.id).map(msgs => conv.copy(messages = msgs))))
+    yield convs
 
   override def updateConversation(conversation: ChatConversation): IO[PersistenceError, Unit] =
     for
-      id       <- ZIO
-                    .fromOption(conversation.id)
-                    .map(_.toLongOption.getOrElse(0L))
-                    .orElseFail(PersistenceError.QueryFailed("updateConversation", "Conversation ID required for update"))
-      existing <- conversations.get(id).mapError(storeError("updateConversation"))
-      _        <- ZIO
-                    .fail(PersistenceError.NotFound("chat_conversations", id))
-                    .when(existing.isEmpty)
-      _        <- conversations.put(id, toConversationRow(id, conversation)).mapError(storeError("updateConversation"))
+      id <- idFromModel(conversation.id, "updateConversation")
+      _  <- requireExists(conversations, id, "chat_conversations", "updateConversation")
+      _  <- conversations.put(id, toConversationRow(id, conversation)).mapError(storeErr("updateConversation"))
+      _  <- checkpoint("updateConversation")
     yield ()
 
   override def deleteConversation(id: Long): IO[PersistenceError, Unit] =
     for
-      existing    <- conversations.get(id).mapError(storeError("deleteConversation"))
-      _           <- ZIO
-                       .fail(PersistenceError.NotFound("chat_conversations", id))
-                       .when(existing.isEmpty)
-      messageRows <- queryMessagesByConversation(id, op = "deleteConversation")
-      _           <-
-        ZIO.foreachDiscard(messageRows)(row => messages.remove(row.id).unit.mapError(storeError("deleteConversation")))
-      _           <- conversations.remove(id).unit.mapError(storeError("deleteConversation"))
+      _    <- requireExists(conversations, id, "chat_conversations", "deleteConversation")
+      msgs <- queryMessagesByConversation(id, "deleteConversation")
+      _    <- ZIO.foreachDiscard(msgs)(row => messages.remove(row.id).unit.mapError(storeErr("deleteConversation")))
+      _    <- conversations.remove(id).unit.mapError(storeErr("deleteConversation"))
     yield ()
 
   override def addMessage(message: ConversationEntry): IO[PersistenceError, Long] =
     for
-      id <- nextId("addMessage")
-      _  <- messages.put(id, toMessageRow(id, message)).mapError(storeError("addMessage"))
+      id <- nextId
+      _  <- messages.put(id, toMessageRow(id, message)).mapError(storeErr("addMessage"))
+      _  <- checkpoint("addMessage")
     yield id
 
   override def getMessages(conversationId: Long): IO[PersistenceError, List[ConversationEntry]] =
-    queryMessagesByConversation(conversationId, op = "getMessages")
+    queryMessagesByConversation(conversationId, "getMessages")
       .map(_.toList.map(fromMessageRow).sortBy(_.createdAt))
 
   override def getMessagesSince(conversationId: Long, since: Instant): IO[PersistenceError, List[ConversationEntry]] =
-    getMessages(conversationId).map(_.filter(msg => !msg.createdAt.isBefore(since)))
+    getMessages(conversationId).map(_.filter(m => !m.createdAt.isBefore(since)))
 
   override def createIssue(issue: AgentIssue): IO[PersistenceError, Long] =
     for
-      id <- nextId("createIssue")
-      _  <- issues.put(id, toIssueRow(id, issue)).mapError(storeError("createIssue"))
+      id <- nextId
+      _  <- issues.put(id, toIssueRow(id, issue)).mapError(storeErr("createIssue"))
     yield id
 
   override def getIssue(id: Long): IO[PersistenceError, Option[AgentIssue]] =
-    issues.get(id).map(_.map(fromIssueRow)).mapError(storeError("getIssue"))
+    issues.get(id).map(_.map(fromIssueRow)).mapError(storeErr("getIssue"))
 
   override def listIssues(offset: Int, limit: Int): IO[PersistenceError, List[AgentIssue]] =
-    for
-      rows <- queryAll(issues, "listIssues")
-      all   = rows.toList.map(fromIssueRow)
-      page  = all.sortBy(_.updatedAt)(Ordering[Instant].reverse).slice(offset, offset + limit)
-    yield page
+    queryAll(issues, "listIssues").map(
+      _.toList.map(fromIssueRow).sortBy(_.updatedAt)(Ordering[Instant].reverse).slice(offset, offset + limit)
+    )
 
   override def listIssuesByRun(runId: Long): IO[PersistenceError, List[AgentIssue]] =
     issues
       .query(GigaMapQuery.ByIndex("runId", runId))
       .map(_.toList.map(fromIssueRow).sortBy(_.createdAt)(Ordering[Instant].reverse))
-      .mapError(storeError("listIssuesByRun"))
+      .mapError(storeErr("listIssuesByRun"))
 
   override def listIssuesByStatus(status: IssueStatus): IO[PersistenceError, List[AgentIssue]] =
     issues
       .query(GigaMapQuery.ByIndex("status", issueStatusToDb(status)))
       .map(_.toList.map(fromIssueRow).sortBy(_.createdAt)(Ordering[Instant].reverse))
-      .mapError(storeError("listIssuesByStatus"))
+      .mapError(storeErr("listIssuesByStatus"))
 
   override def listUnassignedIssues(runId: Long): IO[PersistenceError, List[AgentIssue]] =
     listIssuesByRun(runId).map(_.filter(_.assignedAgent.isEmpty))
 
   override def updateIssue(issue: AgentIssue): IO[PersistenceError, Unit] =
     for
-      id       <- ZIO
-                    .fromOption(issue.id)
-                    .map(_.toLongOption.getOrElse(0L))
-                    .orElseFail(PersistenceError.QueryFailed("updateIssue", "Issue ID required for update"))
-      existing <- issues.get(id).mapError(storeError("updateIssue"))
-      _        <- ZIO
-                    .fail(PersistenceError.NotFound("agent_issues", id))
-                    .when(existing.isEmpty)
-      _        <- issues.put(id, toIssueRow(id, issue)).mapError(storeError("updateIssue"))
+      id <- idFromModel(issue.id, "updateIssue")
+      _  <- requireExists(issues, id, "agent_issues", "updateIssue")
+      _  <- issues.put(id, toIssueRow(id, issue)).mapError(storeErr("updateIssue"))
     yield ()
 
   override def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit] =
     for
-      issue <- getIssue(issueId)
-      now   <- Clock.instant
-      _     <- issue match
-                 case Some(existing) =>
-                   updateIssue(
-                     existing.copy(
-                       assignedAgent = Some(agentName),
-                       assignedAt = Some(now),
-                       status = IssueStatus.Assigned,
-                       updatedAt = now,
-                     )
-                   )
-                 case None           => ZIO.fail(PersistenceError.NotFound("agent_issues", issueId))
+      now      <- Clock.instant
+      existing <- getIssue(issueId).someOrFail(PersistenceError.NotFound("agent_issues", issueId))
+      _        <- updateIssue(
+                    existing.copy(
+                      assignedAgent = Some(agentName),
+                      assignedAt = Some(now),
+                      status = IssueStatus.Assigned,
+                      updatedAt = now,
+                    )
+                  )
     yield ()
 
   override def createAssignment(assignment: AgentAssignment): IO[PersistenceError, Long] =
     for
-      id <- nextId("createAssignment")
-      _  <- assignments.put(id, toAssignmentRow(id, assignment)).mapError(storeError("createAssignment"))
+      id <- nextId
+      _  <- assignments.put(id, toAssignmentRow(id, assignment)).mapError(storeErr("createAssignment"))
     yield id
 
   override def getAssignment(id: Long): IO[PersistenceError, Option[AgentAssignment]] =
-    assignments.get(id).map(_.map(fromAssignmentRow)).mapError(storeError("getAssignment"))
+    assignments.get(id).map(_.map(fromAssignmentRow)).mapError(storeErr("getAssignment"))
 
   override def listAssignmentsByIssue(issueId: Long): IO[PersistenceError, List[AgentAssignment]] =
     assignments
       .query(GigaMapQuery.ByIndex("issueId", issueId))
       .map(_.toList.map(fromAssignmentRow).sortBy(_.assignedAt)(Ordering[Instant].reverse))
-      .mapError(storeError("listAssignmentsByIssue"))
+      .mapError(storeErr("listAssignmentsByIssue"))
 
   override def updateAssignment(assignment: AgentAssignment): IO[PersistenceError, Unit] =
     for
-      id       <- ZIO
-                    .fromOption(assignment.id)
-                    .map(_.toLongOption.getOrElse(0L))
-                    .orElseFail(PersistenceError.QueryFailed("updateAssignment", "Assignment ID required for update"))
-      existing <- assignments.get(id).mapError(storeError("updateAssignment"))
-      _        <- ZIO
-                    .fail(PersistenceError.NotFound("agent_assignments", id))
-                    .when(existing.isEmpty)
-      _        <- assignments.put(id, toAssignmentRow(id, assignment)).mapError(storeError("updateAssignment"))
+      id <- idFromModel(assignment.id, "updateAssignment")
+      _  <- requireExists(assignments, id, "agent_assignments", "updateAssignment")
+      _  <- assignments.put(id, toAssignmentRow(id, assignment)).mapError(storeErr("updateAssignment"))
     yield ()
 
   override def upsertSessionContext(
@@ -203,64 +165,70 @@ final case class ChatRepositoryES(
     contextJson: String,
     updatedAt: Instant,
   ): IO[PersistenceError, Unit] =
-    sessionContexts
-      .put(
-        sessionContextCompositeKey(channelName, sessionKey),
-        SessionContextRow(channelName, sessionKey, contextJson, updatedAt),
-      )
-      .mapError(storeError("upsertSessionContext"))
+    for
+      _ <- sessionContexts
+             .put(ctxKey(channelName, sessionKey), SessionContextRow(channelName, sessionKey, contextJson, updatedAt))
+             .mapError(storeErr("upsertSessionContext"))
+      _ <- checkpoint("upsertSessionContext")
+    yield ()
 
-  override def getSessionContext(
-    channelName: String,
-    sessionKey: String,
-  ): IO[PersistenceError, Option[String]] =
-    sessionContexts
-      .get(sessionContextCompositeKey(channelName, sessionKey))
-      .map(_.map(_.contextJson))
-      .mapError(storeError("getSessionContext"))
+  override def getSessionContext(channelName: String, sessionKey: String): IO[PersistenceError, Option[String]] =
+    sessionContexts.get(ctxKey(channelName, sessionKey)).map(_.map(_.contextJson)).mapError(storeErr("getSessionContext"))
 
   override def getSessionContextByConversation(conversationId: Long): IO[PersistenceError, Option[SessionContextLink]] =
-    listSessionContextLinks.map(_.find(link => extractConversationId(link.contextJson).contains(conversationId)))
+    allSessionContextLinks.map(_.find(l => extractLongField(l.contextJson, "conversationId").contains(conversationId)))
 
   override def getSessionContextByTaskRunId(taskRunId: Long): IO[PersistenceError, Option[SessionContextLink]] =
-    listSessionContextLinks.map(_.find(link => extractRunId(link.contextJson).contains(taskRunId)))
+    allSessionContextLinks.map(_.find(l => extractLongField(l.contextJson, "runId").contains(taskRunId)))
 
-  override def deleteSessionContext(
-    channelName: String,
-    sessionKey: String,
-  ): IO[PersistenceError, Unit] =
-    sessionContexts
-      .remove(sessionContextCompositeKey(channelName, sessionKey))
-      .unit
-      .mapError(storeError("deleteSessionContext"))
+  override def deleteSessionContext(channelName: String, sessionKey: String): IO[PersistenceError, Unit] =
+    sessionContexts.remove(ctxKey(channelName, sessionKey)).unit.mapError(storeErr("deleteSessionContext"))
 
-  private def listSessionContextLinks: IO[PersistenceError, List[SessionContextLink]] =
-    queryAll(
-      sessionContexts,
-      "listSessionContextLinks",
-    ).map(_.toList.map(fromSessionContextRow).sortBy(_.updatedAt)(Ordering[Instant].reverse))
+  private def allSessionContextLinks: IO[PersistenceError, List[SessionContextLink]] =
+    queryAll(sessionContexts, "allSessionContextLinks")
+      .map(
+        _.toList.flatMap(r =>
+          // EclipseStore lazily materialises plain String fields – guard each access so
+          // a single corrupt row is dropped rather than bringing down the whole query.
+          try
+            Some(SessionContextLink(
+              channelName = Option(r.channelName).getOrElse(""),
+              sessionKey = Option(r.sessionKey).getOrElse(""),
+              contextJson = Option(r.contextJson).getOrElse("{}"),
+              updatedAt = Option(r.updatedAt).getOrElse(java.time.Instant.now()),
+            ))
+          catch case _: Throwable => None
+        )
+      )
 
   private def queryAll[K, V](map: GigaMap[K, V], op: String): IO[PersistenceError, Chunk[V]] =
-    map.query(GigaMapQuery.All()).mapError(storeError(op))
+    map.query(GigaMapQuery.All()).mapError(storeErr(op))
 
-  private def queryMessagesByConversation(
-    conversationId: Long,
-    op: String,
-  ): IO[PersistenceError, Chunk[ChatMessageRow]] =
+  private def queryMessagesByConversation(conversationId: Long, op: String): IO[PersistenceError, Chunk[ChatMessageRow]] =
     messages
       .query(GigaMapQuery.ByIndex("conversationId", conversationId))
-      .catchSome {
-        case GigaMapError.IndexNotDefined("conversationId") =>
-          ZIO.logWarning("messages 'conversationId' index missing; falling back to full scan") *>
-            messages.query(GigaMapQuery.All[ChatMessageRow]()).map(_.filter(_.conversationId == conversationId))
+      .catchSome { case GigaMapError.IndexNotDefined("conversationId") =>
+        ZIO.logWarning("messages 'conversationId' index missing; falling back to full scan") *>
+          messages.query(GigaMapQuery.All[ChatMessageRow]()).map(_.filter(_.conversationId == conversationId))
       }
-      .mapError(storeError(op))
+      .mapError(storeErr(op))
 
-  private def nextId(op: String): IO[PersistenceError, Long] =
+  private def requireExists[K, V](map: GigaMap[K, V], id: Long, table: String, op: String): IO[PersistenceError, Unit] =
+    map.get(id.asInstanceOf[K]).mapError(storeErr(op)).flatMap {
+      case None    => ZIO.fail(PersistenceError.NotFound(table, id))
+      case Some(_) => ZIO.unit
+    }
+
+  private def idFromModel(id: Option[String], op: String): IO[PersistenceError, Long] =
+    ZIO
+      .fromOption(id.flatMap(_.toLongOption))
+      .orElseFail(PersistenceError.QueryFailed(op, "valid numeric ID required"))
+
+  private def nextId: IO[PersistenceError, Long] =
     ZIO
       .attempt(java.util.UUID.randomUUID().getMostSignificantBits & Long.MaxValue)
-      .mapError(storeError(op))
-      .flatMap(id => if id == 0L then nextId(op) else ZIO.succeed(id))
+      .mapError(storeErr("nextId"))
+      .flatMap(id => if id == 0L then nextId else ZIO.succeed(id))
 
   private def toConversationRow(id: Long, conversation: ChatConversation): ConversationRow =
     ConversationRow(
@@ -273,20 +241,6 @@ final case class ChatRepositoryES(
       updatedAt = conversation.updatedAt,
       runId = conversation.runId.flatMap(_.toLongOption),
       createdBy = conversation.createdBy,
-    )
-
-  private def fromConversationRow(row: ConversationRow): ChatConversation =
-    ChatConversation(
-      id = Some(row.id.toString),
-      runId = optionalLongToString(row.runId),
-      title = row.title,
-      channel = sanitizeOptional(row.channelName),
-      description = sanitizeOptional(row.description),
-      status = row.status,
-      messages = Nil,
-      createdAt = row.createdAt,
-      updatedAt = row.updatedAt,
-      createdBy = sanitizeOptional(row.createdBy),
     )
 
   private def toMessageRow(id: Long, message: ConversationEntry): ChatMessageRow =
@@ -302,17 +256,17 @@ final case class ChatRepositoryES(
       updatedAt = message.updatedAt,
     )
 
-  private def fromMessageRow(row: ChatMessageRow): ConversationEntry =
+  private def fromMessageRow(r: ChatMessageRow): ConversationEntry =
     ConversationEntry(
-      id = Some(row.id.toString),
-      conversationId = row.conversationId.toString,
-      sender = row.sender,
-      senderType = parseSenderType(row.senderType),
-      content = row.content,
-      messageType = parseMessageType(row.messageType),
-      metadata = row.metadata,
-      createdAt = row.createdAt,
-      updatedAt = row.updatedAt,
+      id = Some(r.id.toString),
+      conversationId = r.conversationId.toString,
+      sender = r.sender,
+      senderType = parseSenderType(r.senderType),
+      content = r.content,
+      messageType = parseMessageType(r.messageType),
+      metadata = Option(r.metadata).flatten,
+      createdAt = r.createdAt,
+      updatedAt = r.updatedAt,
     )
 
   private def toIssueRow(id: Long, issue: AgentIssue): AgentIssueRow =
@@ -338,27 +292,27 @@ final case class ChatRepositoryES(
       updatedAt = issue.updatedAt,
     )
 
-  private def fromIssueRow(row: AgentIssueRow): AgentIssue =
+  private def fromIssueRow(r: AgentIssueRow): AgentIssue =
     AgentIssue(
-      id = Some(row.id.toString),
-      runId = row.runId.map(_.toString),
-      conversationId = row.conversationId.map(_.toString),
-      title = row.title,
-      description = row.description,
-      issueType = row.issueType,
-      tags = row.tags,
-      preferredAgent = row.preferredAgent,
-      contextPath = row.contextPath,
-      sourceFolder = row.sourceFolder,
-      priority = parseIssuePriority(row.priority),
-      status = parseIssueStatus(row.status),
-      assignedAgent = row.assignedAgent,
-      assignedAt = row.assignedAt,
-      completedAt = row.completedAt,
-      errorMessage = row.errorMessage,
-      resultData = row.resultData,
-      createdAt = row.createdAt,
-      updatedAt = row.updatedAt,
+      id = Some(r.id.toString),
+      runId = Option(r.runId).flatten.map(_.toString),
+      conversationId = Option(r.conversationId).flatten.map(_.toString),
+      title = r.title,
+      description = r.description,
+      issueType = r.issueType,
+      tags = Option(r.tags).flatten,
+      preferredAgent = Option(r.preferredAgent).flatten,
+      contextPath = Option(r.contextPath).flatten,
+      sourceFolder = Option(r.sourceFolder).flatten,
+      priority = parseIssuePriority(r.priority),
+      status = parseIssueStatus(r.status),
+      assignedAgent = Option(r.assignedAgent).flatten,
+      assignedAt = Option(r.assignedAt).flatten,
+      completedAt = Option(r.completedAt).flatten,
+      errorMessage = Option(r.errorMessage).flatten,
+      resultData = Option(r.resultData).flatten,
+      createdAt = r.createdAt,
+      updatedAt = r.updatedAt,
     )
 
   private def toAssignmentRow(id: Long, assignment: AgentAssignment): AgentAssignmentRow =
@@ -374,65 +328,69 @@ final case class ChatRepositoryES(
       result = assignment.result,
     )
 
-  private def fromAssignmentRow(row: AgentAssignmentRow): AgentAssignment =
+  private def fromAssignmentRow(r: AgentAssignmentRow): AgentAssignment =
     AgentAssignment(
-      id = Some(row.id.toString),
-      issueId = row.issueId.toString,
-      agentName = row.agentName,
-      status = row.status,
-      assignedAt = row.assignedAt,
-      startedAt = row.startedAt,
-      completedAt = row.completedAt,
-      executionLog = row.executionLog,
-      result = row.result,
+      id = Some(r.id.toString),
+      issueId = r.issueId.toString,
+      agentName = r.agentName,
+      status = r.status,
+      assignedAt = r.assignedAt,
+      startedAt = Option(r.startedAt).flatten,
+      completedAt = Option(r.completedAt).flatten,
+      executionLog = Option(r.executionLog).flatten,
+      result = Option(r.result).flatten,
     )
 
-  private def fromSessionContextRow(row: SessionContextRow): SessionContextLink =
-    SessionContextLink(
-      channelName = row.channelName,
-      sessionKey = row.sessionKey,
-      contextJson = row.contextJson,
-      updatedAt = row.updatedAt,
-    )
 
-  private def sessionContextCompositeKey(channelName: String, sessionKey: String): String =
-    s"$channelName:$sessionKey"
 
-  private def extractConversationId(contextJson: String): Option[Long] =
-    extractLongField(contextJson, "conversationId")
+  private def checkpoint(op: String): IO[PersistenceError, Unit] =
+    for
+      status <- dataStore.store.maintenance(LifecycleCommand.Checkpoint).mapError(err => PersistenceError.QueryFailed(op, err.toString))
+      _      <- status match
+                  case LifecycleStatus.Failed(msg) =>
+                    ZIO.fail(PersistenceError.QueryFailed(op, s"checkpoint failed: $msg"))
+                  case _                           => ZIO.unit
+    yield ()
 
-  private def extractRunId(contextJson: String): Option[Long] =
-    extractLongField(contextJson, "runId")
+  private def storeErr(op: String)(t: Throwable): PersistenceError =
+    PersistenceError.QueryFailed(op, Option(t.getMessage).getOrElse(t.toString))
 
-  private def extractLongField(contextJson: String, field: String): Option[Long] =
+  private def ctxKey(channelName: String, sessionKey: String): String = s"$channelName:$sessionKey"
+
+  private def extractLongField(json: String, field: String): Option[Long] =
     val marker = s"\"$field\":"
-    val start  = contextJson.indexOf(marker)
-    if start < 0 then None
-    else
-      val digits = contextJson
-        .drop(start + marker.length)
-        .dropWhile(_.isWhitespace)
-        .takeWhile(_.isDigit)
-      digits.toLongOption
+    val i      = json.indexOf(marker)
+    Option
+      .when(i >= 0)(json.drop(i + marker.length).dropWhile(_.isWhitespace).takeWhile(_.isDigit))
+      .flatMap(_.toLongOption)
 
-  private def storeError(op: String)(throwable: Throwable): PersistenceError =
-    PersistenceError.QueryFailed(op, Option(throwable.getMessage).getOrElse(throwable.toString))
-
-  private def sanitizeOptional[A](value: Option[A]): Option[A] =
-    Option(value).flatten
-
-  private def optionalLongToString(value: Option[Long]): Option[String] =
-    value.map(_.toString)
-
-  private def fromConversationRowSafe(row: ConversationRow, op: String): UIO[Option[ChatConversation]] =
+  /** Convert a {@link ConversationRow} from the store into the domain model.
+   *
+   * EclipseStore uses lazy, on-demand deserialization: object fields are only
+   * materialised when first accessed.  If a field was added to the case class
+   * AFTER the row was originally persisted, EclipseStore will produce a JVM
+   * null reference (or may throw internally) when the field is first read.
+   * We therefore guard every individual field access so that a single bad
+   * field cannot abort the whole hydration.
+   */
+  private def fromConversationRow(r: ConversationRow): IO[PersistenceError, ChatConversation] =
     ZIO
-      .attempt(fromConversationRow(row))
-      .tapError(throwable =>
-        ZIO.logWarning(
-          s"Skipping malformed conversation row [op=$op id=${row.id}]: ${Option(throwable.getMessage).getOrElse(throwable.toString)}"
+      .attempt {
+        val now = java.time.Instant.now()
+        ChatConversation(
+          id          = Some(r.id.toString),
+          runId       = try Option(r.runId).flatten.map(_.toString)  catch case _: Throwable => None,
+          title       = try Option(r.title).getOrElse("")            catch case _: Throwable => "",
+          channel     = try Option(r.channelName).flatten.flatMap(Option(_)) catch case _: Throwable => None,
+          description = try Option(r.description).flatten.flatMap(Option(_)) catch case _: Throwable => None,
+          status      = try Option(r.status).getOrElse("active")    catch case _: Throwable => "active",
+          messages    = Nil,
+          createdAt   = try Option(r.createdAt).getOrElse(now)      catch case _: Throwable => now,
+          updatedAt   = try Option(r.updatedAt).getOrElse(now)      catch case _: Throwable => now,
+          createdBy   = try Option(r.createdBy).flatten.flatMap(Option(_))  catch case _: Throwable => None,
         )
-      )
-      .option
+      }
+      .mapError(ex => PersistenceError.QueryFailed("fromConversationRow", s"Failed to hydrate conversation [id=${r.id}]: ${Option(ex.getMessage).getOrElse(ex.toString)}"))
 
   private def senderTypeToDb(value: SenderType): String = value match
     case SenderType.User      => "user"
@@ -492,7 +450,7 @@ object ChatRepositoryES:
   val live
     : ZLayer[
       DataStoreModule.ConversationsStore & DataStoreModule.MessagesStore & DataStoreModule.SessionContextsStore &
-        DataStoreModule.AgentIssuesStore & DataStoreModule.AgentAssignmentsStore,
+        DataStoreModule.AgentIssuesStore & DataStoreModule.AgentAssignmentsStore & DataStoreModule.DataStoreService,
       Nothing,
       ChatRepository,
     ] =
@@ -503,5 +461,6 @@ object ChatRepositoryES:
         sessionContexts <- DataStoreModule.sessionContextsMap
         issues          <- DataStoreModule.agentIssuesMap
         assignments     <- DataStoreModule.agentAssignmentsMap
-      yield ChatRepositoryES(conversations, messages, sessionContexts, issues, assignments)
+        dataStore       <- ZIO.service[DataStoreModule.DataStoreService]
+      yield ChatRepositoryES(conversations, messages, sessionContexts, issues, assignments, dataStore)
     }

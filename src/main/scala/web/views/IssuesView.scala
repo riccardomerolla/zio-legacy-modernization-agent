@@ -550,13 +550,15 @@ object IssuesView:
         div(cls := "my-4 overflow-x-auto")(
           table(cls := "min-w-full divide-y divide-white/10 rounded-lg border border-white/10 bg-black/20 text-sm")(
             thead(
-              tr(header.map(col => th(cls := "px-3 py-2 text-left font-semibold text-slate-100")(col)))
+              tr(header.map(col =>
+                th(cls := "px-3 py-2 text-left font-semibold text-slate-100")(inlineWithBreaks(col))
+              ))
             ),
             tbody(
               bodyRows.map { row =>
                 tr(
                   cls := "odd:bg-white/0 even:bg-white/5",
-                  row.map(col => td(cls := "px-3 py-2 text-slate-200")(col)),
+                  row.map(col => td(cls := "px-3 py-2 text-slate-200")(inlineWithBreaks(col))),
                 )
               }
             ),
@@ -576,3 +578,12 @@ object IssuesView:
   private def normalizeRow(row: List[String], size: Int): List[String] =
     if row.length >= size then row.take(size)
     else row ++ List.fill(size - row.length)("")
+
+  private def inlineWithBreaks(text: String): Seq[Frag] =
+    val parts = text.split("(?i)<br\\s*/?>", -1).toList
+    parts.zipWithIndex.flatMap {
+      case (part, idx) =>
+        val rendered = renderInline(part)
+        if idx < parts.length - 1 then rendered :+ br()
+        else rendered
+    }

@@ -164,7 +164,8 @@ object ChatRepository:
   val live
     : ZLayer[
       DataStoreModule.ConversationsStore & DataStoreModule.MessagesStore & DataStoreModule.SessionContextsStore &
-        DataStoreModule.AgentIssuesStore & DataStoreModule.AgentAssignmentsStore,
+        DataStoreModule.AgentIssuesStore & DataStoreModule.AgentAssignmentsStore &
+        DataStoreModule.DataStoreService,
       Nothing,
       ChatRepository,
     ] =

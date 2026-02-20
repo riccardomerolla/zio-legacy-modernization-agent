@@ -85,7 +85,9 @@ object ConfigStoreModule:
       ZIO.serviceWith[StoreConfig] { storeConfig =>
         EclipseStoreConfig(
           storageTarget = StorageTarget.FileSystem(Paths.get(storeConfig.configStorePath)),
-          autoCheckpointInterval = Some(java.time.Duration.ofSeconds(30L)),
+          // Aggressive checkpoint: flush to disk every 5 seconds for config store
+          // Configuration data (workflows, settings, agents) should persist reliably
+          autoCheckpointInterval = Some(java.time.Duration.ofSeconds(5L)),
         )
       }
     ) >>> EclipseStoreService.live
