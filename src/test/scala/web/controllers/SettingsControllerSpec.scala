@@ -82,7 +82,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
 
   private def mkLayer
     : UIO[
-      ZLayer[Any, Nothing, SettingsController & ConfigRepository & StoreConfig & DataStoreModule.TaskRunsStore]
+      ZLayer[Any, Nothing, SettingsController & ConfigRepository & StoreConfig]
     ] =
     for
       tempDir   <- ZIO.attemptBlocking(Files.createTempDirectory("settings-controller-spec")).orDie
@@ -95,7 +95,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
       hub        = new ActivityHub:
                      override def publish(event: ActivityEvent): UIO[Unit] = ZIO.unit
                      override def subscribe: UIO[Dequeue[ActivityEvent]]   = Queue.unbounded[ActivityEvent].map(identity)
-    yield ZLayer.make[SettingsController & ConfigRepository & StoreConfig & DataStoreModule.TaskRunsStore](
+    yield ZLayer.make[SettingsController & ConfigRepository & StoreConfig](
       ZLayer.succeed(storeCfg),
       ConfigStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
       DataStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,

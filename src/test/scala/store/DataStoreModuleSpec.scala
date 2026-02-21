@@ -31,10 +31,7 @@ object DataStoreModuleSpec extends ZIOSpecDefault:
   ): ZLayer[
     Any,
     EclipseStoreError | GigaMapError,
-    DataStoreModule.DataStoreService & DataStoreModule.TaskRunsStore &
-      DataStoreModule.TaskReportsStore & DataStoreModule.TaskArtifactsStore & DataStoreModule.ConversationsStore &
-      DataStoreModule.MessagesStore & DataStoreModule.SessionContextsStore & DataStoreModule.ActivityEventsStore &
-      DataStoreModule.AgentIssuesStore & DataStoreModule.AgentAssignmentsStore,
+    DataStoreModule.DataStoreService,
   ] =
     ZLayer.succeed(
       StoreConfig(
@@ -63,9 +60,9 @@ object DataStoreModuleSpec extends ZIOSpecDefault:
             failedConversions = 1,
           )
           (for
-            map    <- DataStoreModule.taskRunsMap
-            _      <- map.put(TaskRunId("run-1"), row)
-            loaded <- map.get(TaskRunId("run-1"))
+            data   <- ZIO.service[DataStoreModule.DataStoreService]
+            _      <- data.store.store("run:run-1", row)
+            loaded <- data.store.fetch[String, TaskRunRow]("run:run-1")
           yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
         }
       },
@@ -83,9 +80,9 @@ object DataStoreModuleSpec extends ZIOSpecDefault:
             createdBy = Some("system"),
           )
           (for
-            map    <- DataStoreModule.conversationsMap
-            _      <- map.put(1L, row)
-            loaded <- map.get(1L)
+            data   <- ZIO.service[DataStoreModule.DataStoreService]
+            _      <- data.store.store("conv:1", row)
+            loaded <- data.store.fetch[String, ConversationRow]("conv:1")
           yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
         }
       },

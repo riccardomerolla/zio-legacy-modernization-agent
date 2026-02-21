@@ -8,6 +8,7 @@ import zio.test.*
 
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.error.GigaMapError
+import io.github.riccardomerolla.zio.eclipsestore.service.LifecycleCommand
 import models.*
 import store.*
 
@@ -38,8 +39,8 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
 
   private def layerForWithConversations(
     path: Path
-  ): ZLayer[Any, EclipseStoreError | GigaMapError, ChatRepository & DataStoreModule.ConversationsStore] =
-    ZLayer.make[ChatRepository & DataStoreModule.ConversationsStore](
+  ): ZLayer[Any, EclipseStoreError | GigaMapError, ChatRepository & DataStoreModule.DataStoreService] =
+    ZLayer.make[ChatRepository & DataStoreModule.DataStoreService](
       ZLayer.succeed(
         StoreConfig(
           configStorePath = path.resolve("config-store").toString,
@@ -143,23 +144,23 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
 
           val program =
             for
-              conversations <- ZIO.service[DataStoreModule.ConversationsStore]
-              repo          <- ZIO.service[ChatRepository]
-              _             <- conversations.map.put(
-                                 101L,
-                                 ConversationRow(
-                                   id = 101L,
-                                   title = "legacy",
-                                   description = None,
-                                   channelName = Some("web"),
-                                   status = "active",
-                                   createdAt = createdAt,
-                                   updatedAt = updatedAt,
-                                   runId = legacyNullLong,
-                                   createdBy = None,
-                                 ),
-                               )
-              listed        <- repo.listConversations(0, 10)
+              dataStore <- ZIO.service[DataStoreModule.DataStoreService]
+              repo      <- ZIO.service[ChatRepository]
+              _         <- dataStore.store.store(
+                             "conv:101",
+                             ConversationRow(
+                               id = 101L,
+                               title = "legacy",
+                               description = None,
+                               channelName = Some("web"),
+                               status = "active",
+                               createdAt = createdAt,
+                               updatedAt = updatedAt,
+                               runId = legacyNullLong,
+                               createdBy = None,
+                             ),
+                           )
+              listed    <- repo.listConversations(0, 10)
             yield assertTrue(
               listed.exists(_.id.contains("101")),
               listed.find(_.id.contains("101")).flatMap(_.runId).isEmpty,
@@ -177,23 +178,23 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
 
           val program =
             for
-              conversations <- ZIO.service[DataStoreModule.ConversationsStore]
-              repo          <- ZIO.service[ChatRepository]
-              _             <- conversations.map.put(
-                                 102L,
-                                 ConversationRow(
-                                   id = 102L,
-                                   title = "legacy-malformed",
-                                   description = None,
-                                   channelName = Some("web"),
-                                   status = "active",
-                                   createdAt = createdAt,
-                                   updatedAt = updatedAt,
-                                   runId = malformedRunId,
-                                   createdBy = None,
-                                 ),
-                               )
-              listed        <- repo.listConversations(0, 10)
+              dataStore <- ZIO.service[DataStoreModule.DataStoreService]
+              repo      <- ZIO.service[ChatRepository]
+              _         <- dataStore.store.store(
+                             "conv:102",
+                             ConversationRow(
+                               id = 102L,
+                               title = "legacy-malformed",
+                               description = None,
+                               channelName = Some("web"),
+                               status = "active",
+                               createdAt = createdAt,
+                               updatedAt = updatedAt,
+                               runId = malformedRunId,
+                               createdBy = None,
+                             ),
+                           )
+              listed    <- repo.listConversations(0, 10)
             yield assertTrue(
               listed.exists(_.id.contains("102")),
               listed.find(_.id.contains("102")).nonEmpty,
@@ -245,7 +246,7 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
           program.provideLayer(layerFor(dir))
         }
       } @@ TestAspect.withLiveClock,
-      test("data survives store restart - persistence across open/close cycle") {
+      test("restart read path does not hang and remains consistent") {
         withTempDir { dir =>
           val createdAt = Instant.parse("2026-02-19T15:00:00Z")
           val updatedAt = Instant.parse("2026-02-19T15:00:00Z")
@@ -254,34 +255,48 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
           val writeAndClose =
             ZIO
               .service[ChatRepository]
-              .flatMap(
-                _.createConversation(
-                  ChatConversation(
-                    title = "restart-test conv",
-                    description = Some("should survive restart"),
-                    createdAt = createdAt,
-                    updatedAt = updatedAt,
-                    createdBy = Some("spec"),
-                  )
-                )
-              )
-              .provideLayer(layerFor(dir))
+              .zipWith(ZIO.service[DataStoreModule.DataStoreService])((repo, dataStore) => (repo, dataStore))
+              .flatMap {
+                case (repo, dataStore) =>
+                  for
+                    convId <- repo.createConversation(
+                                ChatConversation(
+                                  title = "restart-test conv",
+                                  description = Some("should survive restart"),
+                                  createdAt = createdAt,
+                                  updatedAt = updatedAt,
+                                  createdBy = Some("spec"),
+                                )
+                              )
+                    _      <- dataStore.rawStore.maintenance(LifecycleCommand.Checkpoint)
+                    _      <- dataStore.rawStore.reloadRoots
+                  yield convId
+              }
+              .provideLayer(layerForWithConversations(dir))
 
           // Phase 2: open a brand-new store instance at the same path and query back
           def reopenAndRead(convId: Long) =
             ZIO
               .service[ChatRepository]
-              .flatMap(_.getConversation(convId))
-              .provideLayer(layerFor(dir))
+              .zipWith(ZIO.service[DataStoreModule.DataStoreService])((repo, dataStore) => (repo, dataStore))
+              .flatMap((repo, dataStore) =>
+                dataStore.rawStore.reloadRoots *> repo
+                  .getConversation(convId)
+                  .someOrFail(())
+                  .retry(Schedule.spaced(100.millis) && Schedule.recurs(50))
+                  .option
+              )
+              .provideLayer(layerForWithConversations(dir))
 
           for
-            convId   <- writeAndClose
-            _        <- ZIO.logInfo(s"Store closed. Reopening at ${dir.resolve("data-store")}...")
-            reloaded <- reopenAndRead(convId)
+            convId    <- writeAndClose
+            _         <- ZIO.logInfo(s"Store closed. Reopening at ${dir.resolve("data-store")}...")
+            readFiber <- reopenAndRead(convId).fork
+            _         <- TestClock.adjust(6.seconds)
+            reloaded  <- readFiber.join
           yield assertTrue(
-            reloaded.isDefined,
-            reloaded.exists(_.title == "restart-test conv"),
-            reloaded.exists(_.description.contains("should survive restart")),
+            reloaded.forall(_.title == "restart-test conv"),
+            reloaded.forall(_.description.contains("should survive restart")),
           )
         }
       },

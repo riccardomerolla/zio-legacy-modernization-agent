@@ -2,21 +2,24 @@ package db
 
 import zio.*
 
-import io.github.riccardomerolla.zio.eclipsestore.gigamap.domain.GigaMapQuery
-import io.github.riccardomerolla.zio.eclipsestore.gigamap.service.GigaMap
+import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import models.{ ActivityEvent, ActivityEventType }
-import store.{ DataStoreModule, EventId }
+import store.{ ActivityEventRow, DataStoreModule }
 
 final case class ActivityRepositoryES(
-  events: GigaMap[EventId, store.ActivityEventRow]
+  dataStore: DataStoreModule.DataStoreService
 ) extends ActivityRepository:
+
+  private val kv = dataStore.store
+
+  private def eventKey(id: Long): String = s"event:$id"
 
   override def createEvent(event: ActivityEvent): IO[PersistenceError, Long] =
     for
       id <- nextId("createEvent")
-      _  <- events
-              .put(EventId(id.toString), toStoreRow(event, id))
-              .mapError(storeError("createEvent"))
+      _  <- kv
+              .store(eventKey(id), toStoreRow(event, id))
+              .mapError(storeErr("createEvent"))
     yield id
 
   override def listEvents(
@@ -24,32 +27,43 @@ final case class ActivityRepositoryES(
     since: Option[java.time.Instant],
     limit: Int,
   ): IO[PersistenceError, List[ActivityEvent]] =
-    (eventType match
-      case Some(value) => events.query(GigaMapQuery.ByIndex("eventType", value.toString))
-      case None        => events.query(GigaMapQuery.All[store.ActivityEventRow]())
-    )
-      .mapError(storeError("listEvents"))
+    fetchAllEvents("listEvents")
       .map(
-        _.toList
-          .flatMap(fromStoreRow)
+        _.map(fromStoreRow)
+          .filter(event => eventType.forall(_ == event.eventType))
           .filter(event => since.forall(s => !event.createdAt.isBefore(s)))
           .sortBy(_.createdAt)(Ordering[java.time.Instant].reverse)
           .take(limit)
       )
 
+  private def fetchAllEvents(op: String): IO[PersistenceError, List[ActivityEventRow]] =
+    dataStore.rawStore
+      .streamKeys[String]
+      .filter(_.startsWith("event:"))
+      .runCollect
+      .mapError(storeErr(op))
+      .flatMap { keys =>
+        ZIO
+          .foreach(keys.toList)(k => kv.fetch[String, ActivityEventRow](k).mapError(storeErr(op)))
+          .map(_.flatten)
+      }
+
   private def nextId(op: String): IO[PersistenceError, Long] =
     ZIO
       .attempt(java.util.UUID.randomUUID().getMostSignificantBits & Long.MaxValue)
-      .mapError(storeError(op))
+      .mapError(storeErrThrowable(op))
       .flatMap(id => if id == 0L then nextId(op) else ZIO.succeed(id))
 
-  private def storeError(op: String)(throwable: Throwable): PersistenceError =
-    PersistenceError.QueryFailed(op, Option(throwable.getMessage).getOrElse(throwable.toString))
+  private def storeErr(op: String)(e: EclipseStoreError): PersistenceError =
+    PersistenceError.QueryFailed(op, e.toString)
 
-  private def toStoreRow(event: ActivityEvent, id: Long): store.ActivityEventRow =
-    store.ActivityEventRow(
+  private def storeErrThrowable(op: String)(t: Throwable): PersistenceError =
+    PersistenceError.QueryFailed(op, Option(t.getMessage).getOrElse(t.toString))
+
+  private def toStoreRow(event: ActivityEvent, id: Long): ActivityEventRow =
+    ActivityEventRow(
       id = id.toString,
-      eventType = event.eventType.toString,
+      eventType = event.eventType,
       source = event.source,
       runId = event.runId.map(_.toString),
       conversationId = event.conversationId.map(_.toString),
@@ -59,12 +73,10 @@ final case class ActivityRepositoryES(
       createdAt = event.createdAt,
     )
 
-  private def fromStoreRow(row: store.ActivityEventRow): Option[ActivityEvent] =
-    for
-      parsedType <- parseEventType(row.eventType)
-    yield ActivityEvent(
+  private def fromStoreRow(row: ActivityEventRow): ActivityEvent =
+    ActivityEvent(
       id = Some(row.id),
-      eventType = parsedType,
+      eventType = row.eventType,
       source = row.source,
       runId = row.runId,
       conversationId = row.conversationId,
@@ -74,20 +86,6 @@ final case class ActivityRepositoryES(
       createdAt = row.createdAt,
     )
 
-  private def parseEventType(raw: String): Option[ActivityEventType] =
-    raw match
-      case "RunStarted" | "run_started"       => Some(ActivityEventType.RunStarted)
-      case "RunCompleted" | "run_completed"   => Some(ActivityEventType.RunCompleted)
-      case "RunFailed" | "run_failed"         => Some(ActivityEventType.RunFailed)
-      case "AgentAssigned" | "agent_assigned" => Some(ActivityEventType.AgentAssigned)
-      case "MessageSent" | "message_sent"     => Some(ActivityEventType.MessageSent)
-      case "ConfigChanged" | "config_changed" => Some(ActivityEventType.ConfigChanged)
-      case _                                  => None
-
 object ActivityRepositoryES:
-  val live: ZLayer[DataStoreModule.ActivityEventsStore, Nothing, ActivityRepository] =
-    ZLayer.fromZIO {
-      ZIO
-        .serviceWith[DataStoreModule.ActivityEventsStore](_.map)
-        .map(ActivityRepositoryES.apply)
-    }
+  val live: ZLayer[DataStoreModule.DataStoreService, Nothing, ActivityRepository] =
+    ZLayer.fromFunction(ActivityRepositoryES.apply)

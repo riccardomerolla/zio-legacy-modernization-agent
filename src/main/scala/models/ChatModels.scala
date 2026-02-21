@@ -3,11 +3,12 @@ package models
 import java.time.Instant
 
 import zio.json.*
+import zio.schema.{ Schema, derived }
 
-enum MessageType derives JsonCodec:
+enum MessageType derives JsonCodec, Schema:
   case Text, Code, Error, Status
 
-enum SenderType derives JsonCodec:
+enum SenderType derives JsonCodec, Schema:
   case User, Assistant, System
 
 case class ConversationEntry(
@@ -61,10 +62,10 @@ case class ConversationSessionMeta(
   updatedAt: Instant,
 ) derives JsonCodec
 
-enum IssuePriority derives JsonCodec:
+enum IssuePriority derives JsonCodec, Schema:
   case Low, Medium, High, Critical
 
-enum IssueStatus derives JsonCodec:
+enum IssueStatus derives JsonCodec, Schema:
   case Open, Assigned, InProgress, Completed, Failed, Skipped
 
 case class AgentIssue(

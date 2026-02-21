@@ -35,15 +35,6 @@ object ApplicationDI:
       StoreConfig &
       ConfigStoreModule.ConfigStoreService &
       DataStoreModule.DataStoreService &
-      DataStoreModule.TaskRunsStore &
-      DataStoreModule.TaskReportsStore &
-      DataStoreModule.TaskArtifactsStore &
-      DataStoreModule.ConversationsStore &
-      DataStoreModule.MessagesStore &
-      DataStoreModule.SessionContextsStore &
-      DataStoreModule.ActivityEventsStore &
-      DataStoreModule.AgentIssuesStore &
-      DataStoreModule.AgentAssignmentsStore &
       DataStoreModule.MemoryEntriesStore &
       GatewayConfig &
       Ref[GatewayConfig] &

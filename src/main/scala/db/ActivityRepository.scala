@@ -27,5 +27,5 @@ object ActivityRepository:
   ): ZIO[ActivityRepository, PersistenceError, List[ActivityEvent]] =
     ZIO.serviceWithZIO[ActivityRepository](_.listEvents(eventType, since, limit))
 
-  val live: ZLayer[DataStoreModule.ActivityEventsStore, Nothing, ActivityRepository] =
+  val live: ZLayer[DataStoreModule.DataStoreService, Nothing, ActivityRepository] =
     ActivityRepositoryES.live

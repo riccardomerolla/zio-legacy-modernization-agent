@@ -5,10 +5,8 @@ import java.time.Instant
 import zio.*
 import zio.json.*
 
-import io.github.riccardomerolla.zio.eclipsestore.gigamap.domain.GigaMapQuery
-import io.github.riccardomerolla.zio.eclipsestore.gigamap.service.GigaMap
 import io.github.riccardomerolla.zio.eclipsestore.service.{ LifecycleCommand, LifecycleStatus }
-import store.{ AgentId, ConfigStoreModule, WorkflowId }
+import store.ConfigStoreModule
 
 trait ConfigRepository:
   // Settings
@@ -101,8 +99,7 @@ object ConfigRepository:
 
   val live
     : ZLayer[
-      ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore &
-        ConfigStoreModule.CustomAgentsStore,
+      ConfigStoreModule.ConfigStoreService,
       Nothing,
       ConfigRepository,
     ] =
@@ -173,11 +170,10 @@ object ConfigRepository:
     )
 
 final case class ConfigRepositoryES(
-  configStore: ConfigStoreModule.ConfigStoreService,
-  settings: GigaMap[String, String],
-  workflows: GigaMap[WorkflowId, store.WorkflowRow],
-  agents: GigaMap[AgentId, store.CustomAgentRow],
+  configStore: ConfigStoreModule.ConfigStoreService
 ) extends ConfigRepository:
+
+  private val kv = configStore.store
 
   private val builtInAgentNamesLower: Set[String] = Set(
     "chat-agent",
@@ -189,35 +185,54 @@ final case class ConfigRepositoryES(
     "router-agent",
   )
 
+  // Key helpers
+  private def settingKey(key: String): String = s"setting:$key"
+  private def workflowKey(id: Long): String   = s"workflow:$id"
+  private def agentKey(id: Long): String      = s"agent:$id"
+
   override def getAllSettings: IO[PersistenceError, List[SettingRow]] =
     for
-      rows <- settings.entries.mapError(storeError("getAllSettings"))
+      keys <- configStore.rawStore
+                .streamKeys[String]
+                .filter(_.startsWith("setting:"))
+                .runCollect
+                .mapError(storeErr("getAllSettings"))
       now  <- Clock.instant
-    yield rows.toList.map { case (key, raw) => decodeSetting(key, raw, now) }.sortBy(_.key)
+      rows <- ZIO.foreach(keys.toList) { k =>
+                kv
+                  .fetch[String, String](k)
+                  .mapError(storeErr("getAllSettings"))
+                  .map(_.map(raw => decodeSetting(k.stripPrefix("setting:"), raw, now)).toList)
+              }
+    yield rows.flatten.sortBy(_.key)
 
   override def getSetting(key: String): IO[PersistenceError, Option[SettingRow]] =
     for
-      raw <- settings.get(key).mapError(storeError("getSetting"))
+      raw <- kv.fetch[String, String](settingKey(key)).mapError(storeErr("getSetting"))
       now <- Clock.instant
     yield raw.map(value => decodeSetting(key, value, now))
 
   override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit] =
     for
       now <- Clock.instant
-      _   <- settings
-               .put(key, StoredSetting(value, now).toJson)
-               .mapError(storeError("upsertSetting"))
+      _   <- kv
+               .store(settingKey(key), StoredSetting(value, now).toJson)
+               .mapError(storeErr("upsertSetting"))
       _   <- checkpointConfigStore("upsertSetting")
     yield ()
 
   override def deleteSetting(key: String): IO[PersistenceError, Unit] =
-    settings.remove(key).unit.mapError(storeError("deleteSetting")) *> checkpointConfigStore("deleteSetting")
+    kv.remove[String](settingKey(key)).mapError(storeErr("deleteSetting")) *> checkpointConfigStore("deleteSetting")
 
   override def deleteSettingsByPrefix(prefix: String): IO[PersistenceError, Unit] =
     for
-      keys <- settings.keys.mapError(storeError("deleteSettingsByPrefix"))
-      _    <- ZIO.foreachDiscard(keys.filter(_.startsWith(prefix))) { key =>
-                settings.remove(key).unit.mapError(storeError("deleteSettingsByPrefix"))
+      keys <- configStore.rawStore
+                .streamKeys[String]
+                .filter(k => k.startsWith(s"setting:$prefix"))
+                .runCollect
+                .mapError(storeErr("deleteSettingsByPrefix"))
+      _    <- ZIO.foreachDiscard(keys.toList) { k =>
+                kv.remove[String](k).mapError(storeErr("deleteSettingsByPrefix"))
               }
       _    <- checkpointConfigStore("deleteSettingsByPrefix")
     yield ()
@@ -225,70 +240,70 @@ final case class ConfigRepositoryES(
   override def createWorkflow(workflow: WorkflowRow): IO[PersistenceError, Long] =
     for
       id <- nextId("createWorkflow")
-      _  <- workflows
-              .put(WorkflowId(id.toString), toStoreWorkflowRow(workflow.copy(id = Some(id))))
-              .mapError(storeError("createWorkflow"))
+      _  <- kv
+              .store(workflowKey(id), toStoreWorkflowRow(workflow.copy(id = Some(id))))
+              .mapError(storeErr("createWorkflow"))
     yield id
 
   override def getWorkflow(id: Long): IO[PersistenceError, Option[WorkflowRow]] =
-    workflows
-      .get(WorkflowId(id.toString))
+    kv
+      .fetch[String, store.WorkflowRow](workflowKey(id))
       .map(_.flatMap(fromStoreWorkflowRow))
-      .mapError(storeError("getWorkflow"))
+      .mapError(storeErr("getWorkflow"))
 
   override def getWorkflowByName(name: String): IO[PersistenceError, Option[WorkflowRow]] =
-    queryAll(workflows, "getWorkflowByName")
-      .map(_.toList.flatMap(fromStoreWorkflowRow).find(_.name.equalsIgnoreCase(name.trim)))
+    fetchAllByPrefix[store.WorkflowRow]("workflow:", "getWorkflowByName")
+      .map(_.flatMap(fromStoreWorkflowRow).find(_.name.equalsIgnoreCase(name.trim)))
 
   override def listWorkflows: IO[PersistenceError, List[WorkflowRow]] =
-    queryAll(workflows, "listWorkflows")
-      .map(_.toList.flatMap(fromStoreWorkflowRow).sortBy(w => (!w.isBuiltin, w.name.toLowerCase)))
+    fetchAllByPrefix[store.WorkflowRow]("workflow:", "listWorkflows")
+      .map(_.flatMap(fromStoreWorkflowRow).sortBy(w => (!w.isBuiltin, w.name.toLowerCase)))
 
   override def updateWorkflow(workflow: WorkflowRow): IO[PersistenceError, Unit] =
     for
       id       <- ZIO
                     .fromOption(workflow.id)
                     .orElseFail(PersistenceError.QueryFailed("updateWorkflow", "Missing id for workflow update"))
-      existing <- workflows.get(WorkflowId(id.toString)).mapError(storeError("updateWorkflow"))
+      existing <- kv.fetch[String, store.WorkflowRow](workflowKey(id)).mapError(storeErr("updateWorkflow"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("workflows", id))
                     .when(existing.isEmpty)
-      _        <- workflows
-                    .put(WorkflowId(id.toString), toStoreWorkflowRow(workflow))
-                    .mapError(storeError("updateWorkflow"))
+      _        <- kv
+                    .store(workflowKey(id), toStoreWorkflowRow(workflow))
+                    .mapError(storeErr("updateWorkflow"))
     yield ()
 
   override def deleteWorkflow(id: Long): IO[PersistenceError, Unit] =
     for
-      existing <- workflows.get(WorkflowId(id.toString)).mapError(storeError("deleteWorkflow"))
+      existing <- kv.fetch[String, store.WorkflowRow](workflowKey(id)).mapError(storeErr("deleteWorkflow"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("workflows", id))
                     .when(existing.isEmpty)
-      _        <- workflows.remove(WorkflowId(id.toString)).unit.mapError(storeError("deleteWorkflow"))
+      _        <- kv.remove[String](workflowKey(id)).mapError(storeErr("deleteWorkflow"))
     yield ()
 
   override def createCustomAgent(agent: CustomAgentRow): IO[PersistenceError, Long] =
     for
       _  <- validateCustomAgentName(agent.name, "createCustomAgent")
       id <- nextId("createCustomAgent")
-      _  <- agents
-              .put(AgentId(id.toString), toStoreAgentRow(agent.copy(id = Some(id))))
-              .mapError(storeError("createCustomAgent"))
+      _  <- kv
+              .store(agentKey(id), toStoreAgentRow(agent.copy(id = Some(id))))
+              .mapError(storeErr("createCustomAgent"))
     yield id
 
   override def getCustomAgent(id: Long): IO[PersistenceError, Option[CustomAgentRow]] =
-    agents
-      .get(AgentId(id.toString))
+    kv
+      .fetch[String, store.CustomAgentRow](agentKey(id))
       .map(_.flatMap(fromStoreAgentRow))
-      .mapError(storeError("getCustomAgent"))
+      .mapError(storeErr("getCustomAgent"))
 
   override def getCustomAgentByName(name: String): IO[PersistenceError, Option[CustomAgentRow]] =
-    queryAll(agents, "getCustomAgentByName")
-      .map(_.toList.flatMap(fromStoreAgentRow).find(_.name.equalsIgnoreCase(name.trim)))
+    fetchAllByPrefix[store.CustomAgentRow]("agent:", "getCustomAgentByName")
+      .map(_.flatMap(fromStoreAgentRow).find(_.name.equalsIgnoreCase(name.trim)))
 
   override def listCustomAgents: IO[PersistenceError, List[CustomAgentRow]] =
-    queryAll(agents, "listCustomAgents")
-      .map(_.toList.flatMap(fromStoreAgentRow).sortBy(agent => (agent.displayName.toLowerCase, agent.name.toLowerCase)))
+    fetchAllByPrefix[store.CustomAgentRow]("agent:", "listCustomAgents")
+      .map(_.flatMap(fromStoreAgentRow).sortBy(agent => (agent.displayName.toLowerCase, agent.name.toLowerCase)))
 
   override def updateCustomAgent(agent: CustomAgentRow): IO[PersistenceError, Unit] =
     for
@@ -296,30 +311,40 @@ final case class ConfigRepositoryES(
                     .fromOption(agent.id)
                     .orElseFail(PersistenceError.QueryFailed("updateCustomAgent", "Missing id for custom agent update"))
       _        <- validateCustomAgentName(agent.name, "updateCustomAgent")
-      existing <- agents.get(AgentId(id.toString)).mapError(storeError("updateCustomAgent"))
+      existing <- kv.fetch[String, store.CustomAgentRow](agentKey(id)).mapError(storeErr("updateCustomAgent"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("custom_agents", id))
                     .when(existing.isEmpty)
-      _        <- agents
-                    .put(AgentId(id.toString), toStoreAgentRow(agent))
-                    .mapError(storeError("updateCustomAgent"))
+      _        <- kv
+                    .store(agentKey(id), toStoreAgentRow(agent))
+                    .mapError(storeErr("updateCustomAgent"))
     yield ()
 
   override def deleteCustomAgent(id: Long): IO[PersistenceError, Unit] =
     for
-      existing <- agents.get(AgentId(id.toString)).mapError(storeError("deleteCustomAgent"))
+      existing <- kv.fetch[String, store.CustomAgentRow](agentKey(id)).mapError(storeErr("deleteCustomAgent"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("custom_agents", id))
                     .when(existing.isEmpty)
-      _        <- agents.remove(AgentId(id.toString)).unit.mapError(storeError("deleteCustomAgent"))
+      _        <- kv.remove[String](agentKey(id)).mapError(storeErr("deleteCustomAgent"))
     yield ()
 
+  // -------- Internals
   private def validateCustomAgentName(name: String, context: String): IO[PersistenceError, Unit] =
     val normalized = name.trim.toLowerCase
     if normalized.isEmpty then ZIO.fail(PersistenceError.QueryFailed(context, "Custom agent name cannot be empty"))
     else if builtInAgentNamesLower.contains(normalized) then
       ZIO.fail(PersistenceError.QueryFailed(context, s"Custom agent name '$name' conflicts with built-in agent name"))
     else ZIO.unit
+
+  private def fetchAllByPrefix[V](prefix: String, op: String)(using zio.schema.Schema[V])
+    : IO[PersistenceError, List[V]] =
+    configStore.rawStore
+      .streamKeys[String]
+      .filter(_.startsWith(prefix))
+      .runCollect
+      .mapError(storeErr(op))
+      .flatMap(keys => ZIO.foreach(keys.toList)(k => kv.fetch[String, V](k).mapError(storeErr(op))).map(_.flatten))
 
   private def toStoreWorkflowRow(workflow: WorkflowRow): store.WorkflowRow =
     store.WorkflowRow(
@@ -373,17 +398,18 @@ final case class ConfigRepositoryES(
       )
     }
 
-  private def queryAll[K, V](map: GigaMap[K, V], op: String): IO[PersistenceError, Chunk[V]] =
-    map.query(GigaMapQuery.All()).mapError(storeError(op))
-
   private def nextId(op: String): IO[PersistenceError, Long] =
     ZIO
       .attempt(java.util.UUID.randomUUID().getMostSignificantBits & Long.MaxValue)
-      .mapError(storeError(op))
+      .mapError(storeErrThrowable(op))
       .flatMap(id => if id == 0L then nextId(op) else ZIO.succeed(id))
 
-  private def storeError(op: String)(throwable: Throwable): PersistenceError =
-    PersistenceError.QueryFailed(op, Option(throwable.getMessage).getOrElse(throwable.toString))
+  private def storeErr(op: String)(e: io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError)
+    : PersistenceError =
+    PersistenceError.QueryFailed(op, e.toString)
+
+  private def storeErrThrowable(op: String)(t: Throwable): PersistenceError =
+    PersistenceError.QueryFailed(op, Option(t.getMessage).getOrElse(t.toString))
 
   final private case class StoredSetting(value: String, updatedAt: Instant) derives JsonCodec
 
@@ -394,7 +420,7 @@ final case class ConfigRepositoryES(
 
   private def checkpointConfigStore(op: String): IO[PersistenceError, Unit] =
     for
-      status <- configStore.store
+      status <- configStore.rawStore
                   .maintenance(LifecycleCommand.Checkpoint)
                   .mapError(err => PersistenceError.QueryFailed(op, err.toString))
       _      <- status match
@@ -406,16 +432,12 @@ final case class ConfigRepositoryES(
 object ConfigRepositoryES:
   val live
     : ZLayer[
-      ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore & ConfigStoreModule.WorkflowsStore &
-        ConfigStoreModule.CustomAgentsStore,
+      ConfigStoreModule.ConfigStoreService,
       Nothing,
       ConfigRepository,
     ] =
     ZLayer.fromZIO {
       for
         configSvc <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-        settings  <- ConfigStoreModule.settingsMap
-        workflows <- ConfigStoreModule.workflowsMap
-        agents    <- ConfigStoreModule.customAgentsMap
-      yield ConfigRepositoryES(configSvc, settings, workflows, agents)
+      yield ConfigRepositoryES(configSvc)
     }

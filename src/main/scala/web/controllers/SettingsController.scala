@@ -29,15 +29,6 @@ object SettingsController:
     : ZLayer[
       ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService & ConfigStoreModule.ConfigStoreService &
         DataStoreModule.DataStoreService & StoreConfig &
-        DataStoreModule.TaskRunsStore &
-        DataStoreModule.TaskReportsStore &
-        DataStoreModule.TaskArtifactsStore &
-        DataStoreModule.ConversationsStore &
-        DataStoreModule.MessagesStore &
-        DataStoreModule.SessionContextsStore &
-        DataStoreModule.ActivityEventsStore &
-        DataStoreModule.AgentIssuesStore &
-        DataStoreModule.AgentAssignmentsStore &
         DataStoreModule.MemoryEntriesStore,
       Nothing,
       SettingsController,
@@ -52,15 +43,6 @@ final case class SettingsControllerLive(
   configStoreService: ConfigStoreModule.ConfigStoreService,
   dataStoreService: DataStoreModule.DataStoreService,
   storeConfig: StoreConfig,
-  taskRunsStore: DataStoreModule.TaskRunsStore,
-  taskReportsStore: DataStoreModule.TaskReportsStore,
-  taskArtifactsStore: DataStoreModule.TaskArtifactsStore,
-  conversationsStore: DataStoreModule.ConversationsStore,
-  messagesStore: DataStoreModule.MessagesStore,
-  sessionContextsStore: DataStoreModule.SessionContextsStore,
-  activityEventsStore: DataStoreModule.ActivityEventsStore,
-  agentIssuesStore: DataStoreModule.AgentIssuesStore,
-  agentAssignmentsStore: DataStoreModule.AgentAssignmentsStore,
   memoryEntriesStore: DataStoreModule.MemoryEntriesStore,
 ) extends SettingsController:
 
@@ -165,17 +147,13 @@ final case class SettingsControllerLive(
 
   private def resetDataStore: IO[PersistenceError, Unit] =
     for
-      _ <- safeReset("taskRuns")(taskRunsStore.map.clear)
-      _ <- safeReset("taskReports")(taskReportsStore.map.clear)
-      _ <- safeReset("taskArtifacts")(taskArtifactsStore.map.clear)
-      _ <- safeReset("conversations")(conversationsStore.map.clear)
-      _ <- safeReset("messages")(messagesStore.map.clear)
-      _ <- safeReset("sessionContexts")(sessionContextsStore.map.clear)
-      _ <- safeReset("activityEvents")(activityEventsStore.map.clear)
-      _ <- safeReset("agentIssues")(agentIssuesStore.map.clear)
-      _ <- safeReset("agentAssignments")(agentAssignmentsStore.map.clear)
+      _ <- ZIO
+             .attemptBlocking(Files.createDirectories(Paths.get(storeConfig.dataStorePath)))
+             .mapError(err =>
+               PersistenceError.QueryFailed("resetDataStore", Option(err.getMessage).getOrElse(err.toString))
+             )
       _ <- safeReset("memoryEntries")(memoryEntriesStore.map.clear)
-      _ <- safeReset("reloadRoots")(dataStoreService.store.reloadRoots)
+      _ <- safeReset("reloadRoots")(dataStoreService.rawStore.reloadRoots)
     yield ()
 
   private def safeReset(name: String)(effect: ZIO[Any, Any, Unit]): UIO[Unit] =
@@ -183,14 +161,14 @@ final case class SettingsControllerLive(
 
   private def checkpointConfigStore: IO[PersistenceError, Unit] =
     for
-      status <- configStoreService.store
+      status <- configStoreService.rawStore
                   .maintenance(LifecycleCommand.Checkpoint)
                   .mapError(err => PersistenceError.QueryFailed("config_checkpoint", err.toString))
       _      <- status match
                   case LifecycleStatus.Failed(message) =>
                     ZIO.fail(PersistenceError.QueryFailed("config_checkpoint", s"checkpoint failed: $message"))
                   case _                               => ZIO.unit
-      _      <- configStoreService.store
+      _      <- configStoreService.rawStore
                   .reloadRoots
                   .mapError(err => PersistenceError.QueryFailed("config_checkpoint", s"reloadRoots failed: $err"))
     yield ()

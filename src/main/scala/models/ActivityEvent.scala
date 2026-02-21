@@ -3,8 +3,9 @@ package models
 import java.time.Instant
 
 import zio.json.*
+import zio.schema.{ Schema, derived }
 
-enum ActivityEventType derives JsonCodec:
+enum ActivityEventType derives JsonCodec, Schema:
   case RunStarted, RunCompleted, RunFailed, AgentAssigned, MessageSent, ConfigChanged
 
 case class ActivityEvent(

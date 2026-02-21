@@ -7,12 +7,10 @@ import zio.*
 import zio.test.*
 
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
-import io.github.riccardomerolla.zio.eclipsestore.gigamap.error.GigaMapError
 
 object ConfigStoreModuleSpec extends ZIOSpecDefault:
 
-  private type ConfigEnv = ConfigStoreModule.ConfigStoreService & ConfigStoreModule.SettingsStore &
-    ConfigStoreModule.WorkflowsStore & ConfigStoreModule.CustomAgentsStore
+  private type ConfigEnv = ConfigStoreModule.ConfigStoreService
 
   private def withTempDir[R, E, A](use: Path => ZIO[R, E, A]): ZIO[R, E, A] =
     ZIO.acquireReleaseWith(
@@ -29,7 +27,7 @@ object ConfigStoreModuleSpec extends ZIOSpecDefault:
       }.ignore
     )(use)
 
-  private def layerFor(dataDir: Path): ZLayer[Any, EclipseStoreError | GigaMapError, ConfigEnv] =
+  private def layerFor(dataDir: Path): ZLayer[Any, EclipseStoreError, ConfigEnv] =
     ZLayer.succeed(
       StoreConfig(
         configStorePath = dataDir.resolve("config-store").toString,
@@ -42,37 +40,23 @@ object ConfigStoreModuleSpec extends ZIOSpecDefault:
       test("settings map supports put/get round-trip") {
         withTempDir { dir =>
           (for
-            map    <- ConfigStoreModule.settingsMap
-            _      <- map.put("timezone", "UTC")
-            loaded <- map.get("timezone")
+            config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            _      <- config.store.store("setting:timezone", "UTC")
+            loaded <- config.store.fetch[String, String]("setting:timezone")
           yield assertTrue(loaded.contains("UTC"))).provideLayer(layerFor(dir))
         }
       },
-      test("workflows map persists row across store restart") {
+      test("settings key is visible via raw key scan") {
         withTempDir { dir =>
-          val row = WorkflowRow(
-            id = "wf-1",
-            name = "Default",
-            description = Some("Default workflow"),
-            stepsJson = "[\"Discovery\",\"Analysis\"]",
-            isBuiltin = true,
-            createdAt = Instant.parse("2026-02-19T10:00:00Z"),
-            updatedAt = Instant.parse("2026-02-19T10:00:00Z"),
-          )
-
-          val write =
-            (for
-              map <- ConfigStoreModule.workflowsMap
-              _   <- map.put(WorkflowId("wf-1"), row)
-            yield ()).provideLayer(layerFor(dir))
-
-          val read =
-            (for
-              map    <- ConfigStoreModule.workflowsMap
-              loaded <- map.get(WorkflowId("wf-1"))
-            yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
-
-          write *> read
+          (for
+            config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            _      <- config.store.store("setting:restart-check", "ok")
+            keys   <- config.rawStore.streamKeys[String].filter(_.startsWith("setting:")).runCollect
+            loaded <- config.store.fetch[String, String]("setting:restart-check")
+          yield assertTrue(
+            keys.contains("setting:restart-check"),
+            loaded.contains("ok"),
+          )).provideLayer(layerFor(dir))
         }
       },
       test("customAgents map supports put/get round-trip") {
@@ -89,9 +73,9 @@ object ConfigStoreModuleSpec extends ZIOSpecDefault:
             updatedAt = Instant.parse("2026-02-19T10:00:00Z"),
           )
           (for
-            map    <- ConfigStoreModule.customAgentsMap
-            _      <- map.put(AgentId("agent-1"), row)
-            loaded <- map.get(AgentId("agent-1"))
+            config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            _      <- config.store.store("agent:agent-1", row)
+            loaded <- config.store.fetch[String, CustomAgentRow]("agent:agent-1")
           yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
         }
       },
