@@ -38,7 +38,8 @@ final case class CustomAgentRow(
 ) derives Schema
 
 private val configStoreHandlers =
-  SchemaBinaryCodec.handlers(Schema[WorkflowRow])
+  SchemaBinaryCodec.handlers(Schema[String])
+    ++ SchemaBinaryCodec.handlers(Schema[WorkflowRow])
     ++ SchemaBinaryCodec.handlers(Schema[CustomAgentRow])
 
 object ConfigStoreModule:

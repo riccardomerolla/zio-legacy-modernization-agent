@@ -106,24 +106,81 @@ object SettingsControllerSpec extends ZIOSpecDefault:
       SettingsController.live,
     )
 
+  private def mkLayerWithPersistentActivity
+    : UIO[
+      ZLayer[
+        Any,
+        Nothing,
+        SettingsController & ConfigRepository & StoreConfig & ActivityRepository & ConfigStoreModule.ConfigStoreService,
+      ]
+    ] =
+    for
+      tempDir <- ZIO.attemptBlocking(Files.createTempDirectory("settings-controller-activity-spec")).orDie
+      storeCfg = StoreConfig(
+                   configStorePath = tempDir.resolve("config-store").toString,
+                   dataStorePath = tempDir.resolve("data-store").toString,
+                 )
+    yield ZLayer.make[
+      SettingsController & ConfigRepository & StoreConfig & ActivityRepository & ConfigStoreModule.ConfigStoreService
+    ](
+      ZLayer.succeed(storeCfg),
+      ConfigStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      DataStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
+      ConfigRepository.live,
+      ActivityRepository.live,
+      ActivityHub.live,
+      ZLayer.fromZIO(Ref.make(MigrationConfig())),
+      ZLayer.succeed(stubLlmService),
+      SettingsController.live,
+    )
+
   def spec: Spec[TestEnvironment & Scope, Any] =
     suite("SettingsControllerSpec")(
       test("POST /api/store/reset-data clears operational data and keeps config settings") {
         for
-          layer       <- mkLayer
-          controller  <- ZIO.service[SettingsController].provideLayer(layer)
-          configRepo  <- ZIO.service[ConfigRepository].provideLayer(layer)
-          storeConfig <- ZIO.service[StoreConfig].provideLayer(layer)
-          _           <- configRepo.upsertSetting("spec.keep", "yes")
-          response    <- controller.routes.runZIO(Request.post("/api/store/reset-data", Body.empty))
-          body        <- response.body.asString
-          setting     <- configRepo.getSetting("spec.keep")
-          dataDirOk   <- ZIO.attemptBlocking(Files.exists(Paths.get(storeConfig.dataStorePath))).orDie
-        yield assertTrue(
-          response.status == Status.Ok,
-          body.contains("reset completed"),
-          setting.exists(_.value == "yes"),
-          dataDirOk,
-        )
-      }
+          layer  <- mkLayer
+          result <- ZIO.scoped {
+                      for
+                        env         <- layer.build
+                        controller  <- ZIO.service[SettingsController].provideEnvironment(env)
+                        configRepo  <- ZIO.service[ConfigRepository].provideEnvironment(env)
+                        storeConfig <- ZIO.service[StoreConfig].provideEnvironment(env)
+                        _           <- configRepo.upsertSetting("spec.keep", "yes")
+                        response    <- controller.routes.runZIO(Request.post("/api/store/reset-data", Body.empty))
+                        body        <- response.body.asString
+                        setting     <- configRepo.getSetting("spec.keep")
+                        dataDirOk   <- ZIO.attemptBlocking(Files.exists(Paths.get(storeConfig.dataStorePath))).orDie
+                      yield assertTrue(
+                        response.status == Status.Ok,
+                        body.contains("reset completed"),
+                        setting.exists(_.value == "yes"),
+                        dataDirOk,
+                      )
+                    }
+        yield result
+      },
+      test("POST /settings persists ConfigChanged activity event end-to-end") {
+        for
+          layer  <- mkLayerWithPersistentActivity
+          result <- ZIO.scoped {
+                      for
+                        env         <- layer.build
+                        controller  <- ZIO.service[SettingsController].provideEnvironment(env)
+                        activity    <- ZIO.service[ActivityRepository].provideEnvironment(env)
+                        configStore <- ZIO.service[ConfigStoreModule.ConfigStoreService].provideEnvironment(env)
+                        _           <- configStore.store.store("setting:warmup", "1")
+                        response    <- controller.routes.runZIO(Request.post(
+                                         "/settings",
+                                         Body.fromString("gateway.name=SpecGateway"),
+                                       ))
+                        events      <- activity.listEvents(eventType = Some(ActivityEventType.ConfigChanged), limit = 20)
+                      yield assertTrue(
+                        response.status == Status.Ok,
+                        events.exists(event =>
+                          event.source == "settings" && event.summary == "Application settings updated"
+                        ),
+                      )
+                    }
+        yield result
+      },
     )

@@ -85,5 +85,30 @@ object ActivityRepositoryESSpec extends ZIOSpecDefault:
 
           program.provideLayer(layerFor(dir))
         }
-      }
+      },
+      test("createEvent persists all ActivityEventType enum values") {
+        withTempDir { dir =>
+          val base = Instant.parse("2026-02-19T17:00:00Z")
+
+          val program =
+            for
+              repository   <- ZIO.service[ActivityRepository]
+              _            <- ZIO.foreachDiscard(ActivityEventType.values.zipWithIndex) { (eventType, index) =>
+                                repository.createEvent(
+                                  ActivityEvent(
+                                    eventType = eventType,
+                                    source = "settings",
+                                    summary = s"event-$index",
+                                    createdAt = base.plusSeconds(index.toLong),
+                                  )
+                                )
+                              }
+              loaded       <- repository.listEvents(limit = 100)
+              loadedTypes   = loaded.map(_.eventType).toSet
+              expectedTypes = ActivityEventType.values.toSet
+            yield assertTrue(loadedTypes == expectedTypes)
+
+          program.provideLayer(layerFor(dir))
+        }
+      },
     )

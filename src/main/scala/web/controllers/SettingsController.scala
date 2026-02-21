@@ -168,9 +168,6 @@ final case class SettingsControllerLive(
                   case LifecycleStatus.Failed(message) =>
                     ZIO.fail(PersistenceError.QueryFailed("config_checkpoint", s"checkpoint failed: $message"))
                   case _                               => ZIO.unit
-      _      <- configStoreService.rawStore
-                  .reloadRoots
-                  .mapError(err => PersistenceError.QueryFailed("config_checkpoint", s"reloadRoots failed: $err"))
     yield ()
 
   private def writeSettingsSnapshot(settings: Map[String, String]): IO[PersistenceError, Unit] =
