@@ -31,5 +31,44 @@ object ActivityViewSpec extends ZIOSpecDefault:
         html.contains("Settings updated"),
         html.contains("Config Changed"),
       )
+    },
+    test("singleEventFragment renders AgentAssigned without MatchError") {
+      val event = ActivityEvent(
+        id = EventId("evt-assigned"),
+        eventType = ActivityEventType.AgentAssigned,
+        source = "orchestrator",
+        runId = Some(TaskRunId("run-1")),
+        conversationId = None,
+        agentName = Some("planner"),
+        summary = "Agent planner assigned",
+        payload = None,
+        createdAt = Instant.parse("2026-02-23T12:00:00Z"),
+      )
+
+      val html = ActivityView.singleEventFragment(event)
+      assertTrue(
+        html.contains("Agent planner assigned"),
+        html.contains("Agent Assigned"),
+        html.contains("data-event-type=\"agent_assigned\""),
+      )
+    },
+    test("singleEventFragment renders all event types") {
+      val html = ActivityEventType.values.zipWithIndex.map { case (eventType, idx) =>
+        ActivityView.singleEventFragment(
+          ActivityEvent(
+            id = EventId(s"evt-$idx"),
+            eventType = eventType,
+            source = "test",
+            runId = None,
+            conversationId = None,
+            agentName = None,
+            summary = s"summary-$idx",
+            payload = None,
+            createdAt = Instant.parse("2026-02-23T12:00:00Z"),
+          )
+        )
+      }
+
+      assertTrue(html.forall(_.contains("activity-event")))
     }
   )
