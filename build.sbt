@@ -76,6 +76,8 @@ val rootDeps = zioCoreDeps ++ Seq(
 
 inThisBuild(List(
   organization := "io.github.riccardomerolla",
+  sonatypeCredentialHost := "central.sonatype.com",
+  sonatypeRepository := "https://central.sonatype.com/api/v1/publisher",
   homepage := Some(url("https://github.com/riccardomerolla/llm4zio")),
   licenses := Seq(
     "MIT" -> url("https://opensource.org/license/mit")
@@ -123,11 +125,13 @@ lazy val llm4zio = (project in file("llm4zio"))
   )
 
 lazy val root = (project in file("."))
+  .aggregate(llm4zio)
   .dependsOn(llm4zio)
   .configs(It)
   .settings(inConfig(It)(Defaults.testSettings): _*)
   .settings(
     name := "llm4zio-gateway",
+    publish / skip := true,
     description := "A LLM 4 ZIO Agent Gateway and Dashboard",
     // Handle version conflicts - prefer newer versions
     libraryDependencySchemes += "dev.zio" %% "zio-json" % VersionScheme.Always,
