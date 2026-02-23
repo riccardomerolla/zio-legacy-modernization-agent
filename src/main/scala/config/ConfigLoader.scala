@@ -8,8 +8,8 @@ import zio.config.*
 import zio.config.magnolia.*
 import zio.config.typesafe.*
 
+import _root_.config.entity.{ AIProvider, AIProviderConfig, GatewayConfig, TelegramMode }
 import com.typesafe.config.{ Config as TypesafeConfig, ConfigFactory }
-import models.{ AIProvider, AIProviderConfig, GatewayConfig, TelegramMode }
 
 /** Configuration loader using ZIO Config with HOCON support
   *

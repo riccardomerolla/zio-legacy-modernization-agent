@@ -8,8 +8,8 @@ import zio.cli.HelpDoc.Span.text
 import zio.logging.backend.SLF4J
 
 import _root_.config.ConfigLoader
+import _root_.config.entity.GatewayConfig
 import app.boundary.WebServer
-import models.GatewayConfig
 import shared.store.StoreConfig
 
 object Main extends ZIOAppDefault:

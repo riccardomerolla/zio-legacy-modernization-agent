@@ -12,7 +12,7 @@ import zio.http.*
 import zio.json.*
 
 import db.{ ChatRepository, PersistenceError, TaskRepository }
-import models.*
+import issues.entity.api.*
 import orchestration.control.{ AgentRegistry, IssueAssignmentOrchestrator }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
 

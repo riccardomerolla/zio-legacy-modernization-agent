@@ -4,10 +4,16 @@ import zio.*
 import zio.test.*
 import zio.test.Assertion.*
 
-import models.*
-import orchestration.control.OrchestratorControlPlane
+import _root_.config.entity.{ MigrationConfig, WorkflowDefinition }
+import orchestration.control.*
+import shared.errors.ControlPlaneError
+import taskrun.entity.TaskStep
 
 object ControlPlaneSpec extends ZIOSpecDefault:
+  private object Steps:
+    val Discovery: TaskStep      = "Discovery"
+    val Analysis: TaskStep       = "Analysis"
+    val Transformation: TaskStep = "Transformation"
 
   private val testConfig = MigrationConfig(
     sourceDir = java.nio.file.Paths.get("test-source"),
@@ -24,9 +30,9 @@ object ControlPlaneSpec extends ZIOSpecDefault:
     name = "Test Workflow",
     description = Some("Test workflow for control plane"),
     steps = List(
-      TaskStep.Discovery,
-      TaskStep.Analysis,
-      TaskStep.Transformation,
+      Steps.Discovery,
+      Steps.Analysis,
+      Steps.Transformation,
     ),
     stepAgents = Nil,
     isBuiltin = true,
@@ -35,12 +41,12 @@ object ControlPlaneSpec extends ZIOSpecDefault:
   private val testCapabilities = List(
     AgentCapability(
       agentName = "agent-1",
-      supportedSteps = List(TaskStep.Discovery, TaskStep.Analysis),
+      supportedSteps = List(Steps.Discovery, Steps.Analysis),
       isEnabled = true,
     ),
     AgentCapability(
       agentName = "agent-2",
-      supportedSteps = List(TaskStep.Transformation),
+      supportedSteps = List(Steps.Transformation),
       isEnabled = true,
     ),
   )
@@ -78,12 +84,12 @@ object ControlPlaneSpec extends ZIOSpecDefault:
         _      <- OrchestratorControlPlane.startWorkflow("run-route", 1L, testWorkflowDef)
         agent1 <- OrchestratorControlPlane.routeStep(
                     "run-route",
-                    TaskStep.Discovery,
+                    Steps.Discovery,
                     testCapabilities,
                   )
         agent2 <- OrchestratorControlPlane.routeStep(
                     "run-route",
-                    TaskStep.Transformation,
+                    Steps.Transformation,
                     testCapabilities,
                   )
       yield assertTrue(
@@ -96,12 +102,12 @@ object ControlPlaneSpec extends ZIOSpecDefault:
         _      <- OrchestratorControlPlane.startWorkflow("run-cache", 1L, testWorkflowDef)
         agent1 <- OrchestratorControlPlane.routeStep(
                     "run-cache",
-                    TaskStep.Discovery,
+                    Steps.Discovery,
                     testCapabilities,
                   )
         agent2 <- OrchestratorControlPlane.routeStep(
                     "run-cache",
-                    TaskStep.Discovery,
+                    Steps.Discovery,
                     testCapabilities,
                   )
       yield assertTrue(agent1 == agent2)
@@ -112,11 +118,11 @@ object ControlPlaneSpec extends ZIOSpecDefault:
         result <- OrchestratorControlPlane
                     .routeStep(
                       "run-no-agent",
-                      TaskStep.Discovery,
+                      Steps.Discovery,
                       List(
                         AgentCapability(
                           agentName = "disabled-agent",
-                          supportedSteps = List(TaskStep.Discovery),
+                          supportedSteps = List(Steps.Discovery),
                           isEnabled = false,
                         )
                       ),
@@ -184,7 +190,7 @@ object ControlPlaneSpec extends ZIOSpecDefault:
           event  = StepStarted(
                      correlationId = "corr-global",
                      runId = "run-global",
-                     step = TaskStep.Analysis,
+                     step = Steps.Analysis,
                      assignedAgent = "agent-1",
                      timestamp = now,
                    )
@@ -266,13 +272,13 @@ object ControlPlaneSpec extends ZIOSpecDefault:
     test("agent monitor snapshot and history are populated from step events") {
       for
         _        <- OrchestratorControlPlane.startWorkflow("run-monitor", 1L, testWorkflowDef)
-        assigned <- OrchestratorControlPlane.routeStep("run-monitor", TaskStep.Analysis, testCapabilities)
+        assigned <- OrchestratorControlPlane.routeStep("run-monitor", Steps.Analysis, testCapabilities)
         now      <- Clock.instant
         _        <- OrchestratorControlPlane.publishEvent(
                       StepProgress(
                         correlationId = "corr-monitor",
                         runId = "run-monitor",
-                        step = TaskStep.Analysis,
+                        step = Steps.Analysis,
                         itemsProcessed = 1,
                         itemsTotal = 10,
                         message = "waiting for tool response",

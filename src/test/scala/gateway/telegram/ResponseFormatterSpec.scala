@@ -5,7 +5,7 @@ import java.time.Instant
 import zio.test.*
 
 import gateway.entity.*
-import models.WorkflowRunState
+import orchestration.control.WorkflowRunState
 
 object ResponseFormatterSpec extends ZIOSpecDefault:
 

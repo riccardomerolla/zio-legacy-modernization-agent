@@ -5,8 +5,8 @@ import zio.*
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
 import db.PersistenceError
-import models.ProgressUpdate
 import shared.ids.Ids.{ EventId, TaskRunId }
+import taskrun.entity.ProgressUpdate
 
 trait ProgressTracker:
   def startPhase(runId: String, phase: String, total: Int): IO[PersistenceError, Unit]

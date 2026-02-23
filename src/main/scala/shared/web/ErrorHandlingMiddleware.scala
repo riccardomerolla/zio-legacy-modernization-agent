@@ -4,7 +4,7 @@ import zio.*
 import zio.http.*
 
 import db.PersistenceError
-import models.OrchestratorError
+import shared.errors.OrchestratorError
 
 object ErrorHandlingMiddleware:
 

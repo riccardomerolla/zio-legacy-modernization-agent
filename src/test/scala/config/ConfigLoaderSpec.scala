@@ -6,7 +6,7 @@ import java.nio.file.{ Files, Paths }
 import zio.*
 import zio.test.*
 
-import models.*
+import _root_.config.entity.*
 
 object ConfigLoaderSpec extends ZIOSpecDefault:
 

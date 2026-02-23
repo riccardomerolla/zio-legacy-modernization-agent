@@ -6,17 +6,21 @@ import zio.*
 import zio.http.*
 import zio.test.*
 
+import _root_.config.entity.WorkflowDefinition
 import app.boundary.AgentMonitorControllerLive
-import models.*
-import orchestration.control.OrchestratorControlPlane
+import orchestration.control.*
+import shared.errors.ControlPlaneError
+import taskrun.entity.TaskStep
 
 object AgentMonitorControllerSpec extends ZIOSpecDefault:
+  private object Steps:
+    val Analysis: TaskStep = "Analysis"
 
   private val sampleInfo = AgentExecutionInfo(
     agentName = "agent-1",
     state = AgentExecutionState.Executing,
     runId = Some("run-1"),
-    step = Some(TaskStep.Analysis),
+    step = Some(Steps.Analysis),
     task = Some("Analysis for run run-1"),
     conversationId = None,
     tokensUsed = 42L,
@@ -60,7 +64,7 @@ object AgentMonitorControllerSpec extends ZIOSpecDefault:
             agentName = "agent-1",
             state = AgentExecutionState.Executing,
             runId = Some("run-1"),
-            step = Some(TaskStep.Analysis),
+            step = Some(Steps.Analysis),
             detail = "Processing",
             timestamp = Instant.EPOCH,
           )

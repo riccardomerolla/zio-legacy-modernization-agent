@@ -2,8 +2,8 @@ package config
 
 import zio.*
 
+import _root_.config.entity.*
 import db.{ ConfigRepository, PersistenceError }
-import models.*
 
 /** Converts flat Map[String, String] (from DB settings) to nested config objects.
   *

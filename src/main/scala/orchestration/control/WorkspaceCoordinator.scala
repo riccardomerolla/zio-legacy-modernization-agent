@@ -5,8 +5,9 @@ import java.time.Instant
 import zio.*
 import zio.json.*
 
-import core.{ RateLimiter, RateLimiterConfig }
-import models.{ ControlPlaneError, GatewayConfig }
+import _root_.config.entity.GatewayConfig
+import app.control.{ RateLimiter, RateLimiterConfig }
+import shared.errors.ControlPlaneError
 
 enum RunPriority derives JsonCodec:
   case Low

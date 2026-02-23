@@ -7,8 +7,8 @@ import zio.*
 import zio.json.*
 import zio.json.ast.Json
 
+import _root_.config.entity.{ AIProvider, AIProviderConfig, GatewayConfig }
 import llm4zio.providers.HttpClient
-import models.{ AIProvider, GatewayConfig }
 
 trait EmbeddingService:
   def embed(text: String): IO[Throwable, Vector[Float]]
@@ -55,7 +55,7 @@ final case class EmbeddingServiceLive(
 
   private def embedOpenAiCompatible(
     text: String,
-    config: models.AIProviderConfig,
+    config: AIProviderConfig,
   ): IO[Throwable, Vector[Float]] =
     for
       baseUrl <- baseUrl(config)
@@ -83,7 +83,7 @@ final case class EmbeddingServiceLive(
 
   private def embedGemini(
     text: String,
-    config: models.AIProviderConfig,
+    config: AIProviderConfig,
   ): IO[Throwable, Vector[Float]] =
     for
       baseUrl   <- baseUrl(config)
@@ -114,7 +114,7 @@ final case class EmbeddingServiceLive(
 
   private def embedOllama(
     text: String,
-    config: models.AIProviderConfig,
+    config: AIProviderConfig,
   ): IO[Throwable, Vector[Float]] =
     for
       baseUrl <- baseUrl(config)
@@ -141,7 +141,7 @@ final case class EmbeddingServiceLive(
       .succeed(text.trim)
       .filterOrFail(_.nonEmpty)(new RuntimeException("Embedding text must be non-empty"))
 
-  private def baseUrl(config: models.AIProviderConfig): IO[Throwable, String] =
+  private def baseUrl(config: AIProviderConfig): IO[Throwable, String] =
     ZIO
       .fromOption(config.baseUrl.map(_.trim).filter(_.nonEmpty))
       .orElseFail(new RuntimeException(s"Base URL is required for provider ${config.provider.toString}"))

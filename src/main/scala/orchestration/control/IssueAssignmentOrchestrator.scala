@@ -7,9 +7,10 @@ import zio.json.*
 
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
+import conversation.entity.api.{ ChatConversation, ConversationEntry, MessageType, SenderType }
 import db.{ ChatRepository, PersistenceError, TaskRepository }
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 import llm4zio.core.{ LlmError, LlmService }
-import models.*
 import shared.ids.Ids.{ EventId, TaskRunId }
 
 trait IssueAssignmentOrchestrator:

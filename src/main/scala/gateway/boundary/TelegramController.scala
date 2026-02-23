@@ -4,7 +4,7 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
-import _root_.models.{ MigrationConfig, TelegramMode }
+import _root_.config.entity.{ MigrationConfig, TelegramMode }
 import gateway.boundary.telegram.{ TelegramChannel, TelegramUpdate }
 import gateway.control.*
 

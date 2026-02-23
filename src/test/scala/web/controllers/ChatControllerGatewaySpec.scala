@@ -6,13 +6,21 @@ import zio.json.EncoderOps
 import zio.stream.ZStream
 import zio.test.*
 
-import _root_.models.*
+import _root_.config.entity.AIProviderConfig
 import activity.control.ActivityHubLive
 import activity.entity.{ ActivityEvent, ActivityEventType, ActivityRepository }
 import conversation.boundary.ChatControllerLive
+import conversation.entity.api.{
+  ChatConversation,
+  ConversationEntry,
+  ConversationMessageRequest,
+  SenderType,
+  SessionContextLink,
+}
 import db.*
 import gateway.control.*
 import gateway.entity.*
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import memory.entity.*

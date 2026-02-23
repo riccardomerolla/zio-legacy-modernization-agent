@@ -17,7 +17,8 @@ import _root_.config.boundary.{
   SettingsController as SettingsBoundaryController,
   WorkflowsController as ConfigWorkflowsController,
 }
-import _root_.models.*
+import _root_.config.control.ConfigValidator
+import _root_.config.entity.{ AIProvider, AIProviderConfig, GatewayConfig }
 import activity.boundary.ActivityController
 import activity.control.ActivityHub
 import activity.entity.ActivityRepository
@@ -26,13 +27,12 @@ import app.boundary.{
   HealthController as AppHealthController,
   WebServer,
 }
-import app.control.HealthMonitor
+import app.control.{ FileService, HealthMonitor, HttpAIClient, LogTailer, StateService }
 import com.bot4s.telegram.clients.FutureSttpClient
 import conversation.boundary.{
   ChatController as ConversationChatController,
   WebSocketController as ConversationWebSocketController,
 }
-import core.*
 import db.*
 import gateway.boundary.telegram.*
 import gateway.boundary.{

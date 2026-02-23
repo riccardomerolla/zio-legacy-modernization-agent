@@ -5,7 +5,7 @@ import zio.http.*
 import zio.json.*
 import zio.test.*
 
-import _root_.models.TelegramMode
+import _root_.config.entity.TelegramMode
 import gateway.boundary.TelegramController
 import gateway.boundary.telegram.*
 import gateway.control.*

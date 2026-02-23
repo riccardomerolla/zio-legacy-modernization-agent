@@ -5,8 +5,9 @@ import java.time.Instant
 import zio.*
 import zio.json.*
 
+import _root_.config.entity.{ WorkflowDefinition, WorkflowGraph, WorkflowStepAgent, WorkflowValidator }
 import db.*
-import models.*
+import taskrun.entity.TaskStep
 
 enum WorkflowServiceError derives JsonCodec:
   case ValidationFailed(errors: List[String])

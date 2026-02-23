@@ -1,64 +1,43 @@
 package models
 
-import java.time.Instant
+type ConfigFormat = config.entity.ConfigFormat
+val ConfigFormat = config.entity.ConfigFormat
 
-import zio.json.*
+type ConfigDocument = config.entity.ConfigDocument
+val ConfigDocument = config.entity.ConfigDocument
 
-enum ConfigFormat derives JsonCodec:
-  case Hocon
-  case Json
+type ConfigValidationIssue = config.entity.ConfigValidationIssue
+val ConfigValidationIssue = config.entity.ConfigValidationIssue
 
-case class ConfigDocument(
-  path: String,
-  format: ConfigFormat,
-  content: String,
-  lastModified: Instant,
-) derives JsonCodec
+type ConfigValidationResult = config.entity.ConfigValidationResult
+val ConfigValidationResult = config.entity.ConfigValidationResult
 
-case class ConfigValidationIssue(
-  message: String,
-  path: Option[String] = None,
-) derives JsonCodec
+type ConfigHistoryEntry = config.entity.ConfigHistoryEntry
+val ConfigHistoryEntry = config.entity.ConfigHistoryEntry
 
-case class ConfigValidationResult(
-  valid: Boolean,
-  issues: List[ConfigValidationIssue],
-) derives JsonCodec
+type ConfigDiffRequest = config.entity.ConfigDiffRequest
+val ConfigDiffRequest = config.entity.ConfigDiffRequest
 
-case class ConfigHistoryEntry(
-  id: String,
-  path: String,
-  savedAt: Instant,
-  format: ConfigFormat,
-  sizeBytes: Long,
-) derives JsonCodec
+type ConfigDiffLine = config.entity.ConfigDiffLine
+val ConfigDiffLine = config.entity.ConfigDiffLine
 
-case class ConfigDiffRequest(
-  original: String,
-  updated: String,
-) derives JsonCodec
+type ConfigDiffResponse = config.entity.ConfigDiffResponse
+val ConfigDiffResponse = config.entity.ConfigDiffResponse
 
-case class ConfigDiffLine(
-  kind: String,
-  text: String,
-) derives JsonCodec
+type ConfigContentRequest = config.entity.ConfigContentRequest
+val ConfigContentRequest = config.entity.ConfigContentRequest
 
-case class ConfigDiffResponse(
-  lines: List[ConfigDiffLine],
-  added: Int,
-  removed: Int,
-  unchanged: Int,
-) derives JsonCodec
+type ConfigSaveResponse = config.entity.ConfigSaveResponse
+val ConfigSaveResponse = config.entity.ConfigSaveResponse
 
-case class ConfigContentRequest(
-  content: String,
-  format: ConfigFormat,
-) derives JsonCodec
+type SettingValue = config.entity.SettingValue
+val SettingValue = config.entity.SettingValue
 
-case class ConfigSaveResponse(
-  saved: Boolean,
-  reloaded: Boolean,
-  message: String,
-  validation: ConfigValidationResult,
-  current: ConfigDocument,
-) derives JsonCodec
+type Setting = config.entity.Setting
+val Setting = config.entity.Setting
+
+type Workflow = config.entity.Workflow
+val Workflow = config.entity.Workflow
+
+type CustomAgent = config.entity.CustomAgent
+val CustomAgent = config.entity.CustomAgent

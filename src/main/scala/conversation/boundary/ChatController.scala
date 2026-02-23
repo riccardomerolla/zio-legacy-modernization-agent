@@ -10,11 +10,11 @@ import zio.json.*
 
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
+import conversation.entity.api.*
 import db.{ ChatRepository, PersistenceError, TaskRepository }
 import gateway.control.{ ChannelRegistry, GatewayService, GatewayServiceError, MessageChannelError, SessionContext }
 import gateway.entity.{ GatewayMessageRole as GatewayMessageRole, MessageDirection as GatewayMessageDirection, * }
 import llm4zio.core.{ LlmError, LlmService, Streaming }
-import models.*
 import orchestration.control.{ AgentConfigResolver, IssueAssignmentOrchestrator }
 import shared.ids.Ids.{ ConversationId, EventId }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews, StreamAbortRegistry }

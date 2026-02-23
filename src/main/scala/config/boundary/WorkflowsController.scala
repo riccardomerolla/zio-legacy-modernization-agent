@@ -7,10 +7,11 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
+import _root_.config.entity.{ AgentInfo, WorkflowDefinition, WorkflowStepAgent, WorkflowValidator }
 import db.{ ConfigRepository, PersistenceError }
-import models.{ AgentInfo, TaskStep, WorkflowDefinition, WorkflowStepAgent, WorkflowValidator }
 import orchestration.control.{ AgentRegistry, WorkflowService, WorkflowServiceError }
 import shared.web.HtmlViews
+import taskrun.entity.TaskStep
 
 trait WorkflowsController:
   def routes: Routes[Any, Response]

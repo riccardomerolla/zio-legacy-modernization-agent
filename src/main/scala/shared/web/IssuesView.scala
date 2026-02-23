@@ -2,7 +2,8 @@ package shared.web
 
 import java.time.Instant
 
-import models.*
+import config.entity.AgentInfo
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 import scalatags.Text.all.*
 
 object IssuesView:

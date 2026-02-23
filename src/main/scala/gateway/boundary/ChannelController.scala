@@ -6,7 +6,7 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
-import _root_.models.GatewayConfig
+import _root_.config.entity.GatewayConfig
 import gateway.control.*
 import shared.web.{ ChannelCardData, ChannelView }
 

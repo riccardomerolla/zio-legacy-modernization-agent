@@ -1,6 +1,6 @@
 package shared.web
 
-import models.{ AgentInfo, AgentType }
+import _root_.config.entity.{ AgentInfo, AgentType }
 import scalatags.Text.all.*
 
 object AgentsView:

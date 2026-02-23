@@ -6,10 +6,10 @@ import zio.*
 import zio.json.*
 import zio.stream.*
 
+import _root_.config.entity.{ AgentHealthStatus, AgentInfo, GatewayConfig }
 import com.sun.management.OperatingSystemMXBean
 import db.{ RunStatus, TaskRepository }
 import gateway.control.{ ChannelRegistry, GatewayService }
-import models.{ AgentHealthStatus, GatewayConfig }
 import orchestration.control.AgentRegistry
 
 final case class GatewayHealth(
@@ -193,7 +193,7 @@ final case class HealthMonitorLive(
     )
 
   private def summarizeAgents(
-    allAgents: List[models.AgentInfo],
+    allAgents: List[AgentInfo],
     now: java.time.Instant,
   ): UIO[AgentHealthSummary] =
     ZIO.succeed {

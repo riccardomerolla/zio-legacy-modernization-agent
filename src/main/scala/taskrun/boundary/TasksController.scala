@@ -8,9 +8,15 @@ import zio.http.*
 import zio.json.*
 import zio.stream.ZStream
 
+import _root_.config.entity.WorkflowDefinition
 import db.*
-import models.{ WorkflowDefinition, WorkflowRunState }
-import orchestration.control.{ OrchestratorControlPlane, TaskExecutor, WorkflowService, WorkflowServiceError }
+import orchestration.control.{
+  OrchestratorControlPlane,
+  TaskExecutor,
+  WorkflowRunState,
+  WorkflowService,
+  WorkflowServiceError,
+}
 import shared.web.{ TaskListItem, TasksView }
 
 trait TasksController:

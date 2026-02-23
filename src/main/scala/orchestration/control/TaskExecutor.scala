@@ -4,8 +4,8 @@ import java.util.UUID
 
 import zio.*
 
+import _root_.config.entity.{ WorkflowContext, WorkflowDefinition }
 import db.{ PersistenceError, RunStatus, TaskRepository }
-import models.*
 
 trait TaskExecutor:
   def execute(taskRunId: Long, workflow: WorkflowDefinition): IO[PersistenceError, Unit]

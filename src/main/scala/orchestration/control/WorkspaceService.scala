@@ -6,9 +6,10 @@ import java.time.Instant
 import zio.*
 import zio.json.*
 
-import core.FileService
-import models.*
-import models.Codecs.given
+import _root_.config.entity.MigrationConfig
+import app.control.FileService
+import shared.errors.{ FileError, WorkspaceError }
+import shared.json.JsonCodecs.given
 
 /** Workspace - Isolated directory structure for a migration run
   *

@@ -4,11 +4,12 @@ import zio.*
 import zio.json.*
 import zio.stream.ZStream
 
-import _root_.models.*
+import _root_.config.entity.{ WorkflowDefinition, WorkflowGraph, WorkflowStepAgent }
 import db.*
 import gateway.control.*
 import gateway.entity.{ GatewayMessageRole, MessageDirection, NormalizedMessage, SessionKey, SessionScopeStrategy }
 import orchestration.control.TaskExecutor
+import taskrun.entity.TaskStep
 
 final case class TelegramPollBatch(
   messages: List[NormalizedMessage],

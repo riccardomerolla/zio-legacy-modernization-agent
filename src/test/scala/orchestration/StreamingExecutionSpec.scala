@@ -3,7 +3,7 @@ package orchestration
 import zio.*
 import zio.test.*
 
-import models.*
+import taskrun.entity.{ ProgressModels, StepMetrics, StepProgressEvent }
 
 /** Test suite for streaming workflow step execution with real-time progress events.
   */

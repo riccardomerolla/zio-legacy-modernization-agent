@@ -6,10 +6,11 @@ import zio.*
 import zio.stream.ZStream
 import zio.test.*
 
-import _root_.models.*
+import conversation.entity.api.{ ChatConversation, ConversationEntry, SessionContextLink }
 import db.*
 import gateway.control.*
 import gateway.entity.*
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import memory.entity.*

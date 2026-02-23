@@ -1,6 +1,6 @@
 package shared.web
 
-import models.{ ChatConversation, ConversationEntry, ConversationSessionMeta, SenderType }
+import conversation.entity.api.{ ChatConversation, ConversationEntry, ConversationSessionMeta, SenderType }
 import scalatags.Text.all.*
 
 object ChatView:

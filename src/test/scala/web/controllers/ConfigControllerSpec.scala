@@ -8,10 +8,10 @@ import zio.json.*
 import zio.test.*
 
 import _root_.config.boundary.ConfigController
+import _root_.config.control.ConfigValidator
+import _root_.config.entity.*
 import activity.control.ActivityHub
 import activity.entity.ActivityEvent
-import core.ConfigValidator
-import models.*
 
 object ConfigControllerSpec extends ZIOSpecDefault:
 

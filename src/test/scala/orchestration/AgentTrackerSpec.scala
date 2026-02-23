@@ -4,8 +4,8 @@ import zio.*
 import zio.test.*
 
 import db.*
-import models.ProgressUpdate
 import orchestration.control.{ AgentTracker, ProgressTracker }
+import taskrun.entity.ProgressUpdate
 
 object AgentTrackerSpec extends ZIOSpecDefault:
 

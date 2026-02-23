@@ -1,8 +1,9 @@
 package shared.web
 
+import _root_.config.entity.WorkflowDefinition
 import db.{ RunStatus, TaskRunRow }
-import models.{ TaskStep, WorkflowDefinition }
 import scalatags.Text.all.*
+import taskrun.entity.TaskStep
 
 final case class TaskListItem(
   run: TaskRunRow,

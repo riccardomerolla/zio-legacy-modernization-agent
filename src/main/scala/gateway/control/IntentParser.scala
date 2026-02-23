@@ -3,8 +3,8 @@ package gateway.control
 import zio.*
 import zio.json.*
 
+import _root_.config.entity.AgentInfo
 import llm4zio.core.LlmService
-import models.AgentInfo
 
 final case class IntentConversationState(
   pendingOptions: List[String] = Nil,

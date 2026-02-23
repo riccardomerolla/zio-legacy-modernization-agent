@@ -5,9 +5,10 @@ import java.time.Instant
 import zio.*
 import zio.schema.Schema
 
+import conversation.entity.api.*
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import io.github.riccardomerolla.zio.eclipsestore.service.{ LifecycleCommand, LifecycleStatus }
-import models.*
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssuePriority, IssueStatus }
 import shared.store.*
 
 final case class ChatRepositoryES(

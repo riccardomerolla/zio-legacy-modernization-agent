@@ -3,7 +3,7 @@ package activity.control
 import zio.*
 
 import activity.entity.{ ActivityEvent, ActivityRepository }
-import core.Logger
+import app.control.Logger
 
 trait ActivityHub:
   def publish(event: ActivityEvent): UIO[Unit]

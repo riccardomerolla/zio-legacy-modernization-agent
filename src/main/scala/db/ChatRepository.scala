@@ -4,7 +4,8 @@ import java.time.Instant
 
 import zio.*
 
-import models.*
+import conversation.entity.api.*
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 
 trait ChatRepository:
   // Chat Conversations

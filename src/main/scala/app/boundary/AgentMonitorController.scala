@@ -4,8 +4,8 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
-import models.ControlPlaneError
 import orchestration.control.OrchestratorControlPlane
+import shared.errors.ControlPlaneError
 import shared.web.AgentMonitor
 
 trait AgentMonitorController:

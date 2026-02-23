@@ -1,7 +1,9 @@
 package shared.web
 
+import config.entity.{ AgentInfo, WorkflowDefinition }
+import conversation.entity.api.{ ChatConversation, ConversationEntry, ConversationSessionMeta }
 import db.{ TaskReportRow, TaskRunRow }
-import models.*
+import issues.entity.api.{ AgentAssignment, AgentIssue }
 
 object HtmlViews:
 

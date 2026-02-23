@@ -2,7 +2,7 @@ package gateway.boundary.telegram
 
 import zio.*
 
-import _root_.models.{ MigrationConfig, TelegramMode }
+import _root_.config.entity.{ MigrationConfig, TelegramMode }
 import gateway.control.*
 
 final case class TelegramPollingConfig(

@@ -7,8 +7,8 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
+import _root_.config.entity.AgentInfo
 import db.{ ConfigRepository, CustomAgentRow, PersistenceError }
-import models.*
 import orchestration.control.AgentRegistry
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
 

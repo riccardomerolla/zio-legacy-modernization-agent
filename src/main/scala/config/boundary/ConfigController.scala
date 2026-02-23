@@ -8,10 +8,10 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
+import _root_.config.control.ConfigValidator
+import _root_.config.entity.*
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
-import core.ConfigValidator
-import models.*
 import shared.ids.Ids.EventId
 import shared.web.ConfigEditor
 

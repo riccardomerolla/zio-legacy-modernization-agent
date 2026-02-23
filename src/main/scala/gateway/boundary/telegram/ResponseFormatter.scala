@@ -1,7 +1,7 @@
 package gateway.boundary.telegram
 
 import gateway.entity.NormalizedMessage
-import models.WorkflowRunState
+import orchestration.control.WorkflowRunState
 
 final case class FormattedTelegramResponse(
   text: String,

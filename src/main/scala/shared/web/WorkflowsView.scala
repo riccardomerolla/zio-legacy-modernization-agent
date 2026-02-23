@@ -1,7 +1,8 @@
 package shared.web
 
-import models.{ AgentInfo, TaskStep, WorkflowDefinition, WorkflowStepAgent }
+import _root_.config.entity.{ AgentInfo, WorkflowDefinition, WorkflowStepAgent }
 import scalatags.Text.all.*
+import taskrun.entity.TaskStep
 
 object WorkflowsView:
 
