@@ -1,10 +1,10 @@
-package web.views
+package shared.web
 
 import java.time.Instant
 
 import zio.test.*
 
-import models.ChatConversation
+import conversation.entity.api.ChatConversation
 
 object ChatViewSpec extends ZIOSpecDefault:
 

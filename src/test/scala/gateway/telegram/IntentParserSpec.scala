@@ -1,10 +1,11 @@
-package gateway.telegram
+package gateway.boundary.telegram
 
 import zio.*
 import zio.test.*
 
+import _root_.config.entity.{ AgentInfo, AgentSkill, AgentType }
+import gateway.control.{ IntentConversationState, IntentDecision, IntentParser }
 import llm4zio.core.*
-import models.*
 
 object IntentParserSpec extends ZIOSpecDefault:
 

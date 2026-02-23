@@ -6,10 +6,13 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
-import _root_.models.*
+import _root_.config.entity.MigrationConfig
+import conversation.entity.api.{ ChatConversation, ConversationEntry, SessionContextLink }
 import db.*
-import gateway.models.*
-import orchestration.OrchestratorControlPlane
+import gateway.control.*
+import gateway.entity.*
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
+import orchestration.control.{ OrchestratorControlPlane, WorkflowFailed }
 
 object MessageRouterSpec extends ZIOSpecDefault:
 

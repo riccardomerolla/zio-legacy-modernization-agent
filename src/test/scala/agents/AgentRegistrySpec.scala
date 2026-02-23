@@ -5,8 +5,9 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
+import _root_.config.entity.{ AgentQuery, AgentSkill, AgentType, RegisterAgentRequest }
 import db.CustomAgentRow
-import models.*
+import orchestration.control.AgentRegistry
 
 object AgentRegistrySpec extends ZIOSpecDefault:
 

@@ -81,9 +81,9 @@ object StoreRestartIssueE2ESpec extends ZIOSpecDefault:
               root match
                 case rc: RootContainer =>
                   // Access private field via reflection
-                  val field = classOf[RootContainer].getDeclaredField("instances")
+                  val field       = classOf[RootContainer].getDeclaredField("instances")
                   field.setAccessible(true)
-                  val state =
+                  val state       =
                     field.get(rc).asInstanceOf[java.util.concurrent.ConcurrentHashMap[String, AnyRef]]
                   val stateSize   = state.size()
                   val stateKeys   =
@@ -94,7 +94,7 @@ object StoreRestartIssueE2ESpec extends ZIOSpecDefault:
                     case m: java.util.concurrent.ConcurrentHashMap[?, ?] => m.size()
                   }
                   ("RootContainer", stateSize, stateKeys, kvRootClass, kvRootSize)
-                case other              =>
+                case other             =>
                   (
                     Option(other).fold("null")(_.getClass.getName),
                     -1,
@@ -120,5 +120,5 @@ object StoreRestartIssueE2ESpec extends ZIOSpecDefault:
             kvRootSize.exists(_ > 0), // kv-root should have data
           )
         }
-      },
+      }
     )

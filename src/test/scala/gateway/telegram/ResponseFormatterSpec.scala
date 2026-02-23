@@ -1,11 +1,11 @@
-package gateway.telegram
+package gateway.boundary.telegram
 
 import java.time.Instant
 
 import zio.test.*
 
-import gateway.models.*
-import models.WorkflowRunState
+import gateway.entity.*
+import orchestration.control.WorkflowRunState
 
 object ResponseFormatterSpec extends ZIOSpecDefault:
 

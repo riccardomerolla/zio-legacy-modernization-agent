@@ -4,7 +4,8 @@ import java.time.Instant
 
 import zio.*
 
-import models.*
+import conversation.entity.api.*
+import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 
 trait ChatRepository:
   // Chat Conversations
@@ -64,7 +65,7 @@ trait ChatRepository:
   ): IO[PersistenceError, Unit] =
     ZIO.fail(PersistenceError.QueryFailed("deleteSessionContext", "Not implemented"))
 
-import store.DataStoreModule
+import shared.store.DataStoreModule
 
 object ChatRepository:
   def createConversation(conversation: ChatConversation): ZIO[ChatRepository, PersistenceError, Long] =
@@ -167,4 +168,4 @@ object ChatRepository:
       Nothing,
       ChatRepository,
     ] =
-    ChatRepositoryES.live
+    ChatRepositoryLive.live

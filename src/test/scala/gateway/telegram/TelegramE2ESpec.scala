@@ -1,4 +1,4 @@
-package gateway.telegram
+package gateway.boundary.telegram
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -8,11 +8,11 @@ import java.util.UUID
 import zio.*
 import zio.test.*
 
-import agents.AgentRegistry
+import _root_.config.entity.WorkflowDefinition
 import db.*
-import gateway.MessageChannelError
-import gateway.models.*
-import orchestration.TaskExecutor
+import gateway.control.MessageChannelError
+import gateway.entity.*
+import orchestration.control.{ AgentRegistry, TaskExecutor }
 
 object TelegramE2ESpec extends ZIOSpecDefault:
 
@@ -149,9 +149,9 @@ object TelegramE2ESpec extends ZIOSpecDefault:
 
   private object TestTaskExecutor:
     val noop: TaskExecutor = new TaskExecutor:
-      override def execute(taskRunId: Long, workflow: models.WorkflowDefinition): IO[PersistenceError, Unit] = ZIO.unit
-      override def start(taskRunId: Long, workflow: models.WorkflowDefinition): UIO[Unit]                    = ZIO.unit
-      override def cancel(taskRunId: Long): UIO[Unit]                                                        = ZIO.unit
+      override def execute(taskRunId: Long, workflow: WorkflowDefinition): IO[PersistenceError, Unit] = ZIO.unit
+      override def start(taskRunId: Long, workflow: WorkflowDefinition): UIO[Unit]                    = ZIO.unit
+      override def cancel(taskRunId: Long): UIO[Unit]                                                 = ZIO.unit
 
   private def textUpdate(
     updateId: Long,

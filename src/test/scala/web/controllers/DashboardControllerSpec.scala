@@ -6,11 +6,15 @@ import zio.*
 import zio.http.*
 import zio.test.*
 
+import _root_.config.entity.WorkflowDefinition
 import db.*
-import models.*
-import orchestration.*
+import orchestration.control.*
+import taskrun.boundary.DashboardControllerLive
+import taskrun.entity.TaskStep
 
 object DashboardControllerSpec extends ZIOSpecDefault:
+  private object Steps:
+    val Discovery: TaskStep = "Discovery"
 
   private val sampleRun = TaskRunRow(
     id = 2L,
@@ -92,7 +96,7 @@ object DashboardControllerSpec extends ZIOSpecDefault:
           WorkflowDefinition(
             id = Some((index.toLong + 1L).toString),
             name = s"wf-$index",
-            steps = List(TaskStep.Discovery),
+            steps = List(Steps.Discovery),
             isBuiltin = false,
           )
         )

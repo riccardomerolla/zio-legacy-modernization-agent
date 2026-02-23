@@ -1,132 +1,28 @@
 package models
 
-import java.time.Instant
+type AgentType = config.entity.AgentType
+val AgentType = config.entity.AgentType
 
-import zio.json.*
+type AgentSkill = config.entity.AgentSkill
+val AgentSkill = config.entity.AgentSkill
 
-enum AgentType derives JsonCodec:
-  case BuiltIn, Custom
+type AgentConstraint = config.entity.AgentConstraint
+val AgentConstraint = config.entity.AgentConstraint
 
-/** Agent skill/capability specification
-  */
-case class AgentSkill(
-  skill: String,
-  description: String,
-  inputTypes: List[String],
-  outputTypes: List[String],
-  constraints: List[AgentConstraint] = Nil,
-) derives JsonCodec
+type AgentMetrics = config.entity.AgentMetrics
+val AgentMetrics = config.entity.AgentMetrics
 
-/** Constraint on agent execution
-  */
-enum AgentConstraint derives JsonCodec:
-  case RequiresAI
-  case RequiresDatabase
-  case RequiresFileSystem
-  case MaxConcurrency(limit: Int)
-  case MinMemoryMB(memory: Int)
-  case MaxExecutionSeconds(seconds: Int)
+type AgentHealthStatus = config.entity.AgentHealthStatus
+val AgentHealthStatus = config.entity.AgentHealthStatus
 
-/** Agent usage metrics
-  */
-case class AgentMetrics(
-  invocations: Long = 0,
-  successCount: Long = 0,
-  failureCount: Long = 0,
-  totalLatencyMs: Long = 0,
-  lastInvocation: Option[Instant] = None,
-) derives JsonCodec:
-  def averageLatencyMs: Double =
-    if invocations == 0 then 0.0
-    else totalLatencyMs.toDouble / invocations.toDouble
+type AgentHealth = config.entity.AgentHealth
+val AgentHealth = config.entity.AgentHealth
 
-  def successRate: Double =
-    if invocations == 0 then 0.0
-    else successCount.toDouble / invocations.toDouble
+type AgentInfo = config.entity.AgentInfo
+val AgentInfo = config.entity.AgentInfo
 
-  def recordInvocation(success: Boolean, latencyMs: Long, timestamp: Instant): AgentMetrics =
-    copy(
-      invocations = invocations + 1,
-      successCount = if success then successCount + 1 else successCount,
-      failureCount = if !success then failureCount + 1 else failureCount,
-      totalLatencyMs = totalLatencyMs + latencyMs,
-      lastInvocation = Some(timestamp),
-    )
+type RegisterAgentRequest = config.entity.RegisterAgentRequest
+val RegisterAgentRequest = config.entity.RegisterAgentRequest
 
-/** Agent health status
-  */
-enum AgentHealthStatus derives JsonCodec:
-  case Healthy, Degraded, Unhealthy, Unknown
-
-case class AgentHealth(
-  status: AgentHealthStatus = AgentHealthStatus.Unknown,
-  lastCheckTime: Option[Instant] = None,
-  consecutiveFailures: Int = 0,
-  isEnabled: Boolean = true,
-  message: Option[String] = None,
-) derives JsonCodec:
-  def recordFailure(timestamp: Instant, msg: String): AgentHealth =
-    val newFailures = consecutiveFailures + 1
-    val newStatus   = if newFailures >= 5 then AgentHealthStatus.Unhealthy
-    else if newFailures >= 3 then AgentHealthStatus.Degraded
-    else AgentHealthStatus.Healthy
-
-    copy(
-      status = newStatus,
-      lastCheckTime = Some(timestamp),
-      consecutiveFailures = newFailures,
-      message = Some(msg),
-    )
-
-  def recordSuccess(timestamp: Instant): AgentHealth =
-    copy(
-      status = AgentHealthStatus.Healthy,
-      lastCheckTime = Some(timestamp),
-      consecutiveFailures = 0,
-      message = None,
-    )
-
-  def disable(reason: String): AgentHealth =
-    copy(isEnabled = false, message = Some(reason))
-
-  def enable(): AgentHealth =
-    copy(isEnabled = true, message = None)
-
-case class AgentInfo(
-  name: String,
-  displayName: String,
-  description: String,
-  agentType: AgentType,
-  usesAI: Boolean,
-  tags: List[String],
-  skills: List[AgentSkill] = Nil,
-  supportedSteps: List[TaskStep] = Nil,
-  version: String = "1.0.0",
-  metrics: AgentMetrics = AgentMetrics(),
-  health: AgentHealth = AgentHealth(),
-) derives JsonCodec
-
-/** Agent registration request
-  */
-case class RegisterAgentRequest(
-  name: String,
-  displayName: String,
-  description: String,
-  agentType: AgentType,
-  usesAI: Boolean,
-  tags: List[String],
-  skills: List[AgentSkill],
-  supportedSteps: List[TaskStep],
-  version: String = "1.0.0",
-) derives JsonCodec
-
-/** Agent query filters
-  */
-case class AgentQuery(
-  skill: Option[String] = None,
-  inputType: Option[String] = None,
-  outputType: Option[String] = None,
-  supportedStep: Option[TaskStep] = None,
-  minSuccessRate: Option[Double] = None,
-  onlyEnabled: Boolean = true,
-) derives JsonCodec
+type AgentQuery = config.entity.AgentQuery
+val AgentQuery = config.entity.AgentQuery

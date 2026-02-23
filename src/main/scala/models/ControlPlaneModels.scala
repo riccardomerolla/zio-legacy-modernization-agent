@@ -1,172 +1,52 @@
 package models
 
-import java.time.Instant
+type WorkflowStatus = orchestration.control.WorkflowStatus
+val WorkflowStatus = orchestration.control.WorkflowStatus
 
-import zio.json.*
+type ControlPlaneEvent = orchestration.control.ControlPlaneEvent
+type WorkflowStarted   = orchestration.control.WorkflowStarted
+val WorkflowStarted = orchestration.control.WorkflowStarted
+type WorkflowCompleted = orchestration.control.WorkflowCompleted
+val WorkflowCompleted = orchestration.control.WorkflowCompleted
+type WorkflowFailed = orchestration.control.WorkflowFailed
+val WorkflowFailed = orchestration.control.WorkflowFailed
+type StepStarted = orchestration.control.StepStarted
+val StepStarted = orchestration.control.StepStarted
+type StepProgress = orchestration.control.StepProgress
+val StepProgress = orchestration.control.StepProgress
+type StepCompleted = orchestration.control.StepCompleted
+val StepCompleted = orchestration.control.StepCompleted
+type StepFailed = orchestration.control.StepFailed
+val StepFailed = orchestration.control.StepFailed
+type ResourceAllocated = orchestration.control.ResourceAllocated
+val ResourceAllocated = orchestration.control.ResourceAllocated
+type ResourceReleased = orchestration.control.ResourceReleased
+val ResourceReleased = orchestration.control.ResourceReleased
 
-/** Workflow execution status
-  */
-enum WorkflowStatus derives JsonCodec:
-  case Pending, Running, Completed, Failed, Cancelled
+type ControlCommand = orchestration.control.ControlCommand
+type PauseWorkflow  = orchestration.control.PauseWorkflow
+val PauseWorkflow = orchestration.control.PauseWorkflow
+type ResumeWorkflow = orchestration.control.ResumeWorkflow
+val ResumeWorkflow = orchestration.control.ResumeWorkflow
+type CancelWorkflow = orchestration.control.CancelWorkflow
+val CancelWorkflow = orchestration.control.CancelWorkflow
 
-/** Control plane event types for workflow coordination
-  */
-sealed trait ControlPlaneEvent derives JsonCodec:
-  def correlationId: String
-  def timestamp: Instant
+type ActiveRun = orchestration.control.ActiveRun
+val ActiveRun = orchestration.control.ActiveRun
+type WorkflowRunState = orchestration.control.WorkflowRunState
+val WorkflowRunState = orchestration.control.WorkflowRunState
+type ResourceAllocationState = orchestration.control.ResourceAllocationState
+val ResourceAllocationState = orchestration.control.ResourceAllocationState
+type RateLimitConfig = orchestration.control.RateLimitConfig
+val RateLimitConfig = orchestration.control.RateLimitConfig
+type AgentCapability = orchestration.control.AgentCapability
+val AgentCapability = orchestration.control.AgentCapability
 
-case class WorkflowStarted(
-  correlationId: String,
-  runId: String,
-  workflowId: Long,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class WorkflowCompleted(
-  correlationId: String,
-  runId: String,
-  status: WorkflowStatus,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class WorkflowFailed(
-  correlationId: String,
-  runId: String,
-  error: String,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class StepStarted(
-  correlationId: String,
-  runId: String,
-  step: TaskStep,
-  assignedAgent: String,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class StepProgress(
-  correlationId: String,
-  runId: String,
-  step: TaskStep,
-  itemsProcessed: Int,
-  itemsTotal: Int,
-  message: String,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class StepCompleted(
-  correlationId: String,
-  runId: String,
-  step: TaskStep,
-  status: WorkflowStatus,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class StepFailed(
-  correlationId: String,
-  runId: String,
-  step: TaskStep,
-  error: String,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class ResourceAllocated(
-  correlationId: String,
-  runId: String,
-  parallelismSlot: Int,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-case class ResourceReleased(
-  correlationId: String,
-  runId: String,
-  parallelismSlot: Int,
-  timestamp: Instant,
-) extends ControlPlaneEvent
-  derives JsonCodec
-
-sealed trait ControlCommand derives JsonCodec:
-  def runId: String
-
-case class PauseWorkflow(runId: String) extends ControlCommand derives JsonCodec
-
-case class ResumeWorkflow(runId: String) extends ControlCommand derives JsonCodec
-
-case class CancelWorkflow(runId: String) extends ControlCommand derives JsonCodec
-
-/** Active run tracking in control plane
-  */
-case class ActiveRun(
-  runId: String,
-  workflowId: Long,
-  correlationId: String,
-  state: WorkflowRunState,
-  currentStep: Option[TaskStep],
-  startTime: Instant,
-  lastUpdateTime: Instant,
-) derives JsonCodec
-
-enum WorkflowRunState derives JsonCodec:
-  case Pending, Running, Paused, Completed, Failed, Cancelled
-
-/** Resource allocation tracking
-  */
-case class ResourceAllocationState(
-  maxParallelism: Int,
-  currentParallelism: Int,
-  allocatedSlots: List[Int],
-  rateLimit: Option[RateLimitConfig],
-) derives JsonCodec
-
-case class RateLimitConfig(
-  tokensPerSecond: Int,
-  burstSize: Int,
-) derives JsonCodec
-
-/** Agent capability matcher for workflow routing
-  */
-case class AgentCapability(
-  agentName: String,
-  supportedSteps: List[TaskStep],
-  isEnabled: Boolean = true,
-) derives JsonCodec
-
-enum AgentExecutionState derives JsonCodec:
-  case Idle, Executing, WaitingForTool, Paused, Aborted, Failed
-
-case class AgentExecutionInfo(
-  agentName: String,
-  state: AgentExecutionState,
-  runId: Option[String],
-  step: Option[TaskStep],
-  task: Option[String],
-  conversationId: Option[String],
-  tokensUsed: Long,
-  latencyMs: Long,
-  cost: Double,
-  lastUpdatedAt: Instant,
-  message: Option[String],
-) derives JsonCodec
-
-case class AgentExecutionEvent(
-  id: String,
-  agentName: String,
-  state: AgentExecutionState,
-  runId: Option[String],
-  step: Option[TaskStep],
-  detail: String,
-  timestamp: Instant,
-) derives JsonCodec
-
-case class AgentMonitorSnapshot(
-  generatedAt: Instant,
-  agents: List[AgentExecutionInfo],
-) derives JsonCodec
+type AgentExecutionState = orchestration.control.AgentExecutionState
+val AgentExecutionState = orchestration.control.AgentExecutionState
+type AgentExecutionInfo = orchestration.control.AgentExecutionInfo
+val AgentExecutionInfo = orchestration.control.AgentExecutionInfo
+type AgentExecutionEvent = orchestration.control.AgentExecutionEvent
+val AgentExecutionEvent = orchestration.control.AgentExecutionEvent
+type AgentMonitorSnapshot = orchestration.control.AgentMonitorSnapshot
+val AgentMonitorSnapshot = orchestration.control.AgentMonitorSnapshot

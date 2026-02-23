@@ -8,7 +8,7 @@ import zio.test.*
 
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.error.GigaMapError
-import store.{ ConfigStoreModule, DataStoreModule, StoreConfig }
+import shared.store.{ ConfigStoreModule, DataStoreModule, StoreConfig }
 
 object TaskRepositoryESSpec extends ZIOSpecDefault:
 
@@ -33,7 +33,7 @@ object TaskRepositoryESSpec extends ZIOSpecDefault:
         configStorePath = path.resolve("config-store").toString,
         dataStorePath = path.resolve("data-store").toString,
       )
-    ) >>> (DataStoreModule.live ++ ConfigStoreModule.live)) >>> TaskRepositoryES.live
+    ) >>> (DataStoreModule.live ++ ConfigStoreModule.live)) >>> TaskRepositoryLive.live
 
   def spec: Spec[TestEnvironment & Scope, Any] =
     suite("TaskRepositoryESSpec")(

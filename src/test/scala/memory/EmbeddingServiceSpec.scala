@@ -3,8 +3,9 @@ package memory
 import zio.*
 import zio.test.*
 
+import _root_.config.entity.{ AIProvider, AIProviderConfig, GatewayConfig }
 import llm4zio.providers.HttpClient
-import models.{ AIProvider, AIProviderConfig, GatewayConfig }
+import memory.control.EmbeddingService
 
 object EmbeddingServiceSpec extends ZIOSpecDefault:
 

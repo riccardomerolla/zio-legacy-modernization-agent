@@ -5,13 +5,15 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
-import db.{ ActivityRepository, PersistenceError }
-import models.{ ActivityEvent, ActivityEventType }
+import activity.control.ActivityHubLive
+import activity.entity.{ ActivityEvent, ActivityEventType, ActivityRepository }
+import db.PersistenceError
+import shared.ids.Ids.EventId
 
 object ActivityHubSpec extends ZIOSpecDefault:
 
   private val stubRepository: ActivityRepository = new ActivityRepository:
-    override def createEvent(event: ActivityEvent): IO[PersistenceError, Long] = ZIO.succeed(1L)
+    override def createEvent(event: ActivityEvent): IO[PersistenceError, EventId] = ZIO.succeed(event.id)
     override def listEvents(
       eventType: Option[ActivityEventType],
       since: Option[Instant],
@@ -26,6 +28,7 @@ object ActivityHubSpec extends ZIOSpecDefault:
         queue       <- hub.subscribe
         now         <- Clock.instant
         event        = ActivityEvent(
+                         id = EventId("evt-1"),
                          eventType = ActivityEventType.RunStarted,
                          source = "test",
                          summary = "Test run started",
@@ -46,6 +49,7 @@ object ActivityHubSpec extends ZIOSpecDefault:
         q2          <- hub.subscribe
         now         <- Clock.instant
         event        = ActivityEvent(
+                         id = EventId("evt-2"),
                          eventType = ActivityEventType.ConfigChanged,
                          source = "test",
                          summary = "Config updated",

@@ -3,13 +3,22 @@ package orchestration
 import zio.*
 import zio.test.*
 
-import models.*
+import _root_.config.entity.*
+import orchestration.control.WorkflowEngine
+import taskrun.entity.TaskStep
 
 object WorkflowEngineSpec extends ZIOSpecDefault:
+  private object Steps:
+    val Discovery: TaskStep      = "Discovery"
+    val Analysis: TaskStep       = "Analysis"
+    val Mapping: TaskStep        = "Mapping"
+    val Transformation: TaskStep = "Transformation"
+    val Validation: TaskStep     = "Validation"
+    val Documentation: TaskStep  = "Documentation"
 
   private val workflow = WorkflowDefinition(
     name = "dynamic",
-    steps = List(TaskStep.Discovery, TaskStep.Analysis, TaskStep.Mapping),
+    steps = List(Steps.Discovery, Steps.Analysis, Steps.Mapping),
     isBuiltin = false,
   )
 
@@ -21,7 +30,7 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
       agentType = AgentType.BuiltIn,
       usesAI = true,
       tags = Nil,
-      supportedSteps = List(TaskStep.Analysis),
+      supportedSteps = List(Steps.Analysis),
       metrics = AgentMetrics(invocations = 20, successCount = 18, failureCount = 2, totalLatencyMs = 8000),
       health = AgentHealth(status = AgentHealthStatus.Healthy, isEnabled = true),
     ),
@@ -32,7 +41,7 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
       agentType = AgentType.BuiltIn,
       usesAI = true,
       tags = Nil,
-      supportedSteps = List(TaskStep.Analysis),
+      supportedSteps = List(Steps.Analysis),
       metrics = AgentMetrics(invocations = 3, successCount = 3, failureCount = 0, totalLatencyMs = 3600),
       health = AgentHealth(status = AgentHealthStatus.Healthy, isEnabled = true),
     ),
@@ -42,11 +51,11 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
     test("buildPlan computes DAG batches with parallel independent nodes") {
       val graph = WorkflowGraph(
         List(
-          WorkflowNode(id = "discovery", step = TaskStep.Discovery),
-          WorkflowNode(id = "docs", step = TaskStep.Documentation),
-          WorkflowNode(id = "analysis", step = TaskStep.Analysis, dependsOn = List("discovery")),
-          WorkflowNode(id = "mapping", step = TaskStep.Mapping, dependsOn = List("analysis")),
-          WorkflowNode(id = "validation", step = TaskStep.Validation, dependsOn = List("mapping", "docs")),
+          WorkflowNode(id = "discovery", step = Steps.Discovery),
+          WorkflowNode(id = "docs", step = Steps.Documentation),
+          WorkflowNode(id = "analysis", step = Steps.Analysis, dependsOn = List("discovery")),
+          WorkflowNode(id = "mapping", step = Steps.Mapping, dependsOn = List("analysis")),
+          WorkflowNode(id = "validation", step = Steps.Validation, dependsOn = List("mapping", "docs")),
         )
       )
       val wf    = workflow.copy(dynamicGraph = Some(graph))
@@ -64,11 +73,11 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
     test("buildPlan evaluates conditional branches from runtime context") {
       val graph = WorkflowGraph(
         List(
-          WorkflowNode(id = "discovery", step = TaskStep.Discovery),
-          WorkflowNode(id = "analysis", step = TaskStep.Analysis, dependsOn = List("discovery")),
+          WorkflowNode(id = "discovery", step = Steps.Discovery),
+          WorkflowNode(id = "analysis", step = Steps.Analysis, dependsOn = List("discovery")),
           WorkflowNode(
             id = "validation",
-            step = TaskStep.Validation,
+            step = Steps.Validation,
             dependsOn = List("analysis"),
             condition =
               WorkflowCondition.NotDryRun,
@@ -81,18 +90,18 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
         dryPlan  <- WorkflowEngine.buildPlan(wf, WorkflowContext(dryRun = true))
         fullPlan <- WorkflowEngine.buildPlan(wf, WorkflowContext(dryRun = false))
       yield assertTrue(
-        dryPlan.orderedSteps == List(TaskStep.Discovery, TaskStep.Analysis),
-        fullPlan.orderedSteps == List(TaskStep.Discovery, TaskStep.Analysis, TaskStep.Validation),
+        dryPlan.orderedSteps == List(Steps.Discovery, Steps.Analysis),
+        fullPlan.orderedSteps == List(Steps.Discovery, Steps.Analysis, Steps.Validation),
       )
     },
     test("supports dynamic graph modification at runtime") {
       val base     = WorkflowGraph(
         List(
-          WorkflowNode(id = "discovery", step = TaskStep.Discovery),
-          WorkflowNode(id = "analysis", step = TaskStep.Analysis, dependsOn = List("discovery")),
+          WorkflowNode(id = "discovery", step = Steps.Discovery),
+          WorkflowNode(id = "analysis", step = Steps.Analysis, dependsOn = List("discovery")),
         )
       )
-      val toInsert = WorkflowNode(id = "mapping", step = TaskStep.Mapping)
+      val toInsert = WorkflowNode(id = "mapping", step = Steps.Mapping)
       val policy   = WorkflowAgentPolicy(
         strategy = AgentSelectionStrategy.PerformanceHistory,
         fallbackAgents = List(
@@ -115,7 +124,7 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
         List(
           WorkflowNode(
             id = "analysis",
-            step = TaskStep.Analysis,
+            step = Steps.Analysis,
             agentPolicy = Some(
               WorkflowAgentPolicy(
                 strategy = AgentSelectionStrategy.LoadBalanced,
@@ -130,7 +139,7 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
       for
         plan <- WorkflowEngine.buildPlan(wf, WorkflowContext(), candidates)
       yield assertTrue(
-        plan.orderedSteps == List(TaskStep.Analysis),
+        plan.orderedSteps == List(Steps.Analysis),
         plan.batches.head.head.assignedAgent.contains("analysis-balanced"),
         plan.batches.head.head.fallbackAgents == List("analysis-fast"),
       )
@@ -140,7 +149,7 @@ object WorkflowEngineSpec extends ZIOSpecDefault:
         List(
           WorkflowNode(
             id = "analysis",
-            step = TaskStep.Analysis,
+            step = Steps.Analysis,
             agentPolicy = Some(
               WorkflowAgentPolicy(
                 strategy = AgentSelectionStrategy.CapabilityMatch,

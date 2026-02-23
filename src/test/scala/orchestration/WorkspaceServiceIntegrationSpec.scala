@@ -7,8 +7,9 @@ import zio.*
 import zio.test.*
 import zio.test.Assertion.*
 
-import core.FileService
-import models.*
+import _root_.config.entity.MigrationConfig
+import app.control.FileService
+import orchestration.control.WorkspaceService
 
 object WorkspaceServiceIntegrationSpec extends ZIOSpecDefault:
 
