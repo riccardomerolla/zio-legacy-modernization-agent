@@ -6,10 +6,13 @@ import java.time.Instant
 import zio.*
 import zio.schema.{ Schema, derived }
 
+import conversation.entity.{ Conversation, ConversationEvent }
 import io.github.riccardomerolla.zio.eclipsestore.config.{ EclipseStoreConfig, StorageTarget }
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import io.github.riccardomerolla.zio.eclipsestore.schema.{ SchemaBinaryCodec, TypedStore, TypedStoreLive }
 import io.github.riccardomerolla.zio.eclipsestore.service.{ EclipseStoreService, LifecycleCommand }
+import issues.entity.{ AgentIssue, IssueEvent }
+import taskrun.entity.{ TaskRun, TaskRunEvent }
 
 // ---------------------------------------------------------------------------
 // Store-level row types — persistence-only.
@@ -145,6 +148,12 @@ private val dataStoreHandlers =
     ++ SchemaBinaryCodec.handlers(Schema[TaskRunRow])
     ++ SchemaBinaryCodec.handlers(Schema[TaskReportRow])
     ++ SchemaBinaryCodec.handlers(Schema[TaskArtifactRow])
+    ++ SchemaBinaryCodec.handlers(Schema[TaskRun])
+    ++ SchemaBinaryCodec.handlers(Schema[TaskRunEvent])
+    ++ SchemaBinaryCodec.handlers(Schema[AgentIssue])
+    ++ SchemaBinaryCodec.handlers(Schema[IssueEvent])
+    ++ SchemaBinaryCodec.handlers(Schema[Conversation])
+    ++ SchemaBinaryCodec.handlers(Schema[ConversationEvent])
 
 object DataStoreModule:
 
