@@ -1,10 +1,13 @@
 package llm4zio.providers
 
 import java.nio.charset.StandardCharsets
+
 import scala.jdk.CollectionConverters.*
+
 import zio.*
 import zio.json.*
 import zio.stream.ZStream
+
 import llm4zio.core.*
 import llm4zio.tools.{AnyTool, JsonSchema}
 
@@ -100,7 +103,7 @@ object GeminiCliProvider:
           _      <- ZIO.logInfo(s"Executing Gemini CLI with model: ${config.model}")
           _      <- executor.checkGeminiInstalled
           output <- executor.runGeminiProcess(prompt, config)
-          _      <- ZIO.logDebug(s"Gemini execution completed")
+          _      <- ZIO.logDebug("Gemini execution completed")
         yield LlmResponse(
           content = output,
           usage = None,

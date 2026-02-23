@@ -1,8 +1,9 @@
 package llm4zio.rag
 
 import zio.*
-import zio.stream.*
 import zio.json.*
+import zio.stream.*
+
 import llm4zio.core.{ LlmError, LlmResponse, LlmService }
 
 enum DocumentProcessingError:

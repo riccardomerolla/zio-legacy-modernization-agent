@@ -1,11 +1,11 @@
 package llm4zio.tools
 
 import zio.*
-import zio.test.*
 import zio.json.ast.Json
+import zio.test.*
 
 object ToolSchemaGeneratorSpec extends ZIOSpecDefault:
-  def spec = suite("ToolSchemaGenerator")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ToolSchemaGenerator")(
     test("generate schema from scala method signature") {
       val signature = "def transform(code: String, retries: Int, dryRun: Boolean = false): String"
 

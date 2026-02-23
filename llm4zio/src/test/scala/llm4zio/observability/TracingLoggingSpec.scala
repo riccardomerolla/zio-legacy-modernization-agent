@@ -1,9 +1,9 @@
 package llm4zio.observability
 
 import zio.*
-import zio.test.*
-import zio.stream.ZStream
 import zio.json.*
+import zio.stream.ZStream
+import zio.test.*
 
 import llm4zio.core.*
 import llm4zio.tools.{ AnyTool, JsonSchema }
@@ -52,7 +52,7 @@ object TracingLoggingSpec extends ZIOSpecDefault:
 
     override def isAvailable: UIO[Boolean] = ZIO.succeed(false)
 
-  def spec = suite("TracingLogging")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("TracingLogging")(
     test("propagates correlation id and records spans") {
       ZIO.scoped {
         for

@@ -80,7 +80,7 @@ object OpenCodeProviderSpec extends ZIOSpecDefault:
       "data: [DONE]",
     ).mkString("\n")
 
-  def spec = suite("OpenCodeProvider")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("OpenCodeProvider")(
     test("execute maps successful API response") {
       for
         http <- mockHttpClient(req => ZIO.succeed(standardResponse()))

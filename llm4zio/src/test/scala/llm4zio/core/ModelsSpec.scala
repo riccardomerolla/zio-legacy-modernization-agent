@@ -1,11 +1,11 @@
 package llm4zio.core
 
 import zio.*
-import zio.test.*
 import zio.json.*
+import zio.test.*
 
 object ModelsSpec extends ZIOSpecDefault:
-  def spec = suite("Models")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("Models")(
     test("LlmProvider should serialize to JSON") {
       val provider = LlmProvider.OpenAI
       val json = provider.toJson

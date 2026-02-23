@@ -1,9 +1,10 @@
 package llm4zio.providers
 
 import zio.*
-import zio.test.*
 import zio.json.*
 import zio.json.ast.Json
+import zio.test.*
+
 import llm4zio.core.*
 
 object GeminiApiProviderSpec extends ZIOSpecDefault:
@@ -32,7 +33,7 @@ object GeminiApiProviderSpec extends ZIOSpecDefault:
       else
         ZIO.fail(LlmError.ProviderError("HTTP request failed", None))
 
-  def spec = suite("GeminiApiProvider")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("GeminiApiProvider")(
     test("execute should return response") {
       val config = LlmConfig(
         provider = LlmProvider.GeminiApi,

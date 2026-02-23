@@ -3,6 +3,7 @@ package llm4zio.tools
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
+
 import llm4zio.core.*
 
 trait ToolRegistry:

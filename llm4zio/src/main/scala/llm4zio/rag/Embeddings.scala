@@ -1,13 +1,14 @@
 package llm4zio.rag
 
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
+
 import llm4zio.core.{ LlmError, RateLimiter, RateLimiterConfig }
 import llm4zio.providers.HttpClient
-
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 
 enum EmbeddingError derives JsonCodec:
   case ProviderError(message: String)
@@ -91,7 +92,7 @@ private final case class DeterministicEmbeddingService(dimensions: Int) extends 
       embedding <- ZIO.attempt {
                      val bytes = sha256(text)
                      val seed = bytes.foldLeft(0L)((acc, b) => (acc * 31L + (b & 0xff).toLong) & Long.MaxValue)
-                     val random = new scala.util.Random(seed)
+                     val random = new java.util.SplittableRandom(seed)
                      Vector.fill(dimensions)(random.nextDouble() * 2.0 - 1.0)
                    }.mapError(err => EmbeddingError.ProviderError(err.getMessage))
       normalized <- normalize(embedding)

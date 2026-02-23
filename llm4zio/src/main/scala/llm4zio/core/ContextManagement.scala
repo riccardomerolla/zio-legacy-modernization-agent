@@ -5,8 +5,6 @@ import zio.json.*
 
 import llm4zio.tools.{ Tool, ToolRegistry }
 
-import java.time.Instant
-
 enum ContextError derives JsonCodec:
   case InvalidInput(message: String)
   case ParseFailed(message: String)
@@ -73,16 +71,19 @@ object MessageSummarizer:
             .map(message => s"${message.role.toString.toLowerCase}: ${message.content.take(160)}")
             .mkString("\n")
 
-          ZIO.succeed(
-            ConversationMessage(
-              id = java.util.UUID.randomUUID().toString,
-              role = PromptRole.Assistant,
-              content = s"Summary of previous context:\n$summaryText",
-              timestamp = Instant.now(),
-              tokens = targetTokens.max(1),
-              metadata = Map("summary" -> "true"),
-              important = true,
-            )
+          for
+            summaryId <- ZIO
+                           .attempt(java.util.UUID.randomUUID().toString)
+                           .mapError(err => ContextError.SummarizationFailed(s"Failed to generate summary id: ${err.getMessage}"))
+            now <- Clock.instant
+          yield ConversationMessage(
+            id = summaryId,
+            role = PromptRole.Assistant,
+            content = s"Summary of previous context:\n$summaryText",
+            timestamp = now,
+            tokens = targetTokens.max(1),
+            metadata = Map("summary" -> "true"),
+            important = true,
           )
 
 object ContextManagement:

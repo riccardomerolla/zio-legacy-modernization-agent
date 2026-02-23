@@ -1,10 +1,11 @@
 package llm4zio.tools
 
+import scala.annotation.nowarn
+import scala.meta.*
+
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
-import scala.meta.*
-import scala.annotation.nowarn
 
 enum ToolExecutionError derives JsonCodec:
   case InvalidSchema(message: String)

@@ -1,9 +1,10 @@
 package llm4zio.core
 
 import zio.*
-import zio.test.*
-import zio.stream.*
 import zio.json.*
+import zio.stream.*
+import zio.test.*
+
 import llm4zio.tools.{AnyTool, JsonSchema}
 
 object LlmServiceSpec extends ZIOSpecDefault:
@@ -33,7 +34,7 @@ object LlmServiceSpec extends ZIOSpecDefault:
     override def isAvailable: UIO[Boolean] =
       ZIO.succeed(true)
 
-  def spec = suite("LlmService")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("LlmService")(
     test("execute should return response") {
       val service = new MockLlmService()
       for {

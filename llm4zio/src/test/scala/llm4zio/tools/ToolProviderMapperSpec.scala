@@ -1,8 +1,9 @@
 package llm4zio.tools
 
 import zio.*
-import zio.test.*
 import zio.json.ast.Json
+import zio.test.*
+
 import llm4zio.core.LlmProvider
 
 object ToolProviderMapperSpec extends ZIOSpecDefault:
@@ -17,7 +18,7 @@ object ToolProviderMapperSpec extends ZIOSpecDefault:
     execute = _ => ZIO.succeed(Json.Obj("status" -> Json.Str("ok"))),
   )
 
-  def spec = suite("ToolProviderMapper")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ToolProviderMapper")(
     test("map tools to OpenAI format") {
       val mapped = ToolProviderMapper.toProviderFormat(LlmProvider.OpenAI, List(sampleTool))
       mapped match

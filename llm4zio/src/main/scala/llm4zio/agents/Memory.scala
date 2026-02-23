@@ -1,9 +1,11 @@
 package llm4zio.agents
 
+import java.time.Instant
+
 import zio.*
 import zio.json.*
+
 import llm4zio.core.Message
-import java.time.Instant
 
 enum MemoryError derives JsonCodec:
   case NotFound(threadId: String)

@@ -1,9 +1,9 @@
 package llm4zio.core
 
+import java.time.Instant
+
 import zio.*
 import zio.test.*
-
-import java.time.Instant
 
 object ConversationSpec extends ZIOSpecDefault:
   private val now = Instant.parse("2026-02-14T00:00:00Z")
@@ -17,7 +17,7 @@ object ConversationSpec extends ZIOSpecDefault:
       tokens = 10,
     )
 
-  def spec = suite("Conversation")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("Conversation")(
     test("thread export/import roundtrip") {
       val thread = ConversationThread
         .create("t1", now)

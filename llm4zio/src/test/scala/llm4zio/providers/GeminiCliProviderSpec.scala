@@ -2,6 +2,7 @@ package llm4zio.providers
 
 import zio.*
 import zio.test.*
+
 import llm4zio.core.*
 
 object GeminiCliProviderSpec extends ZIOSpecDefault:
@@ -15,7 +16,7 @@ object GeminiCliProviderSpec extends ZIOSpecDefault:
       if shouldSucceed then ZIO.succeed(s"Response to: $prompt")
       else ZIO.fail(LlmError.ProviderError("Process failed", None))
 
-  def spec = suite("GeminiCliProvider")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("GeminiCliProvider")(
     test("execute should return response") {
       val config = LlmConfig(
         provider = LlmProvider.GeminiCli,

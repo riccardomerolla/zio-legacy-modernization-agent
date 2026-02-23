@@ -1,9 +1,9 @@
 package llm4zio.core
 
+import java.time.Instant
+
 import zio.*
 import zio.json.*
-
-import java.time.Instant
 
 enum ConversationState derives JsonCodec:
   case InProgress, WaitingForTool, Completed, Failed

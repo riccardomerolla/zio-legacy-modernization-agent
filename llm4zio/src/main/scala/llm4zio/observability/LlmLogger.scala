@@ -3,6 +3,7 @@ package llm4zio.observability
 import zio.*
 import zio.json.*
 import zio.stream.ZStream
+
 import llm4zio.core.*
 import llm4zio.tools.{AnyTool, JsonSchema}
 

@@ -1,12 +1,12 @@
 package llm4zio.observability
 
-import zio.*
-import zio.json.*
-
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
+
+import zio.*
+import zio.json.*
 
 enum TraceStatus derives JsonCodec:
   case Ok, Error

@@ -1,8 +1,9 @@
 package llm4zio.tools
 
 import zio.*
-import zio.test.*
 import zio.json.ast.Json
+import zio.test.*
+
 import llm4zio.core.*
 
 object ToolRegistrySpec extends ZIOSpecDefault:
@@ -29,7 +30,7 @@ object ToolRegistrySpec extends ZIOSpecDefault:
           case _                => ZIO.fail(ToolExecutionError.InvalidParameters("arguments must be an object")),
     )
 
-  def spec = suite("ToolRegistry")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ToolRegistry")(
     test("register and get tool") {
       for
         registry <- ToolRegistry.make

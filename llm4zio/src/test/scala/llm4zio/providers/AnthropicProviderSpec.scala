@@ -1,8 +1,9 @@
 package llm4zio.providers
 
 import zio.*
-import zio.test.*
 import zio.json.*
+import zio.test.*
+
 import llm4zio.core.*
 
 object AnthropicProviderSpec extends ZIOSpecDefault:
@@ -29,7 +30,7 @@ object AnthropicProviderSpec extends ZIOSpecDefault:
       else
         ZIO.fail(LlmError.ProviderError("HTTP request failed", None))
 
-  def spec = suite("AnthropicProvider")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("AnthropicProvider")(
     test("execute should return response") {
       val config = LlmConfig(
         provider = LlmProvider.Anthropic,

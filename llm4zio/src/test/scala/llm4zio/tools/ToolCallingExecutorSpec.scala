@@ -1,12 +1,14 @@
 package llm4zio.tools
 
+import java.util.concurrent.atomic.AtomicInteger
+
 import zio.*
-import zio.test.*
-import zio.stream.ZStream
 import zio.json.*
 import zio.json.ast.Json
+import zio.stream.ZStream
+import zio.test.*
+
 import llm4zio.core.*
-import java.util.concurrent.atomic.AtomicInteger
 
 object ToolCallingExecutorSpec extends ZIOSpecDefault:
   private final class LoopMockService extends LlmService:
@@ -54,7 +56,7 @@ object ToolCallingExecutorSpec extends ZIOSpecDefault:
     execute = args => ZIO.succeed(args),
   )
 
-  def spec = suite("ToolCallingExecutor")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ToolCallingExecutor")(
     test("execute multi-turn tool call loop until completion") {
       for
         registry <- ToolRegistry.make

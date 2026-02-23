@@ -3,6 +3,7 @@ package llm4zio.agents
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
+
 import llm4zio.core.{ Message, MessageRole }
 import llm4zio.tools.Tool
 

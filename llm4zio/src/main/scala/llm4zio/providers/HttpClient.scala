@@ -2,6 +2,7 @@ package llm4zio.providers
 
 import zio.*
 import zio.http.*
+
 import llm4zio.core.LlmError
 
 trait HttpClient:

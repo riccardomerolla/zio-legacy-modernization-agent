@@ -1,14 +1,14 @@
 package llm4zio.core
 
+import java.time.Instant
+
 import zio.*
-import zio.test.*
-import zio.stream.ZStream
 import zio.json.*
+import zio.json.ast.Json
+import zio.stream.ZStream
+import zio.test.*
 
 import llm4zio.tools.*
-import zio.json.ast.Json
-
-import java.time.Instant
 
 object ContextManagementSpec extends ZIOSpecDefault:
 
@@ -84,7 +84,7 @@ object ContextManagementSpec extends ZIOSpecDefault:
 
     override def isAvailable: UIO[Boolean] = ZIO.succeed(true)
 
-  def spec = suite("ContextManagement")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ContextManagement")(
     test("token counter returns provider-specific estimates") {
       val counter = TokenCounter.default
       val text = "A" * 100

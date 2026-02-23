@@ -1,8 +1,9 @@
 package llm4zio.agents
 
 import zio.*
-import zio.test.*
 import zio.json.ast.Json
+import zio.test.*
+
 import llm4zio.core.{ Message, MessageRole }
 
 object AgentFrameworkSpec extends ZIOSpecDefault:
@@ -54,7 +55,7 @@ object AgentFrameworkSpec extends ZIOSpecDefault:
     override def appendEntry(entry: MemoryEntry): IO[MemoryError, Unit] = ZIO.unit
     override def searchEntries(query: String, limit: Int): IO[MemoryError, List[MemoryEntry]] = ZIO.succeed(Nil)
 
-  def spec = suite("AgentFramework")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("AgentFramework")(
     test("routes by capability and resolves conflicts by priority") {
       for
         selected <- AgentRouter.route("analysis", List(delegatorAgent, analyzerAgent), ConflictResolution.HighestPriority)

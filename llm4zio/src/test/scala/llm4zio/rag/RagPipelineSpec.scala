@@ -1,9 +1,10 @@
 package llm4zio.rag
 
 import zio.*
+import zio.json.*
 import zio.stream.ZStream
 import zio.test.*
-import zio.json.*
+
 import llm4zio.core.*
 
 object RagPipelineSpec extends ZIOSpecDefault:
@@ -29,7 +30,7 @@ object RagPipelineSpec extends ZIOSpecDefault:
 
     override def isAvailable: UIO[Boolean] = ZIO.succeed(true)
 
-  def spec = suite("RagPipeline")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("RagPipeline")(
     test("indexes documents and reports progress") {
       for
         processor <- DocumentProcessor.default

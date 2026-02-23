@@ -1,8 +1,10 @@
 package llm4zio.core
 
+import java.util.concurrent.TimeUnit
+
 import zio.*
-import zio.stream.*
 import zio.json.*
+import zio.stream.*
 
 /** Streaming utilities for LLM operations with backpressure and progress tracking */
 object Streaming:
@@ -37,23 +39,27 @@ object Streaming:
     stream: Stream[LlmError, LlmChunk],
     onProgress: StreamProgress => UIO[Unit],
   ): Stream[LlmError, LlmChunk] =
-    stream
-      .mapAccumZIO((0, java.lang.System.currentTimeMillis())) { case ((tokensProcessed, startTime), chunk) =>
-        val now           = java.lang.System.currentTimeMillis()
-        val elapsedMs     = now - startTime
-        val elapsedSec    = elapsedMs / 1000.0
-        val newTokenCount = tokensProcessed + estimateTokens(chunk.delta)
-        val tokensPerSec  = if elapsedSec > 0 then newTokenCount / elapsedSec else 0.0
-
-        val progress = StreamProgress(
-          tokensProcessed = newTokenCount,
-          tokensPerSecond = tokensPerSec,
-          elapsedMs = elapsedMs,
-          estimatedRemainingMs = None, // Could be enhanced with model-specific estimates
-        )
-
-        onProgress(progress).as(((newTokenCount, startTime), chunk))
+    ZStream.unwrap {
+      Clock.currentTime(TimeUnit.MILLISECONDS).map { startTime =>
+        stream
+          .mapAccumZIO((0, startTime)) { case ((tokensProcessed, initialTime), chunk) =>
+            for
+              now <- Clock.currentTime(TimeUnit.MILLISECONDS)
+              elapsedMs = now - initialTime
+              elapsedSec = elapsedMs / 1000.0
+              newTokenCount = tokensProcessed + estimateTokens(chunk.delta)
+              tokensPerSec = if elapsedSec > 0 then newTokenCount / elapsedSec else 0.0
+              progress = StreamProgress(
+                           tokensProcessed = newTokenCount,
+                           tokensPerSecond = tokensPerSec,
+                           elapsedMs = elapsedMs,
+                           estimatedRemainingMs = None, // Could be enhanced with model-specific estimates
+                         )
+              _ <- onProgress(progress)
+            yield ((newTokenCount, initialTime), chunk)
+          }
       }
+    }
 
   /** Estimate token count from text (rough approximation)
     *

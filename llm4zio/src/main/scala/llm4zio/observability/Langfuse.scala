@@ -4,8 +4,8 @@ import zio.*
 import zio.json.*
 import zio.json.ast.Json
 
-import llm4zio.providers.HttpClient
 import llm4zio.core.LlmError
+import llm4zio.providers.HttpClient
 
 enum LangfuseError derives JsonCodec:
   case Disabled

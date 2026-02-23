@@ -17,7 +17,7 @@ object LangfuseSpec extends ZIOSpecDefault:
     ): ZIO[Any, LlmError, String] =
       calls.update(current => (url, body, headers) :: current).as("{}")
 
-  def spec = suite("Langfuse")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("Langfuse")(
     test("disabled client is no-op") {
       val event = LangfuseEvent(correlationId = "c1", traceName = "trace", input = "in", output = Some("out"))
       for

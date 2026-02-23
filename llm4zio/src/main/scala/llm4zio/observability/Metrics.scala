@@ -2,6 +2,7 @@ package llm4zio.observability
 
 import zio.*
 import zio.json.*
+
 import llm4zio.core.TokenUsage
 
 case class LlmPricing(

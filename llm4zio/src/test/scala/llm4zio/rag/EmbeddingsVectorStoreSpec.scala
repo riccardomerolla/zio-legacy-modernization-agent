@@ -4,7 +4,7 @@ import zio.*
 import zio.test.*
 
 object EmbeddingsVectorStoreSpec extends ZIOSpecDefault:
-  def spec = suite("EmbeddingsVectorStore")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("EmbeddingsVectorStore")(
     test("deterministic embeddings are stable and normalized") {
       for
         service <- EmbeddingService.deterministic(dimensions = 32)

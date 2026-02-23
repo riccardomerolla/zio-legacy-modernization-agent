@@ -1,13 +1,13 @@
 package llm4zio.core
 
 import zio.*
+import zio.json.*
+import zio.stream.*
 import zio.test.*
 import zio.test.Assertion.*
-import zio.stream.*
-import zio.json.*
 
 object StreamingSpec extends ZIOSpecDefault:
-  def spec = suite("Streaming")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("Streaming")(
     suite("collect")(
       test("should aggregate chunks into complete response") {
         val chunks = ZStream(

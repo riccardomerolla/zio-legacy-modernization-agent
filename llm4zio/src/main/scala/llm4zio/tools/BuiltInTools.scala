@@ -1,12 +1,13 @@
 package llm4zio.tools
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.{FileSystems, Files, Path, StandardOpenOption}
+
+import scala.jdk.CollectionConverters.*
+
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
-
-import java.nio.charset.StandardCharsets
-import java.nio.file.{FileSystems, Files, Path, StandardOpenOption}
-import scala.jdk.CollectionConverters.*
 
 object BuiltInTools:
   final case class WorkspaceConfig(
@@ -303,13 +304,13 @@ object BuiltInTools:
       .mapError(err => ToolExecutionError.ExecutionFailed(s"Failed to write file: ${err.getMessage}"))
 
   private def ensureParentDirectory(path: Path): IO[ToolExecutionError, Unit] =
-    val parent = path.getParent
-    if parent == null then ZIO.unit
-    else
-      ZIO
-        .attemptBlocking(Files.createDirectories(parent))
-        .mapError(err => ToolExecutionError.ExecutionFailed(s"Failed to create parent directories: ${err.getMessage}"))
-        .unit
+    Option(path.getParent) match
+      case None         => ZIO.unit
+      case Some(parent) =>
+        ZIO
+          .attemptBlocking(Files.createDirectories(parent))
+          .mapError(err => ToolExecutionError.ExecutionFailed(s"Failed to create parent directories: ${err.getMessage}"))
+          .unit
 
   private def deleteDirectory(path: Path): UIO[Unit] =
     ZIO
@@ -374,10 +375,17 @@ object BuiltInTools:
     yield resolved
 
   private def ensureRegularFile(path: Path): IO[ToolExecutionError, Unit] =
-    ZIO
-      .attemptBlocking {
-        if !Files.exists(path) then throw new IllegalArgumentException(s"File not found: $path")
-        if !Files.isRegularFile(path) then throw new IllegalArgumentException(s"Not a regular file: $path")
-      }
-      .mapError(err => ToolExecutionError.InvalidParameters(err.getMessage))
-      .unit
+    for
+      exists <- ZIO
+                  .attemptBlocking(Files.exists(path))
+                  .mapError(err => ToolExecutionError.ExecutionFailed(s"Failed to check file existence: ${err.getMessage}"))
+      _ <- ZIO
+             .fail(ToolExecutionError.InvalidParameters(s"File not found: $path"))
+             .when(!exists)
+      isRegularFile <- ZIO
+                         .attemptBlocking(Files.isRegularFile(path))
+                         .mapError(err => ToolExecutionError.ExecutionFailed(s"Failed to check file type: ${err.getMessage}"))
+      _ <- ZIO
+             .fail(ToolExecutionError.InvalidParameters(s"Not a regular file: $path"))
+             .when(!isRegularFile)
+    yield ()

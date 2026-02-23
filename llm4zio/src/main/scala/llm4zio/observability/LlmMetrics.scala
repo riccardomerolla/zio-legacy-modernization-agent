@@ -1,6 +1,7 @@
 package llm4zio.observability
 
 import zio.*
+
 import llm4zio.core.TokenUsage
 
 case class LlmMetrics(

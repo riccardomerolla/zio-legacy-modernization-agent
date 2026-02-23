@@ -2,10 +2,11 @@ package llm4zio.observability
 
 import zio.*
 import zio.test.*
+
 import llm4zio.core.TokenUsage
 
 object LlmMetricsSpec extends ZIOSpecDefault:
-  def spec = suite("LlmMetrics")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("LlmMetrics")(
     test("record request increments count") {
       for {
         metrics  <- ZIO.service[LlmMetrics]

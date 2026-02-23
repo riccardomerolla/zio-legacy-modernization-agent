@@ -1,8 +1,9 @@
 package llm4zio.providers
 
 import zio.*
-import zio.test.*
 import zio.json.*
+import zio.test.*
+
 import llm4zio.core.*
 
 object OpenAIProviderSpec extends ZIOSpecDefault:
@@ -34,7 +35,7 @@ object OpenAIProviderSpec extends ZIOSpecDefault:
       else
         ZIO.fail(LlmError.ProviderError("HTTP POST failed", None))
 
-  def spec = suite("OpenAIProvider")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("OpenAIProvider")(
     test("execute should return response") {
       val config = LlmConfig(
         provider = LlmProvider.OpenAI,

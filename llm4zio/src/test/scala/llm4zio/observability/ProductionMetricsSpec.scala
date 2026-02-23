@@ -2,10 +2,11 @@ package llm4zio.observability
 
 import zio.*
 import zio.test.*
+
 import llm4zio.core.TokenUsage
 
 object ProductionMetricsSpec extends ZIOSpecDefault:
-  def spec = suite("ProductionMetrics")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ProductionMetrics")(
     test("collects counters, percentiles, and provider health") {
       for
         metrics <- MetricsCollector.inMemory()

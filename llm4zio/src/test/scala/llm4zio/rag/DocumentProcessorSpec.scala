@@ -18,7 +18,7 @@ object DocumentProcessorSpec extends ZIOSpecDefault:
     metadata = Map("source" -> "cobol-guide"),
   )
 
-  def spec = suite("DocumentProcessor")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("DocumentProcessor")(
     test("extract metadata includes base fields") {
       for
         processor <- DocumentProcessor.default

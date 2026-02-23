@@ -1,8 +1,9 @@
 package llm4zio.core
 
 import zio.*
-import zio.stream.*
 import zio.json.*
+import zio.stream.*
+
 import llm4zio.tools.{AnyTool, JsonSchema}
 
 case class ToolCall(id: String, name: String, arguments: String) derives JsonCodec
