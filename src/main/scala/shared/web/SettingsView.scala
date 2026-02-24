@@ -117,7 +117,6 @@ object SettingsView:
   def channelsTab(
     cards: List[ChannelCardData],
     nowMs: Long,
-    settings: Map[String, String],
     flash: Option[String] = None,
   ): String =
     settingsShell("channels", "Settings — Channels")(
@@ -165,7 +164,7 @@ object SettingsView:
         attr("hx-trigger")   := "every 10s",
         attr("hx-swap")      := "innerHTML",
         attr("hx-indicator") := "#channels-refresh-indicator",
-      )(ChannelView.cardsFragment(cards, nowMs, settings)),
+      )(ChannelView.cardsFragment(cards, nowMs)),
       div(id := "channels-refresh-indicator", cls := "htmx-indicator text-xs text-gray-500 mt-3")("Refreshing..."),
     )
 

@@ -50,10 +50,9 @@ final case class ChannelControllerLive(
     },
     Method.GET / "settings" / "channels" / "cards" -> handler {
       for
-        cards    <- buildCards
-        now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-        settings <- getSettingsMap
-      yield htmlFragment(ChannelView.cardsFragment(cards, now, settings).render)
+        cards <- buildCards
+        now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+      yield htmlFragment(ChannelView.cardsFragment(cards, now).render)
     },
     // Per-channel inline config form (HTMX fragment)
     Method.GET / "settings" / "channels" / string("name") / "config-form" -> handler { (name: String, _: Request) =>
@@ -143,10 +142,9 @@ final case class ChannelControllerLive(
 
   private def buildChannelsTabPage(flash: Option[String]): UIO[Response] =
     for
-      cards    <- buildCards
-      now      <- Clock.currentTime(TimeUnit.MILLISECONDS)
-      settings <- getSettingsMap
-    yield html(HtmlViews.settingsChannelsTab(cards, now, settings, flash))
+      cards <- buildCards
+      now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+    yield html(HtmlViews.settingsChannelsTab(cards, now, flash))
 
   private def effectiveStatus(
     channelName: String,

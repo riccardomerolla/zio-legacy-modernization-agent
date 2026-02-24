@@ -102,7 +102,7 @@ object ChannelView:
       ),
     )
 
-  def cardsFragment(cards: List[ChannelCardData], nowMs: Long, settings: Map[String, String] = Map.empty): Frag =
+  def cardsFragment(cards: List[ChannelCardData], nowMs: Long): Frag =
     if cards.isEmpty then Components.emptyState("No channels registered.")
     else
       div(cls := "grid grid-cols-1 gap-4 lg:grid-cols-2")(
@@ -259,6 +259,17 @@ object ChannelView:
             value       := settings.getOrElse("telegram.polling.batchSize", "100"),
             attr("min") := "1",
             attr("max") := "1000",
+            cls         := "block w-full rounded-md bg-white/5 border-0 py-1.5 text-white text-sm ring-1 ring-white/10 px-3",
+          ),
+        ),
+        div(
+          label(cls := "block text-xs font-medium text-gray-400 mb-1")("Poll Timeout (s)"),
+          input(
+            `type`      := "number",
+            name        := "telegram.polling.timeout",
+            value       := settings.getOrElse("telegram.polling.timeout", "30"),
+            attr("min") := "1",
+            attr("max") := "120",
             cls         := "block w-full rounded-md bg-white/5 border-0 py-1.5 text-white text-sm ring-1 ring-white/10 px-3",
           ),
         ),
