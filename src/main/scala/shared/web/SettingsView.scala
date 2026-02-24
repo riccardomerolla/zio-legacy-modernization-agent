@@ -800,11 +800,11 @@ object SettingsView:
             ),
             if tool.tags.nonEmpty then
               div(cls := "mt-2 flex flex-wrap gap-1")(
-                tool.tags.toList.sorted.map { tag =>
+                tool.tags.toList.sorted.map { tagLabel =>
                   span(
                     cls := "inline-flex items-center rounded-md bg-white/5 ring-1 ring-white/10 px-2 py-0.5 text-[11px] text-gray-400"
                   )(
-                    tag
+                    tagLabel
                   )
                 }
               )
