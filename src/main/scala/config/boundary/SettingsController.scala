@@ -109,7 +109,7 @@ final case class SettingsControllerLive(
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "settings"                      -> handler {
-      ZIO.succeed(Response(status = Status.Found, headers = Headers(Header.Location(URL.decode("/settings/ai").toOption.get))))
+      ZIO.succeed(Response(status = Status.Found, headers = Headers(Header.Location(URL.decode("/settings/ai").getOrElse(URL.root)))))
     },
     Method.POST / "settings"                     -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
@@ -184,7 +184,7 @@ final case class SettingsControllerLive(
       modelService.probeProviders.map(status => Response.json(status.toJson))
     },
     Method.GET / "models"                        -> handler {
-      ZIO.succeed(Response(status = Status.Found, headers = Headers(Header.Location(URL.decode("/settings/ai").toOption.get))))
+      ZIO.succeed(Response(status = Status.Found, headers = Headers(Header.Location(URL.decode("/settings/ai").getOrElse(URL.root)))))
     },
     Method.GET / "settings" / "ai"               -> handler {
       ErrorHandlingMiddleware.fromPersistence {
@@ -202,7 +202,7 @@ final case class SettingsControllerLive(
           form    <- parseForm(req)
           _       <- ZIO.foreachDiscard(settingsKeys.filter(_.startsWith("ai."))) { key =>
                        val value = form.getOrElse(key, "")
-                       if value.nonEmpty then repository.upsertSetting(key, value) else ZIO.unit
+                       repository.upsertSetting(key, value)
                      }
           _       <- checkpointConfigStore
           rows    <- repository.getAllSettings
