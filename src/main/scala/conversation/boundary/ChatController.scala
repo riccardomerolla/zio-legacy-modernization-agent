@@ -278,14 +278,13 @@ final case class ChatControllerLive(
                        additionalMetadata = mention.metadata,
                      )
       _           <- routeThroughGateway(gatewayService.processInbound(userInbound))
-      aiConfig    <- configResolver.resolveConfig("chat")
       toolsEnabled = metadata.flatMap(m => m.fromJson[Map[String, String]].toOption)
                        .flatMap(_.get("toolsEnabled")).contains("true")
       llmResponse <-
         if toolsEnabled then
           for
             tools      <- toolRegistry.list
-            threadId   <- ZIO.attempt(java.util.UUID.randomUUID().toString).orDie
+            threadId    = java.util.UUID.randomUUID().toString
             now3       <- Clock.instant
             thread      = ConversationThread.create(threadId, now3)
             toolResult <- ToolConversationManager
