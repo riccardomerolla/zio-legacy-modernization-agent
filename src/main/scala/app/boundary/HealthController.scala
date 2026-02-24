@@ -34,6 +34,9 @@ final case class HealthControllerLive(
     Method.GET / "api" / "health" / "providers" -> handler {
       modelService.probeProviders.map(items => Response.json(items.toJson))
     },
+    Method.GET / "api" / "health" / "channels"  -> handler {
+      healthMonitor.snapshot.map(snapshot => Response.json(snapshot.channels.toJson))
+    },
     Method.GET / "api" / "health" / "history"   -> handler { (req: Request) =>
       val limit = req.queryParam("limit").flatMap(_.toIntOption).getOrElse(30)
       healthMonitor.history(limit).map(items => Response.json(items.toJson))

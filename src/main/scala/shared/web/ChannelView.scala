@@ -26,14 +26,21 @@ object ChannelView:
     Layout.page("Channels", "/channels")(
       div(cls := "flex items-center justify-between mb-6")(
         h1(cls := "text-2xl font-bold text-white")("Channels"),
-        a(
-          href := "/settings",
-          cls  := "inline-flex items-center rounded-md bg-indigo-500/20 px-3 py-2 text-xs font-semibold text-indigo-100 ring-1 ring-indigo-300/30 hover:bg-indigo-500/30",
-        )("Configure"),
+        div(cls := "flex items-center gap-2")(
+          a(
+            href := "/settings",
+            cls  := "inline-flex items-center rounded-md bg-indigo-500/20 px-3 py-2 text-xs font-semibold text-indigo-100 ring-1 ring-indigo-300/30 hover:bg-indigo-500/30",
+          )("Global Settings"),
+          a(
+            href := "/api/channels/status",
+            cls  := "inline-flex items-center rounded-md bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100 ring-1 ring-emerald-300/30 hover:bg-emerald-500/30",
+          )("Status API"),
+        ),
       ),
       p(cls := "text-sm text-gray-400 mb-4")(
         "Live channel status and message telemetry. Auto-refresh every 10 seconds."
       ),
+      channelActions(),
       div(
         id                   := "channels-cards",
         attr("hx-get")       := "/channels/cards",
@@ -42,6 +49,57 @@ object ChannelView:
         attr("hx-indicator") := "#channels-refresh-indicator",
       )(cardsFragment(cards, nowMs)),
       div(id := "channels-refresh-indicator", cls := "htmx-indicator text-xs text-gray-500 mt-3")("Refreshing..."),
+    )
+
+  private def channelActions(): Frag =
+    div(cls := "mb-5 grid grid-cols-1 gap-4 rounded-lg bg-white/5 p-4 ring-1 ring-white/10 lg:grid-cols-2")(
+      tag("form")(
+        cls                 := "space-y-2",
+        attr("hx-post")     := "/api/channels/add",
+        attr("hx-target")   := "#channels-cards",
+        attr("hx-swap")     := "innerHTML",
+        attr("hx-encoding") := "application/x-www-form-urlencoded",
+      )(
+        p(cls := "text-xs font-semibold uppercase tracking-wide text-gray-400")("Add Channel"),
+        div(cls := "flex items-center gap-2")(
+          select(name := "name", cls := "rounded-md bg-gray-900 px-3 py-2 text-sm text-white ring-1 ring-white/10")(
+            option(value := "discord")("Discord"),
+            option(value := "slack")("Slack"),
+            option(value := "websocket")("WebSocket"),
+          ),
+          input(
+            `type`      := "password",
+            name        := "botToken",
+            placeholder := "Token (Discord bot or Slack app token)",
+            cls         := "w-full rounded-md bg-gray-900 px-3 py-2 text-sm text-white ring-1 ring-white/10",
+          ),
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500",
+          )("Add"),
+        ),
+      ),
+      tag("form")(
+        cls                 := "space-y-2",
+        attr("hx-post")     := "/api/channels/remove",
+        attr("hx-target")   := "#channels-cards",
+        attr("hx-swap")     := "innerHTML",
+        attr("hx-encoding") := "application/x-www-form-urlencoded",
+      )(
+        p(cls := "text-xs font-semibold uppercase tracking-wide text-gray-400")("Remove Channel"),
+        div(cls := "flex items-center gap-2")(
+          input(
+            `type`      := "text",
+            name        := "name",
+            placeholder := "discord or slack",
+            cls         := "w-full rounded-md bg-gray-900 px-3 py-2 text-sm text-white ring-1 ring-white/10",
+          ),
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500",
+          )("Remove"),
+        ),
+      ),
     )
 
   def cardsFragment(cards: List[ChannelCardData], nowMs: Long): Frag =

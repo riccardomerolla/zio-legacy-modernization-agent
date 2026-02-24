@@ -1,5 +1,7 @@
 package gateway.boundary
 
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
 import zio.*
@@ -7,6 +9,7 @@ import zio.http.*
 import zio.json.*
 
 import _root_.config.entity.GatewayConfig
+import db.{ ConfigRepository, PersistenceError }
 import gateway.control.*
 import shared.web.{ ChannelCardData, ChannelView }
 
@@ -18,33 +21,66 @@ object ChannelController:
   def routes: ZIO[ChannelController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[ChannelController](_.routes)
 
-  val live: ZLayer[ChannelRegistry & GatewayService & Ref[GatewayConfig], Nothing, ChannelController] =
+  val live
+    : ZLayer[ChannelRegistry & GatewayService & Ref[GatewayConfig] & ConfigRepository, Nothing, ChannelController] =
     ZLayer.fromFunction(ChannelControllerLive.apply)
 
 final case class ChannelControllerLive(
   channelRegistry: ChannelRegistry,
   gatewayService: GatewayService,
   configRef: Ref[GatewayConfig],
+  configRepository: ConfigRepository,
 ) extends ChannelController:
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / "channels"             -> handler {
+    Method.GET / "channels"                     -> handler {
       buildCards.flatMap(cards =>
         Clock.currentTime(TimeUnit.MILLISECONDS).map(now => html(ChannelView.page(cards, now)))
       )
     },
-    Method.GET / "channels" / "cards"   -> handler {
+    Method.GET / "channels" / "cards"           -> handler {
       buildCards.flatMap(cards =>
         Clock.currentTime(TimeUnit.MILLISECONDS).map(now => htmlFragment(ChannelView.cardsFragment(cards, now).render))
       )
     },
-    Method.GET / "channels" / "summary" -> handler {
+    Method.GET / "channels" / "summary"         -> handler {
       buildCards.map(cards => htmlFragment(ChannelView.summaryWidgetFragment(cards).render))
     },
-    Method.GET / "api" / "channels"     -> handler {
+    Method.GET / "api" / "channels"             -> handler {
       buildCards.map(cards => Response.json(cards.toJson))
     },
+    Method.GET / "api" / "channels" / "status"  -> handler {
+      probeStatuses.map(items => Response.json(items.toJson))
+    },
+    Method.GET / "api" / "channels" / "logs"    -> handler { (req: Request) =>
+      val limit = req.queryParam("limit").flatMap(_.toIntOption).getOrElse(50).max(1)
+      channelLogs(limit).map(entries => Response.json(entries.toJson))
+    },
+    Method.POST / "api" / "channels" / "add"    -> handler { (req: Request) =>
+      ErrorHandling.fromPersistence {
+        for
+          form  <- parseForm(req)
+          _     <- addChannel(form)
+          cards <- buildCards
+          now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        yield htmlFragment(ChannelView.cardsFragment(cards, now).render)
+      }
+    },
+    Method.POST / "api" / "channels" / "remove" -> handler { (req: Request) =>
+      ErrorHandling.fromPersistence {
+        for
+          form  <- parseForm(req)
+          _     <- removeChannel(form.getOrElse("name", ""))
+          cards <- buildCards
+          now   <- Clock.currentTime(TimeUnit.MILLISECONDS)
+        yield htmlFragment(ChannelView.cardsFragment(cards, now).render)
+      }
+    },
   )
+
+  private object ErrorHandling:
+    def fromPersistence(effect: IO[PersistenceError, Response]): UIO[Response] =
+      effect.catchAll(err => ZIO.succeed(Response.text(err.toString).status(Status.BadRequest)))
 
   private def buildCards: UIO[List[ChannelCardData]] =
     for
@@ -97,3 +133,160 @@ final case class ChannelControllerLive(
 
   private def htmlFragment(content: String): Response =
     Response.text(content).contentType(MediaType.text.html)
+
+  private def parseForm(req: Request): IO[PersistenceError, Map[String, String]] =
+    req.body.asString
+      .map { body =>
+        body
+          .split("&")
+          .toList
+          .flatMap {
+            _.split("=", 2).toList match
+              case key :: value :: Nil => Some(urlDecode(key) -> urlDecode(value))
+              case key :: Nil          => Some(urlDecode(key) -> "")
+              case _                   => None
+          }
+          .toMap
+      }
+      .mapError(err => PersistenceError.QueryFailed("parseChannelForm", Option(err.getMessage).getOrElse(err.toString)))
+
+  private def urlDecode(value: String): String =
+    URLDecoder.decode(value, StandardCharsets.UTF_8)
+
+  private def addChannel(form: Map[String, String]): IO[PersistenceError, Unit] =
+    val rawName = form.getOrElse("name", "").trim.toLowerCase
+    for
+      name    <- ZIO
+                   .fromOption(normalizeSupportedChannel(rawName))
+                   .orElseFail(PersistenceError.QueryFailed("addChannel", s"Unsupported channel '$rawName'"))
+      cfg      = channelConfig(name, form)
+      _       <- configRepository.upsertSettings(cfg)
+      channel <- instantiateChannel(name, cfg)
+      _       <- channelRegistry.register(channel)
+      _       <- channelRegistry.markNotConfigured(name).when(cfg.getOrElse(s"channel.$name.enabled", "false") != "true")
+    yield ()
+
+  private def removeChannel(nameRaw: String): IO[PersistenceError, Unit] =
+    val nameOpt = normalizeSupportedChannel(nameRaw.trim.toLowerCase)
+    for
+      name <- ZIO
+                .fromOption(nameOpt)
+                .orElseFail(PersistenceError.QueryFailed("removeChannel", s"Unsupported channel '$nameRaw'"))
+      _    <- channelRegistry.unregister(name)
+      _    <- configRepository.deleteSettingsByPrefix(s"channel.$name.")
+    yield ()
+
+  private def normalizeSupportedChannel(value: String): Option[String] =
+    value match
+      case "discord"   => Some("discord")
+      case "slack"     => Some("slack")
+      case "telegram"  => Some("telegram")
+      case "websocket" => Some("websocket")
+      case _           => None
+
+  private def channelConfig(name: String, form: Map[String, String]): Map[String, String] =
+    val base = Map(
+      s"channel.$name.enabled" -> form.get("enabled").exists(v => v == "on" || v.equalsIgnoreCase("true")).toString
+    )
+    name match
+      case "discord" =>
+        base ++ Map(
+          s"channel.$name.botToken"  -> form.getOrElse("botToken", ""),
+          s"channel.$name.guildId"   -> form.getOrElse("guildId", ""),
+          s"channel.$name.channelId" -> form.getOrElse("channelId", ""),
+        )
+      case "slack"   =>
+        val token = form.get("appToken").orElse(form.get("botToken")).getOrElse("")
+        base ++ Map(
+          s"channel.$name.appToken"   -> token,
+          s"channel.$name.botToken"   -> form.getOrElse("botToken", ""),
+          s"channel.$name.channelId"  -> form.getOrElse("channelId", ""),
+          s"channel.$name.socketMode" -> form.getOrElse("socketMode", "true"),
+        )
+      case _         => base
+
+  private def instantiateChannel(name: String, cfg: Map[String, String]): IO[PersistenceError, MessageChannel] =
+    name match
+      case "discord"   =>
+        val token = cfg.getOrElse("channel.discord.botToken", "").trim
+        if token.isEmpty then
+          ZIO.fail(PersistenceError.QueryFailed("addChannel", "Discord bot token is required"))
+        else
+          DiscordChannel
+            .make(
+              config = DiscordConfig(
+                botToken = token,
+                guildId = cfg.get("channel.discord.guildId").map(_.trim).filter(_.nonEmpty),
+                defaultChannelId = cfg.get("channel.discord.channelId").map(_.trim).filter(_.nonEmpty),
+              )
+            )
+            .map(identity[MessageChannel])
+      case "slack"     =>
+        val appToken = cfg.getOrElse("channel.slack.appToken", "").trim
+        if appToken.isEmpty then
+          ZIO.fail(PersistenceError.QueryFailed("addChannel", "Slack app token is required"))
+        else
+          SlackChannel
+            .make(
+              config = SlackConfig(
+                appToken = appToken,
+                botToken = cfg.get("channel.slack.botToken").map(_.trim).filter(_.nonEmpty),
+                defaultChannelId = cfg.get("channel.slack.channelId").map(_.trim).filter(_.nonEmpty),
+                socketMode = cfg.get("channel.slack.socketMode").exists(_.equalsIgnoreCase("true")),
+              )
+            )
+            .map(identity[MessageChannel])
+      case "telegram"  =>
+        ZIO.fail(PersistenceError.QueryFailed("addChannel", "Telegram channel is managed from Settings"))
+      case "websocket" =>
+        WebSocketChannel.make().map(identity[MessageChannel])
+      case _           =>
+        ZIO.fail(PersistenceError.QueryFailed("addChannel", s"Unsupported channel: $name"))
+
+  private def probeStatuses: UIO[List[gateway.entity.ChannelStatus]] =
+    for
+      channels <- channelRegistry.list
+      runtime  <- channelRegistry.listRuntime
+      statuses <- ZIO.foreach(channels) { channel =>
+                    channel.activeSessions.map { sessions =>
+                      val rt            = runtime.get(channel.name)
+                      val runtimeStatus = rt.map(_.status)
+                      gateway.entity.ChannelStatus(
+                        name = channel.name,
+                        reachability = runtimeStatus match
+                          case Some(gateway.control.ChannelStatus.Connected) =>
+                            gateway.entity.ChannelReachability.Reachable
+                          case Some(gateway.control.ChannelStatus.Error(_))  =>
+                            gateway.entity.ChannelReachability.Unreachable
+                          case Some(
+                                 gateway.control.ChannelStatus.Disconnected | gateway.control.ChannelStatus.NotConfigured
+                               ) =>
+                            if sessions.nonEmpty then gateway.entity.ChannelReachability.Reachable
+                            else gateway.entity.ChannelReachability.Unknown
+                          case None                                          => gateway.entity.ChannelReachability.Unknown,
+                        running = sessions.nonEmpty,
+                        activeSessions = sessions.size,
+                        lastMessageAt = rt.flatMap(_.lastActivity),
+                        lastMessagePreview = None,
+                        lastError = rt.flatMap(_.lastError),
+                      )
+                    }
+                  }
+    yield statuses.sortBy(_.name)
+
+  private def channelLogs(limit: Int): UIO[List[Map[String, String]]] =
+    channelRegistry.listRuntime.map(
+      _.toList
+        .sortBy(_._1)
+        .take(limit)
+        .map {
+          case (name, rt) =>
+            Map(
+              "channel"      -> name,
+              "status"       -> rt.status.toString,
+              "errorCount"   -> rt.errorCount.toString,
+              "lastError"    -> rt.lastError.getOrElse(""),
+              "lastActivity" -> rt.lastActivity.map(_.toString).getOrElse(""),
+            )
+        }
+    )

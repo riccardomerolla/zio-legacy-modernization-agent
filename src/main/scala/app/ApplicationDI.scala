@@ -248,13 +248,14 @@ object ApplicationDI:
     )
 
   private val channelRegistryLayer
-    : ZLayer[Ref[GatewayConfig] & AgentRegistry & TaskRepository & TaskExecutor, Nothing, ChannelRegistry] =
+    : ZLayer[Ref[GatewayConfig] & AgentRegistry & TaskRepository & TaskExecutor & ConfigRepository, Nothing, ChannelRegistry] =
     ZLayer.scoped {
       for
         configRef     <- ZIO.service[Ref[GatewayConfig]]
         agentRegistry <- ZIO.service[AgentRegistry]
         repository    <- ZIO.service[TaskRepository]
         taskExecutor  <- ZIO.service[TaskExecutor]
+        configRepo    <- ZIO.service[ConfigRepository]
         channels      <- Ref.Synchronized.make(Map.empty[String, MessageChannel])
         runtime       <- Ref.Synchronized.make(Map.empty[String, ChannelRuntime])
         clients       <- Ref.Synchronized.make(Map.empty[String, TelegramClient])
@@ -273,8 +274,47 @@ object ApplicationDI:
                          )
         _             <- registry.register(websocket)
         _             <- registry.register(telegram)
+        settings      <- configRepo.getSettingsByPrefix("channel.").orElseSucceed(Nil)
+        settingMap     = settings.map(row => row.key -> row.value).toMap
+        _             <- registerOptionalExternalChannel(
+                           registry = registry,
+                           name = "discord",
+                           enabled = settingMap.get("channel.discord.enabled").exists(_.equalsIgnoreCase("true")),
+                           channel =
+                             DiscordChannel.make(
+                               config = DiscordConfig(
+                                 botToken = settingMap.getOrElse("channel.discord.botToken", ""),
+                                 guildId = settingMap.get("channel.discord.guildId").map(_.trim).filter(_.nonEmpty),
+                                 defaultChannelId = settingMap.get("channel.discord.channelId").map(_.trim).filter(_.nonEmpty),
+                               )
+                             ),
+                         )
+        _             <- registerOptionalExternalChannel(
+                           registry = registry,
+                           name = "slack",
+                           enabled = settingMap.get("channel.slack.enabled").exists(_.equalsIgnoreCase("true")),
+                           channel =
+                             SlackChannel.make(
+                               config = SlackConfig(
+                                 appToken = settingMap.getOrElse("channel.slack.appToken", ""),
+                                 botToken = settingMap.get("channel.slack.botToken").map(_.trim).filter(_.nonEmpty),
+                                 defaultChannelId = settingMap.get("channel.slack.channelId").map(_.trim).filter(_.nonEmpty),
+                                 socketMode = settingMap.get("channel.slack.socketMode").exists(_.equalsIgnoreCase("true")),
+                               )
+                             ),
+                         )
       yield registry
     }
+
+  private def registerOptionalExternalChannel(
+    registry: ChannelRegistry,
+    name: String,
+    enabled: Boolean,
+    channel: UIO[MessageChannel],
+  ): UIO[Unit] =
+    if enabled then
+      channel.flatMap(registry.register)
+    else registry.markNotConfigured(name)
 
   final private case class ConfigAwareTelegramClient(
     configRef: Ref[GatewayConfig],
