@@ -37,6 +37,7 @@ final case class AgentsControllerLive(repository: ConfigRepository) extends Agen
     "ai.acquireTimeout",
     "ai.temperature",
     "ai.maxTokens",
+    "ai.fallbackChain",
   )
 
   override val routes: Routes[Any, Response] = Routes(

@@ -1,5 +1,6 @@
 package shared.web
 
+import config.control.{ ModelRegistryResponse, ProviderProbeStatus }
 import config.entity.{ AgentInfo, WorkflowDefinition }
 import conversation.entity.api.{ ChatConversation, ConversationEntry, ConversationSessionMeta }
 import db.{ TaskReportRow, TaskRunRow }
@@ -43,6 +44,9 @@ object HtmlViews:
 
   def settingsPage(settings: Map[String, String], flash: Option[String] = None): String =
     SettingsView.page(settings, flash)
+
+  def modelsPage(registry: ModelRegistryResponse, statuses: List[ProviderProbeStatus]): String =
+    ModelsView.page(registry, statuses)
 
   def workflowsList(
     workflows: List[WorkflowDefinition],

@@ -12,6 +12,7 @@ import zio.json.*
 import zio.schema.Schema
 
 import _root_.config.SettingsApplier
+import _root_.config.control.ModelService
 import _root_.config.entity.GatewayConfig
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
@@ -33,7 +34,7 @@ object SettingsController:
 
   val live
     : ZLayer[
-      ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService & ConfigStoreModule.ConfigStoreService &
+      ConfigRepository & ActivityHub & Ref[GatewayConfig] & LlmService & ModelService & ConfigStoreModule.ConfigStoreService &
         DataStoreModule.DataStoreService & StoreConfig &
         MemoryStoreModule.MemoryEntriesStore,
       Nothing,
@@ -46,6 +47,7 @@ final case class SettingsControllerLive(
   activityHub: ActivityHub,
   configRef: Ref[GatewayConfig],
   llmService: LlmService,
+  modelService: ModelService,
   configStoreService: ConfigStoreModule.ConfigStoreService,
   dataStoreService: DataStoreModule.DataStoreService,
   storeConfig: StoreConfig,
@@ -64,6 +66,7 @@ final case class SettingsControllerLive(
     "ai.acquireTimeout",
     "ai.temperature",
     "ai.maxTokens",
+    "ai.fallbackChain",
     "gateway.name",
     "gateway.dryRun",
     "gateway.verbose",
@@ -178,6 +181,18 @@ final case class SettingsControllerLive(
     },
     Method.POST / "api" / "settings" / "test-ai" -> handler { (req: Request) =>
       testAIConnection(req)
+    },
+    Method.GET / "api" / "models"                -> handler {
+      modelService.listAvailableModels.map(models => Response.json(models.toJson))
+    },
+    Method.GET / "api" / "models" / "status"     -> handler {
+      modelService.probeProviders.map(status => Response.json(status.toJson))
+    },
+    Method.GET / "models"                        -> handler {
+      for
+        models <- modelService.listAvailableModels
+        status <- modelService.probeProviders
+      yield html(HtmlViews.modelsPage(models, status))
     },
   )
 

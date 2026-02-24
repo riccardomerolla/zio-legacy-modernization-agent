@@ -214,6 +214,16 @@ object SettingsView:
             error = errors.get("ai.maxTokens"),
           ),
         ),
+        textField(
+          "ai.fallbackChain",
+          "Fallback Chain",
+          s,
+          placeholder = "OpenAi:gpt-4o-mini, Anthropic:claude-3-5-haiku-latest",
+          error = errors.get("ai.fallbackChain"),
+        ),
+        p(cls := "text-xs text-gray-400 -mt-2")(
+          "Comma-separated fallback models. Use provider:model or model (uses current provider)."
+        ),
         div(cls := "flex gap-3 pt-4 border-t border-white/10")(
           button(
             `type`             := "button",

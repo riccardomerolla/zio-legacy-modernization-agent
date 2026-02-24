@@ -1,5 +1,20 @@
 package models
 
+type ModelCapability = config.entity.ModelCapability
+val ModelCapability = config.entity.ModelCapability
+
+type AIModel = config.entity.AIModel
+val AIModel = config.entity.AIModel
+
+type ModelRef = config.entity.ModelRef
+val ModelRef = config.entity.ModelRef
+
+type ModelFallbackChain = config.entity.ModelFallbackChain
+val ModelFallbackChain = config.entity.ModelFallbackChain
+
+type AgentModelOverride = config.entity.AgentModelOverride
+val AgentModelOverride = config.entity.AgentModelOverride
+
 type ResponseSchema = config.entity.ResponseSchema
 val ResponseSchema = config.entity.ResponseSchema
 

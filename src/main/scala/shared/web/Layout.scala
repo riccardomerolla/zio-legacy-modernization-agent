@@ -93,6 +93,7 @@ object Layout:
             li(cls := "mt-auto")(
               ul(attr("role") := "list", cls := "-mx-2 space-y-1")(
                 navItem("/config", "Config", Icons.sliders, currentPath.startsWith("/config")),
+                navItem("/models", "Models", Icons.document, currentPath.startsWith("/models")),
                 navItem("/settings", "Settings", Icons.cog, currentPath == "/settings"),
               )
             ),
