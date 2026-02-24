@@ -72,11 +72,17 @@ object GeminiApiProvider:
           parsed <- ZIO
                       .fromEither(body.fromJson[GeminiGenerateContentResponseFull])
                       .mapError(err => LlmError.ParseError(s"Failed to decode Gemini tool response: $err", body))
+          candidate <- ZIO
+                         .fromOption(parsed.candidates.headOption)
+                         .orElseFail(LlmError.ParseError(
+                           "Gemini tool response has no candidates",
+                           body,
+                         ))
         yield
-          val parts     = parsed.candidates.headOption.toList.flatMap(_.content.parts)
+          val parts     = candidate.content.parts
           val fnCalls   = parts.flatMap(_.functionCall)
           val textParts = parts.flatMap(_.text)
-          val finish    = parsed.candidates.headOption.flatMap(_.finishReason).getOrElse("STOP")
+          val finish    = candidate.finishReason.getOrElse("STOP")
           ToolCallResponse(
             content = textParts.headOption,
             toolCalls = fnCalls.zipWithIndex.map { case (fc, i) =>
