@@ -162,11 +162,7 @@ object ChannelView:
           relativeTime(card.lastActivityTs, nowMs),
         ),
       ),
-      div(cls := "mt-4 flex items-center justify-between")(
-        a(
-          href := card.configureUrl,
-          cls  := "text-xs font-medium text-indigo-400 hover:text-indigo-300",
-        )("Configure ->"),
+      div(cls := "mt-4 flex justify-end")(
         button(
           cls                   := "text-xs font-medium text-indigo-400 hover:text-indigo-300",
           attr("hx-get")        := s"/settings/channels/${card.name}/config-form",
