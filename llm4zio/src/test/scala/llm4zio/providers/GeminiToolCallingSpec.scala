@@ -34,15 +34,19 @@ object GeminiToolCallingSpec extends ZIOSpecDefault:
         GeminiGenerateContentResponseFull(
           candidates = List(
             GeminiCandidateFull(
-              content = GeminiContentFull(parts = List(
-                GeminiPartFull(functionCall = Some(GeminiFunctionCall(
-                  name = "search",
-                  args = Json.Obj("query" -> Json.Str("Scala")),
-                )))
-              )),
+              content = GeminiContentFull(parts =
+                List(
+                  GeminiPartFull(functionCall =
+                    Some(GeminiFunctionCall(
+                      name = "search",
+                      args = Json.Obj("query" -> Json.Str("Scala")),
+                    ))
+                  )
+                )
+              ),
               finishReason = Some("STOP"),
             )
-          ),
+          )
         ).toJson
       )
 
@@ -53,7 +57,7 @@ object GeminiToolCallingSpec extends ZIOSpecDefault:
     apiKey = Some("test-key"),
   )
 
-  override def spec = suite("Gemini tool calling")(
+  override def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("Gemini tool calling")(
     test("executeWithTools returns ToolCallResponse with functionCall") {
       val service = GeminiApiProvider.make(config, toolCallHttpClient)
       for
@@ -63,5 +67,5 @@ object GeminiToolCallingSpec extends ZIOSpecDefault:
         response.toolCalls.head.name == "search",
         response.toolCalls.head.arguments.contains("Scala"),
       )
-    },
+    }
   )

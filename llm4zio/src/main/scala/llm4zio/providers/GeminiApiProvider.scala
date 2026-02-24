@@ -43,12 +43,12 @@ object GeminiApiProvider:
 
       override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
         for
-          baseUrl <- ZIO.fromOption(config.baseUrl).orElseFail(
-                       LlmError.ConfigError("Missing baseUrl for Gemini API provider")
-                     )
-          apiKey  <- ZIO.fromOption(config.apiKey).orElseFail(
-                       LlmError.AuthenticationError("Missing API key for Gemini API provider")
-                     )
+          baseUrl    <- ZIO.fromOption(config.baseUrl).orElseFail(
+                          LlmError.ConfigError("Missing baseUrl for Gemini API provider")
+                        )
+          apiKey     <- ZIO.fromOption(config.apiKey).orElseFail(
+                          LlmError.AuthenticationError("Missing API key for Gemini API provider")
+                        )
           geminiTools = List(GeminiToolDef(
                           functionDeclarations = tools.map { t =>
                             GeminiFunctionDeclaration(
@@ -58,26 +58,26 @@ object GeminiApiProvider:
                             )
                           }
                         ))
-          request = GeminiGenerateContentRequestWithTools(
-                      contents = List(GeminiContent(parts = List(GeminiPart(text = prompt)))),
-                      tools = geminiTools,
-                    )
-          url     = s"${baseUrl.stripSuffix("/")}/v1beta/models/${config.model}:generateContent"
-          body   <- httpClient.postJson(
-                      url = url,
-                      body = request.toJson,
-                      headers = Map("x-goog-api-key" -> apiKey),
-                      timeout = config.timeout,
-                    )
-          parsed <- ZIO
-                      .fromEither(body.fromJson[GeminiGenerateContentResponseFull])
-                      .mapError(err => LlmError.ParseError(s"Failed to decode Gemini tool response: $err", body))
-          candidate <- ZIO
-                         .fromOption(parsed.candidates.headOption)
-                         .orElseFail(LlmError.ParseError(
-                           "Gemini tool response has no candidates",
-                           body,
-                         ))
+          request     = GeminiGenerateContentRequestWithTools(
+                          contents = List(GeminiContent(parts = List(GeminiPart(text = prompt)))),
+                          tools = geminiTools,
+                        )
+          url         = s"${baseUrl.stripSuffix("/")}/v1beta/models/${config.model}:generateContent"
+          body       <- httpClient.postJson(
+                          url = url,
+                          body = request.toJson,
+                          headers = Map("x-goog-api-key" -> apiKey),
+                          timeout = config.timeout,
+                        )
+          parsed     <- ZIO
+                          .fromEither(body.fromJson[GeminiGenerateContentResponseFull])
+                          .mapError(err => LlmError.ParseError(s"Failed to decode Gemini tool response: $err", body))
+          candidate  <- ZIO
+                          .fromOption(parsed.candidates.headOption)
+                          .orElseFail(LlmError.ParseError(
+                            "Gemini tool response has no candidates",
+                            body,
+                          ))
         yield
           val parts     = candidate.content.parts
           val fnCalls   = parts.flatMap(_.functionCall)
@@ -85,12 +85,13 @@ object GeminiApiProvider:
           val finish    = candidate.finishReason.getOrElse("STOP")
           ToolCallResponse(
             content = textParts.headOption,
-            toolCalls = fnCalls.zipWithIndex.map { case (fc, i) =>
-              ToolCall(
-                id = s"gemini_call_$i",
-                name = fc.name,
-                arguments = fc.args.toJson,
-              )
+            toolCalls = fnCalls.zipWithIndex.map {
+              case (fc, i) =>
+                ToolCall(
+                  id = s"gemini_call_$i",
+                  name = fc.name,
+                  arguments = fc.args.toJson,
+                )
             },
             finishReason = finish,
           )

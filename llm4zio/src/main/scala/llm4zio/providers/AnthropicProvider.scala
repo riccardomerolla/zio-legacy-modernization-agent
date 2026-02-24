@@ -53,12 +53,12 @@ object AnthropicProvider:
 
       override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
         for
-          baseUrl <- ZIO.fromOption(config.baseUrl).orElseFail(
-                       LlmError.ConfigError("Missing baseUrl for Anthropic provider")
-                     )
-          apiKey  <- ZIO.fromOption(config.apiKey).orElseFail(
-                       LlmError.AuthenticationError("Missing API key for Anthropic provider")
-                     )
+          baseUrl       <- ZIO.fromOption(config.baseUrl).orElseFail(
+                             LlmError.ConfigError("Missing baseUrl for Anthropic provider")
+                           )
+          apiKey        <- ZIO.fromOption(config.apiKey).orElseFail(
+                             LlmError.AuthenticationError("Missing API key for Anthropic provider")
+                           )
           anthropicTools = tools.map { t =>
                              AnthropicTool(
                                name = t.name,
@@ -66,23 +66,23 @@ object AnthropicProvider:
                                input_schema = AnthropicToolInputSchema(properties = t.parameters),
                              )
                            }
-          request = AnthropicRequestWithTools(
-                      model = config.model,
-                      max_tokens = config.maxTokens.getOrElse(4096),
-                      messages = List(ChatMessage(role = "user", content = prompt)),
-                      tools = anthropicTools,
-                      temperature = config.temperature,
-                    )
-          url     = s"${baseUrl.stripSuffix("/")}/messages"
-          body   <- httpClient.postJson(
-                      url = url,
-                      body = request.toJson,
-                      headers = authHeaders(apiKey),
-                      timeout = config.timeout,
-                    )
-          parsed <- ZIO
-                      .fromEither(body.fromJson[AnthropicResponseWithTools])
-                      .mapError(err => LlmError.ParseError(s"Failed to decode Anthropic tool response: $err", body))
+          request        = AnthropicRequestWithTools(
+                             model = config.model,
+                             max_tokens = config.maxTokens.getOrElse(4096),
+                             messages = List(ChatMessage(role = "user", content = prompt)),
+                             tools = anthropicTools,
+                             temperature = config.temperature,
+                           )
+          url            = s"${baseUrl.stripSuffix("/")}/messages"
+          body          <- httpClient.postJson(
+                             url = url,
+                             body = request.toJson,
+                             headers = authHeaders(apiKey),
+                             timeout = config.timeout,
+                           )
+          parsed        <- ZIO
+                             .fromEither(body.fromJson[AnthropicResponseWithTools])
+                             .mapError(err => LlmError.ParseError(s"Failed to decode Anthropic tool response: $err", body))
         yield
           val toolUseBlocks = parsed.content.filter(_.`type` == "tool_use")
           val textContent   = parsed.content.find(_.`type` == "text").flatMap(_.text)

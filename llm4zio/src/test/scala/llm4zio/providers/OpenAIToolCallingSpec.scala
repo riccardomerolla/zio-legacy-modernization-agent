@@ -57,7 +57,7 @@ object OpenAIToolCallingSpec extends ZIOSpecDefault:
     apiKey = Some("sk-test"),
   )
 
-  override def spec = suite("OpenAI tool calling")(
+  override def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("OpenAI tool calling")(
     test("executeWithTools returns ToolCallResponse with tool calls") {
       val service = OpenAIProvider.make(config, toolCallHttpClient)
       for
@@ -68,5 +68,5 @@ object OpenAIToolCallingSpec extends ZIOSpecDefault:
         response.toolCalls.head.id == "call_1",
         response.finishReason == "tool_calls",
       )
-    },
+    }
   )

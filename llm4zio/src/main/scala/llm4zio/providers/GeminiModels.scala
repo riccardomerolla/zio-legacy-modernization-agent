@@ -39,7 +39,7 @@ case class GeminiFunctionDeclaration(
 ) derives JsonCodec
 
 case class GeminiToolDef(
-  functionDeclarations: List[GeminiFunctionDeclaration],
+  functionDeclarations: List[GeminiFunctionDeclaration]
 ) derives JsonCodec
 
 case class GeminiFunctionCall(

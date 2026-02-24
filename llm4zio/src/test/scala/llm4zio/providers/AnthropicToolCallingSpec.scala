@@ -52,7 +52,7 @@ object AnthropicToolCallingSpec extends ZIOSpecDefault:
     apiKey = Some("sk-ant-test"),
   )
 
-  override def spec = suite("Anthropic tool calling")(
+  override def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("Anthropic tool calling")(
     test("executeWithTools returns ToolCallResponse with tool_use blocks") {
       val service = AnthropicProvider.make(config, toolCallHttpClient)
       for
@@ -63,5 +63,5 @@ object AnthropicToolCallingSpec extends ZIOSpecDefault:
         response.toolCalls.head.id == "toolu_1",
         response.finishReason == "tool_use",
       )
-    },
+    }
   )
