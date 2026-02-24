@@ -1,6 +1,7 @@
 package shared.web
 
 import scalatags.Text.all.*
+import scalatags.Text.tags2.nav
 
 object SettingsView:
 
@@ -13,6 +14,264 @@ object SettingsView:
   private val labelCls = "block text-sm font-medium text-white mb-2"
 
   private val sectionCls = "bg-white/5 ring-1 ring-white/10 rounded-lg p-6 mb-6"
+
+  private val tabs = List(
+    ("ai",       "AI Models"),
+    ("channels", "Channels"),
+    ("gateway",  "Gateway"),
+    ("system",   "System"),
+    ("advanced", "Advanced Config"),
+  )
+
+  def settingsShell(activeTab: String, pageTitle: String)(bodyContent: Frag*): String =
+    Layout.page(pageTitle, s"/settings/$activeTab")(
+      div(cls := "mb-6")(
+        h1(cls := "text-2xl font-bold text-white")("Settings"),
+      ),
+      div(cls := "border-b border-white/10 mb-6")(
+        nav(cls := "-mb-px flex space-x-6", attr("aria-label") := "Settings tabs")(
+          tabs.map { case (tab, label) =>
+            val isActive = tab == activeTab
+            a(
+              href := s"/settings/$tab",
+              cls  :=
+                (if isActive then
+                   "border-b-2 border-indigo-500 py-4 px-1 text-sm font-medium text-white whitespace-nowrap"
+                 else
+                   "border-b-2 border-transparent py-4 px-1 text-sm font-medium text-gray-400 hover:text-white hover:border-white/30 whitespace-nowrap"),
+              if isActive then attr("aria-current") := "page" else (),
+            )(label)
+          }
+        )
+      ),
+      div(bodyContent*)
+    )
+
+  def aiTab(
+    settings: Map[String, String],
+    registry: config.control.ModelRegistryResponse,
+    statuses: List[config.control.ProviderProbeStatus],
+    flash: Option[String] = None,
+    errors: Map[String, String] = Map.empty,
+  ): String =
+    val statusMap = statuses.map(ps => ps.provider -> ps).toMap
+    settingsShell("ai", "Settings — AI Models")(
+      flash.map { msg =>
+        div(cls := "mb-6 rounded-md bg-green-500/10 border border-green-500/30 p-4")(
+          p(cls := "text-sm text-green-400")(msg)
+        )
+      },
+      if errors.nonEmpty then
+        div(cls := "mb-6 rounded-md bg-red-500/10 border border-red-500/30 p-4")(
+          p(cls := "text-sm font-semibold text-red-400")("Validation Errors"),
+          ul(cls := "text-xs text-red-300 mt-2 space-y-1")(
+            errors.map { case (key, msg) => li(s"$key: $msg") }.toSeq*
+          ),
+        )
+      else (),
+      tag("form")(method := "post", action := "/settings/ai", cls := "space-y-6 max-w-2xl mb-10")(
+        aiProviderSection(settings, errors),
+        div(cls := "flex gap-4 pt-2")(
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-400",
+          )("Save AI Settings")
+        ),
+      ),
+      h2(cls := "text-lg font-semibold text-white mb-4")("Available Models"),
+      p(cls := "text-sm text-slate-300 mb-4")(
+        "Models grouped by provider. Configure primary model and fallback chain above."
+      ),
+      div(cls := "space-y-4")(
+        registry.providers.map { group =>
+          val status = statusMap.get(group.provider)
+          div(cls := "rounded-lg border border-white/10 bg-slate-900/70 p-5")(
+            div(cls := "mb-3 flex items-center justify-between")(
+              h3(cls := "text-lg font-semibold text-white")(group.provider.toString),
+              ModelsView.statusBadge(status),
+            ),
+            p(cls := "mb-3 text-xs text-slate-400")(status.map(_.statusMessage).getOrElse("No health probe available")),
+            table(cls := "min-w-full text-left text-sm text-slate-200")(
+              thead(
+                tr(
+                  th(cls := "py-2 pr-4 text-xs font-semibold uppercase text-slate-400")("Model"),
+                  th(cls := "py-2 pr-4 text-xs font-semibold uppercase text-slate-400")("Context"),
+                  th(cls := "py-2 pr-4 text-xs font-semibold uppercase text-slate-400")("Capabilities"),
+                )
+              ),
+              tbody(
+                group.models.map { model =>
+                  tr(cls := "border-t border-white/5")(
+                    td(cls := "py-2 pr-4 font-mono text-xs")(model.modelId),
+                    td(cls := "py-2 pr-4")(model.contextWindow.toString),
+                    td(cls := "py-2 pr-4")(model.capabilities.toList.map(_.toString).sorted.mkString(", ")),
+                  )
+                }
+              ),
+            ),
+          )
+        }
+      ),
+    )
+
+  def channelsTab(
+    cards: List[ChannelCardData],
+    nowMs: Long,
+    flash: Option[String] = None,
+  ): String =
+    settingsShell("channels", "Settings — Channels")(
+      flash.map { msg =>
+        div(cls := "mb-6 rounded-md bg-green-500/10 border border-green-500/30 p-4")(
+          p(cls := "text-sm text-green-400")(msg)
+        )
+      },
+      div(cls := "flex items-center justify-between mb-4")(
+        p(cls := "text-sm text-gray-400")("Live channel status and configuration. Auto-refresh every 10 seconds."),
+        a(
+          href := "/api/channels/status",
+          cls  := "inline-flex items-center rounded-md bg-white/5 px-3 py-1.5 text-xs font-semibold text-gray-300 ring-1 ring-white/10 hover:bg-white/10",
+        )("Status API \u2197"),
+      ),
+      div(cls := "mb-6 rounded-lg bg-white/5 ring-1 ring-white/10 p-4")(
+        p(cls := "text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3")("Add Channel"),
+        tag("form")(
+          cls                 := "flex items-center gap-2",
+          attr("hx-post")     := "/api/channels/add",
+          attr("hx-target")   := "#channels-cards",
+          attr("hx-swap")     := "innerHTML",
+          attr("hx-encoding") := "application/x-www-form-urlencoded",
+        )(
+          select(name := "name", cls := "rounded-md bg-gray-900 px-3 py-2 text-sm text-white ring-1 ring-white/10")(
+            option(value := "discord")("Discord"),
+            option(value := "slack")("Slack"),
+            option(value := "websocket")("WebSocket"),
+          ),
+          input(
+            `type`              := "password",
+            name                := "botToken",
+            attr("placeholder") := "Bot / App token",
+            cls                 := "flex-1 rounded-md bg-gray-900 px-3 py-2 text-sm text-white ring-1 ring-white/10",
+          ),
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500",
+          )("Add"),
+        ),
+      ),
+      div(
+        id                   := "channels-cards",
+        attr("hx-get")       := "/settings/channels/cards",
+        attr("hx-trigger")   := "every 10s",
+        attr("hx-swap")      := "innerHTML",
+        attr("hx-indicator") := "#channels-refresh-indicator",
+      )(ChannelView.cardsFragment(cards, nowMs)),
+      div(id := "channels-refresh-indicator", cls := "htmx-indicator text-xs text-gray-500 mt-3")("Refreshing..."),
+    )
+
+  def gatewayTab(
+    settings: Map[String, String],
+    flash: Option[String] = None,
+    errors: Map[String, String] = Map.empty,
+  ): String =
+    settingsShell("gateway", "Settings — Gateway")(
+      flash.map { msg =>
+        div(cls := "mb-6 rounded-md bg-green-500/10 border border-green-500/30 p-4")(
+          p(cls := "text-sm text-green-400")(msg)
+        )
+      },
+      if errors.nonEmpty then
+        div(cls := "mb-6 rounded-md bg-red-500/10 border border-red-500/30 p-4")(
+          p(cls := "text-sm font-semibold text-red-400")("Validation Errors"),
+          ul(cls := "text-xs text-red-300 mt-2 space-y-1")(
+            errors.map { case (key, msg) => li(s"$key: $msg") }.toSeq*
+          ),
+        )
+      else (),
+      tag("form")(method := "post", action := "/settings/gateway", cls := "space-y-6 max-w-2xl")(
+        gatewaySection(settings, errors),
+        telegramSection(settings, errors),
+        memorySection(settings, errors),
+        div(cls := "flex gap-4 pt-2")(
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-400",
+          )("Save Gateway Settings")
+        ),
+      ),
+      div(cls := "mt-10 rounded-lg border border-red-500/30 bg-red-950/30 p-5 max-w-2xl")(
+        h3(cls := "text-lg font-semibold text-red-200")("Reset Operational Data"),
+        p(cls := "mt-2 text-sm text-red-100/90")(
+          "Deletes all tasks, conversations, activity logs, and memory. Configuration is preserved."
+        ),
+        button(
+          `type`             := "button",
+          cls                := "mt-4 rounded-md border border-red-400/40 bg-red-500/20 px-4 py-2 text-sm font-semibold text-red-100 hover:bg-red-500/30",
+          attr("hx-post")    := "/api/store/reset-data",
+          attr("hx-confirm") := "This will permanently delete all tasks and conversations. Are you sure?",
+          attr("hx-swap")    := "none",
+        )("Reset Data Store"),
+      ),
+      tag("script")(
+        raw("""
+          |document.addEventListener('DOMContentLoaded', function() {
+          |  const modeSelect = document.getElementById('telegram.mode');
+          |  const webhookGroup = document.getElementById('telegram-webhook-group');
+          |  const pollingGroup = document.getElementById('telegram-polling-group');
+          |
+          |  function updateFieldVisibility() {
+          |    const mode = modeSelect.value;
+          |    if (mode === 'Webhook') {
+          |      webhookGroup.style.display = 'block';
+          |      pollingGroup.style.display = 'none';
+          |    } else if (mode === 'Polling') {
+          |      webhookGroup.style.display = 'none';
+          |      pollingGroup.style.display = 'block';
+          |    }
+          |  }
+          |
+          |  if (modeSelect) {
+          |    updateFieldVisibility();
+          |    modeSelect.addEventListener('change', updateFieldVisibility);
+          |  }
+          |});
+        """.stripMargin)
+      ),
+    )
+
+  def systemTab: String =
+    settingsShell("system", "Settings — System")(
+      div(cls := "mb-4")(
+        p(cls := "text-sm text-gray-400")("Real-time gateway, agent, channel, and resource telemetry."),
+      ),
+      div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg p-4")(
+        tag("health-dashboard")(
+          attr("ws-url") := "/ws/console"
+        )()
+      ),
+      JsResources.inlineModuleScript("/static/client/components/health-dashboard.js"),
+    )
+
+  def advancedTab: String =
+    settingsShell("advanced", "Settings — Advanced Config")(
+      div(cls := "mb-4 rounded-md bg-amber-500/10 border border-amber-500/20 p-3")(
+        p(cls := "text-sm text-amber-300")(
+          "Advanced users only. Most settings are configurable via the tabs above with validation and helper text."
+        ),
+      ),
+      div(cls := "bg-white/5 ring-1 ring-white/10 rounded-lg p-4")(
+        tag("config-editor")(attr("api-base") := "/api/config")(),
+      ),
+      script(src := "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"),
+      tag("script")(
+        raw("""
+          |const _hlCss = document.createElement('link');
+          |_hlCss.rel = 'stylesheet';
+          |_hlCss.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css';
+          |document.head.appendChild(_hlCss);
+        """.stripMargin)
+      ),
+      JsResources.inlineModuleScript("/static/client/components/config-editor.js"),
+    )
 
   def page(
     settings: Map[String, String],

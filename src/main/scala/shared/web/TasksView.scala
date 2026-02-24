@@ -20,7 +20,13 @@ object TasksView:
     flash: Option[String] = None,
   ): String =
     Layout.page("Tasks", "/tasks")(
-      h1(cls := "text-2xl font-bold text-white mb-6")("Tasks"),
+      div(cls := "flex items-center justify-between mb-6")(
+        h1(cls := "text-2xl font-bold text-white")("Tasks"),
+        a(
+          href := "/tasks/new",
+          cls  := "rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500",
+        )("+ New Task"),
+      ),
       flash.map(message =>
         div(cls := "mb-4 rounded-md bg-emerald-500/10 ring-1 ring-emerald-400/30 px-4 py-3 text-sm text-emerald-200")(
           message
@@ -70,6 +76,9 @@ object TasksView:
           else frag(),
           a(href := s"/reports?taskId=${run.id}", cls := "text-indigo-400 hover:text-indigo-300 text-sm font-medium")(
             "View Reports"
+          ),
+          a(href := s"/graph?taskId=${run.id}", cls := "text-indigo-400 hover:text-indigo-300 text-sm font-medium")(
+            "View Graph"
           ),
           a(href := "/tasks", cls := "text-indigo-400 hover:text-indigo-300 text-sm font-medium")("Back to Tasks"),
         ),

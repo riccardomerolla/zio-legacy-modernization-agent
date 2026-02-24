@@ -6,7 +6,7 @@ import zio.json.*
 
 import _root_.config.control.ModelService
 import app.control.HealthMonitor
-import shared.web.HealthDashboard
+import shared.web.HtmlViews
 
 trait HealthController:
   def routes: Routes[Any, Response]
@@ -26,13 +26,19 @@ final case class HealthControllerLive(
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "health"                       -> handler {
-      ZIO.succeed(html(HealthDashboard.page))
+      ZIO.succeed(Response(status = Status.Found, headers = Headers(Header.Location(URL.decode("/settings/system").getOrElse(URL.root)))))
+    },
+    Method.GET / "settings" / "system"          -> handler {
+      ZIO.succeed(html(HtmlViews.settingsSystemTab))
     },
     Method.GET / "api" / "health"               -> handler {
       healthMonitor.snapshot.map(snapshot => Response.json(snapshot.toJson))
     },
     Method.GET / "api" / "health" / "providers" -> handler {
       modelService.probeProviders.map(items => Response.json(items.toJson))
+    },
+    Method.GET / "api" / "health" / "channels"  -> handler {
+      healthMonitor.snapshot.map(snapshot => Response.json(snapshot.channels.toJson))
     },
     Method.GET / "api" / "health" / "history"   -> handler { (req: Request) =>
       val limit = req.queryParam("limit").flatMap(_.toIntOption).getOrElse(30)

@@ -42,33 +42,20 @@ object Layout:
         nav(cls := "flex flex-1 flex-col")(
           ul(attr("role") := "list", cls := "flex flex-1 flex-col gap-y-7")(
             li(
-              ul(attr("role") := "list", cls := "-mx-2 space-y-1")(
+              div(cls := "text-xs/6 font-semibold text-gray-400")("Main"),
+              ul(attr("role") := "list", cls := "-mx-2 mt-2 space-y-1")(
                 navItem("/", "Dashboard", Icons.home, currentPath == "/"),
-                navItem(
-                  "/tasks",
-                  "Tasks",
-                  Icons.folder,
-                  currentPath.startsWith("/tasks") && currentPath != "/tasks/new",
-                ),
-                navItem(
-                  "/tasks/new",
-                  "New Task",
-                  Icons.plusCircle,
-                  currentPath == "/tasks/new",
-                ),
-                navItem(
-                  "/workflows",
-                  "Workflows",
-                  Icons.workflow,
-                  currentPath.startsWith("/workflows"),
-                ),
-              )
+                navItem("/tasks", "Tasks", Icons.folder, currentPath.startsWith("/tasks")),
+                navItem("/workflows", "Workflows", Icons.workflow, currentPath.startsWith("/workflows")),
+              ),
             ),
             li(
-              div(cls := "text-xs/6 font-semibold text-gray-400")("Analysis"),
+              div(cls := "text-xs/6 font-semibold text-gray-400")("Workspace"),
               ul(attr("role") := "list", cls := "-mx-2 mt-2 space-y-1")(
-                navItem("/reports", "Reports", Icons.document, currentPath.startsWith("/reports")),
-                navItem("/graph", "Graph", Icons.chart, currentPath.startsWith("/graph")),
+                navItem("/chat", "Chat", Icons.chat, currentPath.startsWith("/chat")),
+                navItem("/issues", "Issues", Icons.flag, currentPath.startsWith("/issues")),
+                navItem("/activity", "Activity", Icons.activity, currentPath.startsWith("/activity")),
+                navItem("/memory", "Memory", Icons.archive, currentPath.startsWith("/memory")),
               ),
             ),
             li(
@@ -78,23 +65,16 @@ object Layout:
                 navItem("/agent-monitor", "Agent Monitor", Icons.monitor, currentPath.startsWith("/agent-monitor")),
               ),
             ),
-            li(
-              div(cls := "text-xs/6 font-semibold text-gray-400")("Collaboration"),
-              ul(attr("role") := "list", cls := "-mx-2 mt-2 space-y-1")(
-                navItem("/chat", "Chat", Icons.chat, currentPath.startsWith("/chat")),
-                navItem("/issues", "Issues", Icons.flag, currentPath.startsWith("/issues")),
-                navItem("/activity", "Activity", Icons.activity, currentPath.startsWith("/activity")),
-                navItem("/memory", "Memory", Icons.archive, currentPath.startsWith("/memory")),
-                navItem("/channels", "Channels", Icons.wifi, currentPath.startsWith("/channels")),
-                navItem("/health", "Health", Icons.pulse, currentPath.startsWith("/health")),
-                navItem("/logs", "Logs", Icons.logs, currentPath.startsWith("/logs")),
-              ),
-            ),
             li(cls := "mt-auto")(
               ul(attr("role") := "list", cls := "-mx-2 space-y-1")(
-                navItem("/config", "Config", Icons.sliders, currentPath.startsWith("/config")),
-                navItem("/models", "Models", Icons.document, currentPath.startsWith("/models")),
-                navItem("/settings", "Settings", Icons.cog, currentPath == "/settings"),
+                navItem(
+                  "/settings/ai",
+                  "Settings",
+                  Icons.cog,
+                  currentPath.startsWith("/settings") || currentPath.startsWith("/config") ||
+                    currentPath.startsWith("/models") || currentPath.startsWith("/channels") ||
+                    currentPath.startsWith("/health"),
+                ),
               )
             ),
           )

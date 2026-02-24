@@ -3,7 +3,7 @@ package gateway.control
 import zio.*
 import zio.stream.ZStream
 
-import gateway.entity.{ NormalizedMessage, SessionKey, SessionScopeStrategy }
+import gateway.entity.{ ChannelStatus as EntityChannelStatus, * }
 
 enum MessageChannelError:
   case ChannelNotFound(name: String)
@@ -12,7 +12,7 @@ enum MessageChannelError:
   case ChannelClosed(channelName: String)
   case InvalidMessage(reason: String)
 
-trait MessageChannel:
+trait MessageChannel extends Channel:
   def name: String
   def scopeStrategy: SessionScopeStrategy
 
@@ -27,6 +27,20 @@ trait MessageChannel:
   def outbound(sessionKey: SessionKey): ZStream[Any, MessageChannelError, NormalizedMessage]
 
   def activeSessions: UIO[Set[SessionKey]]
+
+  override def start: UIO[Unit] = ZIO.unit
+
+  override def stop: UIO[Unit] = closeAll
+
+  override def status: UIO[EntityChannelStatus] =
+    activeSessions.map { sessions =>
+      EntityChannelStatus(
+        name = name,
+        reachability = if sessions.nonEmpty then ChannelReachability.Reachable else ChannelReachability.Unknown,
+        running = sessions.nonEmpty,
+        activeSessions = sessions.size,
+      )
+    }
 
 object MessageChannel:
   def open(sessionKey: SessionKey): ZIO[MessageChannel, MessageChannelError, Unit] =
