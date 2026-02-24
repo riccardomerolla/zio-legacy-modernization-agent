@@ -6,7 +6,7 @@ import zio.json.*
 
 import _root_.config.control.ModelService
 import app.control.HealthMonitor
-import shared.web.{ HealthDashboard, HtmlViews }
+import shared.web.HtmlViews
 
 trait HealthController:
   def routes: Routes[Any, Response]
@@ -26,7 +26,7 @@ final case class HealthControllerLive(
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "health"                       -> handler {
-      ZIO.succeed(html(HealthDashboard.page))
+      ZIO.succeed(Response(status = Status.Found, headers = Headers(Header.Location(URL.decode("/settings/system").getOrElse(URL.root)))))
     },
     Method.GET / "settings" / "system"          -> handler {
       ZIO.succeed(html(HtmlViews.settingsSystemTab))
