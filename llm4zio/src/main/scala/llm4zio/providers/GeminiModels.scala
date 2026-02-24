@@ -30,3 +30,42 @@ case class GeminiUsageMetadata(
   candidatesTokenCount: Option[Int] = None,
   totalTokenCount: Option[Int] = None,
 ) derives JsonCodec
+
+// Tool calling DTOs
+case class GeminiFunctionDeclaration(
+  name: String,
+  description: String,
+  parameters: zio.json.ast.Json,
+) derives JsonCodec
+
+case class GeminiToolDef(
+  functionDeclarations: List[GeminiFunctionDeclaration],
+) derives JsonCodec
+
+case class GeminiFunctionCall(
+  name: String,
+  args: zio.json.ast.Json,
+) derives JsonCodec
+
+case class GeminiPartFull(
+  text: Option[String] = None,
+  functionCall: Option[GeminiFunctionCall] = None,
+) derives JsonCodec
+
+case class GeminiContentFull(parts: List[GeminiPartFull]) derives JsonCodec
+
+case class GeminiCandidateFull(
+  content: GeminiContentFull,
+  finishReason: Option[String] = None,
+) derives JsonCodec
+
+case class GeminiGenerateContentResponseFull(
+  candidates: List[GeminiCandidateFull],
+  usageMetadata: Option[GeminiUsageMetadata] = None,
+) derives JsonCodec
+
+case class GeminiGenerateContentRequestWithTools(
+  contents: List[GeminiContent],
+  tools: List[GeminiToolDef],
+  generationConfig: Option[GeminiGenerationConfig] = None,
+) derives JsonCodec
