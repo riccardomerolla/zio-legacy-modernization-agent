@@ -299,6 +299,7 @@ object AgentsView:
           numberField("ai.temperature", "Temperature", overrideSettings, globalSettings, step = "0.1"),
           numberField("ai.maxTokens", "Max Tokens", overrideSettings, globalSettings, step = "1"),
         ),
+        textField("ai.fallbackChain", "Fallback Chain", overrideSettings, globalSettings),
       ),
     )
 

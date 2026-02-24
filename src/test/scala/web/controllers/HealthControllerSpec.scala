@@ -5,6 +5,8 @@ import zio.http.*
 import zio.stream.ZStream
 import zio.test.*
 
+import _root_.config.control.{ ModelRegistryResponse, ModelService, ProviderProbeStatus }
+import _root_.config.entity.AIProviderConfig
 import app.boundary.HealthControllerLive
 import app.control.*
 
@@ -24,23 +26,29 @@ object HealthControllerSpec extends ZIOSpecDefault:
     override def history(limit: Int): UIO[List[HealthSnapshot]]                    = ZIO.succeed(List(sample).take(limit.max(1)))
     override def stream(interval: Duration): ZStream[Any, Nothing, HealthSnapshot] = zio.stream.ZStream.empty
 
+  private val modelService: ModelService = new ModelService:
+    override def listAvailableModels: UIO[ModelRegistryResponse]                              = ZIO.succeed(ModelRegistryResponse(Nil))
+    override def probeProviders: UIO[List[ProviderProbeStatus]]                               = ZIO.succeed(Nil)
+    override def resolveFallbackChain(primary: AIProviderConfig): UIO[List[AIProviderConfig]] =
+      ZIO.succeed(List(primary))
+
   def spec: Spec[TestEnvironment & Scope, Any] = suite("HealthControllerSpec")(
     test("GET /health renders dashboard") {
-      val controller = HealthControllerLive(monitor)
+      val controller = HealthControllerLive(monitor, modelService)
       for
         response <- controller.routes.runZIO(Request.get("/health"))
         body     <- response.body.asString
       yield assertTrue(response.status == Status.Ok, body.contains("System Health Dashboard"))
     },
     test("GET /api/health returns JSON snapshot") {
-      val controller = HealthControllerLive(monitor)
+      val controller = HealthControllerLive(monitor, modelService)
       for
         response <- controller.routes.runZIO(Request.get("/api/health"))
         body     <- response.body.asString
       yield assertTrue(response.status == Status.Ok, body.contains("\"gateway\""), body.contains("\"resources\""))
     },
     test("GET /api/health/history returns JSON list") {
-      val controller = HealthControllerLive(monitor)
+      val controller = HealthControllerLive(monitor, modelService)
       for
         response <- controller.routes.runZIO(Request.get(URL.decode("/api/health/history?limit=5").toOption.get))
         body     <- response.body.asString

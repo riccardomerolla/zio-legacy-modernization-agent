@@ -17,7 +17,7 @@ import _root_.config.boundary.{
   SettingsController as SettingsBoundaryController,
   WorkflowsController as ConfigWorkflowsController,
 }
-import _root_.config.control.ConfigValidator
+import _root_.config.control.{ ConfigValidator, ModelService }
 import _root_.config.entity.{ AIProvider, AIProviderConfig, GatewayConfig }
 import activity.boundary.ActivityController
 import activity.control.ActivityHub
@@ -73,6 +73,7 @@ object ApplicationDI:
       MemoryStoreModule.MemoryEntriesStore &
       GatewayConfig &
       Ref[GatewayConfig] &
+      ModelService &
       HttpAIClient &
       LlmService &
       StateService &
@@ -144,6 +145,7 @@ object ApplicationDI:
       TaskRepository.live,
       // Create runtime config ref with merged DB settings
       configRefLayer,
+      ModelService.live,
       configAwareLlmServiceLayer,
       EmbeddingService.live,
       MemoryRepositoryES.live,
@@ -342,39 +344,92 @@ object ApplicationDI:
   ) extends LlmService:
 
     override def execute(prompt: String): IO[LlmError, LlmResponse] =
-      currentService.flatMap(_.execute(prompt))
+      withFailover(_.execute(prompt))
 
     override def executeStream(prompt: String): zio.stream.Stream[LlmError, LlmChunk] =
-      zio.stream.ZStream.unwrap(currentService.map(_.executeStream(prompt)))
+      zio.stream.ZStream.unwrap(serviceChain.map(chain => failoverStream(chain)(_.executeStream(prompt))))
 
     override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
-      currentService.flatMap(_.executeWithHistory(messages))
+      withFailover(_.executeWithHistory(messages))
 
     override def executeStreamWithHistory(messages: List[Message]): zio.stream.Stream[LlmError, LlmChunk] =
-      zio.stream.ZStream.unwrap(currentService.map(_.executeStreamWithHistory(messages)))
+      zio.stream.ZStream.unwrap(serviceChain.map(chain => failoverStream(chain)(_.executeStreamWithHistory(messages))))
 
     override def executeWithTools(prompt: String, tools: List[AnyTool]): IO[LlmError, ToolCallResponse] =
-      currentService.flatMap(_.executeWithTools(prompt, tools))
+      withFailover(_.executeWithTools(prompt, tools))
 
     override def executeStructured[A: zio.json.JsonCodec](prompt: String, schema: JsonSchema): IO[LlmError, A] =
-      currentService.flatMap(_.executeStructured(prompt, schema))
+      withFailover(_.executeStructured(prompt, schema))
 
     override def isAvailable: UIO[Boolean] =
-      currentService.flatMap(_.isAvailable).orElseSucceed(false)
+      serviceChain
+        .flatMap { chain =>
+          ZIO.foreach(chain)(_.isAvailable).map(_.exists(identity))
+        }
+        .orElseSucceed(false)
 
-    private def currentService: IO[LlmError, LlmService] =
+    private def serviceChain: IO[LlmError, List[LlmService]] =
       for
-        cfg <- configRef.get.map(conf => aiConfigToLlmConfig(conf.resolvedProviderConfig))
-        svc <- cacheRef.modifyZIO { current =>
-                 current.get(cfg) match
-                   case Some(existing) => ZIO.succeed((existing, current))
-                   case None           =>
-                     ZIO
-                       .attempt(buildProvider(cfg))
-                       .mapError(th => LlmError.ConfigError(Option(th.getMessage).getOrElse(th.toString)))
-                       .map(created => (created, current + (cfg -> created)))
-               }
-      yield svc
+        aiCfg <- configRef.get.map(_.resolvedProviderConfig)
+        cfgs   = fallbackConfigs(aiCfg)
+        svcs  <- ZIO.foreach(cfgs)(providerFor)
+      yield svcs
+
+    private def providerFor(cfg: LlmConfig): IO[LlmError, LlmService] =
+      cacheRef.modifyZIO { current =>
+        current.get(cfg) match
+          case Some(existing) => ZIO.succeed((existing, current))
+          case None           =>
+            ZIO
+              .attempt(buildProvider(cfg))
+              .mapError(th => LlmError.ConfigError(Option(th.getMessage).getOrElse(th.toString)))
+              .map(created => (created, current + (cfg -> created)))
+      }
+
+    private def fallbackConfigs(primary: AIProviderConfig): List[LlmConfig] =
+      val primaryLlm = aiConfigToLlmConfig(primary)
+      val fallback   = primary.fallbackChain.models.map { ref =>
+        aiConfigToLlmConfig(
+          AIProviderConfig.withDefaults(
+            primary.copy(
+              provider = ref.provider.getOrElse(primary.provider),
+              model = ref.modelId,
+            )
+          )
+        )
+      }
+      (primaryLlm :: fallback).distinct
+
+    private def withFailover[A](run: LlmService => IO[LlmError, A]): IO[LlmError, A] =
+      serviceChain.flatMap { chain =>
+        failoverIO(chain)(run)
+      }
+
+    private def failoverIO[A](services: List[LlmService])(run: LlmService => IO[LlmError, A]): IO[LlmError, A] =
+      services match
+        case head :: tail =>
+          run(head).catchAll { err =>
+            tail match
+              case Nil => ZIO.fail(err)
+              case _   => failoverIO(tail)(run)
+          }
+        case Nil          =>
+          ZIO.fail(LlmError.ConfigError("No LLM provider configured"))
+
+    private def failoverStream(
+      services: List[LlmService]
+    )(
+      run: LlmService => zio.stream.Stream[LlmError, LlmChunk]
+    ): zio.stream.Stream[LlmError, LlmChunk] =
+      services match
+        case head :: tail =>
+          run(head).catchAll { err =>
+            tail match
+              case Nil => zio.stream.ZStream.fail(err)
+              case _   => failoverStream(tail)(run)
+          }
+        case Nil          =>
+          zio.stream.ZStream.fail(LlmError.ConfigError("No LLM provider configured"))
 
     private def buildProvider(cfg: LlmConfig): LlmService =
       import llm4zio.providers.*

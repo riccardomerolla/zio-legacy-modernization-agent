@@ -51,6 +51,7 @@ object SettingsApplier:
         acquireTimeout = parseDuration(settings.get("ai.acquireTimeout")).getOrElse(30.seconds),
         temperature = settings.get("ai.temperature").flatMap(_.toDoubleOption),
         maxTokens = settings.get("ai.maxTokens").flatMap(_.toIntOption),
+        fallbackChain = parseFallbackChain(settings.get("ai.fallbackChain"), provider),
       )
     }
 
@@ -85,6 +86,31 @@ object SettingsApplier:
       case "Ollama"    => Some(AIProvider.Ollama)
       case "OpenCode"  => Some(AIProvider.OpenCode)
       case _           => None
+
+  private def parseFallbackChain(valueOpt: Option[String], defaultProvider: AIProvider): ModelFallbackChain =
+    val refs = valueOpt
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .toList
+      .flatMap(_.split(",").toList)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(parseModelRef(_, defaultProvider))
+
+    ModelFallbackChain(refs)
+
+  private def parseModelRef(raw: String, defaultProvider: AIProvider): Option[ModelRef] =
+    raw.split(":", 2).toList match
+      case providerRaw :: modelRaw :: Nil =>
+        val modelId = modelRaw.trim
+        parseAIProvider(providerRaw.trim).filter(_ => modelId.nonEmpty).map { provider =>
+          ModelRef(provider = Some(provider), modelId = modelId)
+        }
+      case modelOnly :: Nil               =>
+        val modelId = modelOnly.trim
+        if modelId.nonEmpty then Some(ModelRef(provider = Some(defaultProvider), modelId = modelId))
+        else None
+      case _                              => None
 
   /** Parse duration from seconds string */
   private def parseDuration(valueOpt: Option[String]): Option[zio.Duration] =

@@ -4,6 +4,7 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
+import _root_.config.control.ModelService
 import app.control.HealthMonitor
 import shared.web.HealthDashboard
 
@@ -15,21 +16,25 @@ object HealthController:
   def routes: ZIO[HealthController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[HealthController](_.routes)
 
-  val live: ZLayer[HealthMonitor, Nothing, HealthController] =
+  val live: ZLayer[HealthMonitor & ModelService, Nothing, HealthController] =
     ZLayer.fromFunction(HealthControllerLive.apply)
 
 final case class HealthControllerLive(
-  healthMonitor: HealthMonitor
+  healthMonitor: HealthMonitor,
+  modelService: ModelService,
 ) extends HealthController:
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / "health"                     -> handler {
+    Method.GET / "health"                       -> handler {
       ZIO.succeed(html(HealthDashboard.page))
     },
-    Method.GET / "api" / "health"             -> handler {
+    Method.GET / "api" / "health"               -> handler {
       healthMonitor.snapshot.map(snapshot => Response.json(snapshot.toJson))
     },
-    Method.GET / "api" / "health" / "history" -> handler { (req: Request) =>
+    Method.GET / "api" / "health" / "providers" -> handler {
+      modelService.probeProviders.map(items => Response.json(items.toJson))
+    },
+    Method.GET / "api" / "health" / "history"   -> handler { (req: Request) =>
       val limit = req.queryParam("limit").flatMap(_.toIntOption).getOrElse(30)
       healthMonitor.history(limit).map(items => Response.json(items.toJson))
     },

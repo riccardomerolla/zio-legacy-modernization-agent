@@ -3,6 +3,35 @@ package config.entity
 import zio.json.*
 import zio.json.ast.Json
 
+enum ModelCapability derives JsonCodec:
+  case Chat, Streaming, ToolCalling, StructuredOutput, Embeddings
+
+case class AIModel(
+  provider: AIProvider,
+  modelId: String,
+  displayName: String,
+  contextWindow: Int,
+  capabilities: Set[ModelCapability] = Set(ModelCapability.Chat),
+  costPerMillionInputUsd: Option[Double] = None,
+  costPerMillionOutputUsd: Option[Double] = None,
+) derives JsonCodec
+
+case class ModelRef(
+  provider: Option[AIProvider],
+  modelId: String,
+) derives JsonCodec
+
+case class ModelFallbackChain(models: List[ModelRef]) derives JsonCodec:
+  def nonEmpty: Boolean = models.nonEmpty
+
+object ModelFallbackChain:
+  val empty: ModelFallbackChain = ModelFallbackChain(Nil)
+
+case class AgentModelOverride(
+  agentName: String,
+  model: ModelRef,
+) derives JsonCodec
+
 // Structured output schema
 case class ResponseSchema(
   name: String,

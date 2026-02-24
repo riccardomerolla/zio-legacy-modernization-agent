@@ -8,7 +8,8 @@ import zio.stream.ZStream
 import zio.test.*
 
 import _root_.config.boundary.SettingsController
-import _root_.config.entity.MigrationConfig
+import _root_.config.control.{ ModelRegistryResponse, ModelService, ProviderProbeStatus }
+import _root_.config.entity.{ AIProviderConfig, MigrationConfig }
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType, ActivityRepository }
 import db.*
@@ -40,6 +41,12 @@ object SettingsControllerSpec extends ZIOSpecDefault:
 
     override def isAvailable: UIO[Boolean] =
       ZIO.succeed(true)
+
+  private val stubModelService: ModelService = new ModelService:
+    override def listAvailableModels: UIO[ModelRegistryResponse]                              = ZIO.succeed(ModelRegistryResponse(Nil))
+    override def probeProviders: UIO[List[ProviderProbeStatus]]                               = ZIO.succeed(Nil)
+    override def resolveFallbackChain(primary: AIProviderConfig): UIO[List[AIProviderConfig]] =
+      ZIO.succeed(List(primary))
 
   final private case class InMemoryConfigRepository(ref: Ref[Map[String, SettingRow]]) extends ConfigRepository:
     override def getAllSettings: IO[PersistenceError, List[SettingRow]] =
@@ -107,6 +114,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
       ZLayer.succeed(hub),
       ZLayer.fromZIO(Ref.make(MigrationConfig())),
       ZLayer.succeed(stubLlmService),
+      ZLayer.succeed(stubModelService),
       SettingsController.live,
     )
 
@@ -136,6 +144,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
       ActivityHub.live,
       ZLayer.fromZIO(Ref.make(MigrationConfig())),
       ZLayer.succeed(stubLlmService),
+      ZLayer.succeed(stubModelService),
       SettingsController.live,
     )
 

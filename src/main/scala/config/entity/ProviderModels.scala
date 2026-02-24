@@ -33,6 +33,7 @@ case class AIProviderConfig(
   acquireTimeout: zio.Duration = 30.seconds,
   temperature: Option[Double] = None,
   maxTokens: Option[Int] = None,
+  fallbackChain: ModelFallbackChain = ModelFallbackChain.empty,
 ) derives JsonCodec
 
 object AIProviderConfig:

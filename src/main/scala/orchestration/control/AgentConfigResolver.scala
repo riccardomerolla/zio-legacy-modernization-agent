@@ -2,7 +2,7 @@ package orchestration.control
 
 import zio.*
 
-import _root_.config.entity.{ AIProvider, AIProviderConfig }
+import _root_.config.entity.{ AIProvider, AIProviderConfig, ModelFallbackChain, ModelRef }
 import db.{ PersistenceError, TaskRepository }
 
 trait AgentConfigResolver:
@@ -67,6 +67,10 @@ final case class AgentConfigResolverLive(
                         maxTokens = firstNonBlank(agentMap.get("ai.maxTokens"), globalMap.get("ai.maxTokens"))
                           .flatMap(_.toIntOption)
                           .orElse(startupConfig.maxTokens),
+                        fallbackChain = parseFallbackChain(
+                          firstNonBlank(agentMap.get("ai.fallbackChain"), globalMap.get("ai.fallbackChain")),
+                          provider,
+                        ),
                       )
                     )
     yield resolved
@@ -86,4 +90,27 @@ final case class AgentConfigResolverLive(
       case "Anthropic" => Some(AIProvider.Anthropic)
       case "LmStudio"  => Some(AIProvider.LmStudio)
       case "Ollama"    => Some(AIProvider.Ollama)
+      case "OpenCode"  => Some(AIProvider.OpenCode)
       case _           => None
+
+  private def parseFallbackChain(raw: Option[String], defaultProvider: AIProvider): ModelFallbackChain =
+    val refs = raw
+      .toList
+      .flatMap(_.split(",").toList)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(parseModelRef(_, defaultProvider))
+    ModelFallbackChain(refs)
+
+  private def parseModelRef(raw: String, defaultProvider: AIProvider): Option[ModelRef] =
+    raw.split(":", 2).toList match
+      case providerRaw :: modelRaw :: Nil =>
+        val modelId = modelRaw.trim
+        parseProvider(providerRaw.trim).filter(_ => modelId.nonEmpty).map { provider =>
+          ModelRef(provider = Some(provider), modelId = modelId)
+        }
+      case modelOnly :: Nil               =>
+        val modelId = modelOnly.trim
+        if modelId.nonEmpty then Some(ModelRef(provider = Some(defaultProvider), modelId = modelId))
+        else None
+      case _                              => None
