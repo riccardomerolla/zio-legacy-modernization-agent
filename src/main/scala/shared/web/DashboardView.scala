@@ -74,7 +74,7 @@ object DashboardView:
             ),
           ),
           a(
-            href := "/health",
+            href := "/settings/system",
             cls  := "inline-flex items-center rounded-md bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100 ring-1 ring-emerald-300/30 hover:bg-emerald-500/30",
           )("Open Health Dashboard"),
         )

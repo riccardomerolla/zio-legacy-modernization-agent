@@ -129,7 +129,7 @@ final case class ChannelControllerLive(
                         messagesSent = perChannel.outboundProcessed,
                         errors = rt.errorCount + perChannel.failed,
                         lastActivityTs = rt.lastActivity.map(_.toEpochMilli).orElse(perChannel.lastActivityTs),
-                        configureUrl = if name == "telegram" then "/settings" else "/channels",
+                        configureUrl = "/settings/channels",
                       )
                     }
                   }
