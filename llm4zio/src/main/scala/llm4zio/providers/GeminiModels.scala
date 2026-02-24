@@ -15,15 +15,18 @@ case class GeminiGenerateContentRequest(
 ) derives JsonCodec
 
 case class GeminiGenerateContentResponse(
-  candidates: List[GeminiCandidate],
+  candidates: List[GeminiCandidate] = Nil,
   usageMetadata: Option[GeminiUsageMetadata] = None,
 ) derives JsonCodec
 
-case class GeminiCandidate(content: GeminiContent) derives JsonCodec
+case class GeminiCandidate(
+  content: GeminiContent,
+  finishReason: Option[String] = None,
+) derives JsonCodec
 
 case class GeminiContent(parts: List[GeminiPart]) derives JsonCodec
 
-case class GeminiPart(text: String) derives JsonCodec
+case class GeminiPart(text: Option[String] = None) derives JsonCodec
 
 case class GeminiUsageMetadata(
   promptTokenCount: Option[Int] = None,
@@ -60,7 +63,7 @@ case class GeminiCandidateFull(
 ) derives JsonCodec
 
 case class GeminiGenerateContentResponseFull(
-  candidates: List[GeminiCandidateFull],
+  candidates: List[GeminiCandidateFull] = Nil,
   usageMetadata: Option[GeminiUsageMetadata] = None,
 ) derives JsonCodec
 

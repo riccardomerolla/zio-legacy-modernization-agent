@@ -16,6 +16,7 @@ import gateway.control.*
 import gateway.entity.*
 import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 import llm4zio.core.*
+import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import llm4zio.tools.{ AnyTool, JsonSchema }
 import memory.entity.*
 import orchestration.control.{ IssueAssignmentOrchestrator, * }
@@ -111,6 +112,20 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
     new AgentConfigResolver:
       override def resolveConfig(agentName: String): IO[PersistenceError, AIProviderConfig] =
         ZIO.succeed(AIProviderConfig.withDefaults(AIProviderConfig()))
+
+  private val stubHttpClient: HttpClient = new HttpClient:
+    override def postJson(
+      url: String,
+      body: String,
+      headers: Map[String, String],
+      timeout: Duration,
+    ): IO[LlmError, String] =
+      ZIO.fail(LlmError.ProviderError("unused in tests", None))
+
+  private val stubCliExecutor: GeminiCliExecutor = new GeminiCliExecutor:
+    override def checkGeminiInstalled: IO[LlmError, Unit]                                  = ZIO.unit
+    override def runGeminiProcess(prompt: String, config: LlmConfig): IO[LlmError, String] =
+      ZIO.fail(LlmError.ProviderError("unused in tests", None))
 
   private def newConversation(chatRepository: ChatRepository): IO[PersistenceError, Long] =
     for
@@ -365,6 +380,8 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        streamAbortRegistry = abortReg,
                        activityHub = actHub,
                        toolRegistry = toolReg,
+                       httpClient = stubHttpClient,
+                       cliExecutor = stubCliExecutor,
                      )
         request    = Request.post(
                        s"/api/chat/$convId/messages",
@@ -407,6 +424,8 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        streamAbortRegistry = abortReg,
                        activityHub = actHub,
                        toolRegistry = toolReg,
+                       httpClient = stubHttpClient,
+                       cliExecutor = stubCliExecutor,
                      )
         request    = Request.post(
                        s"/api/chat/$convId/messages",
@@ -417,6 +436,57 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
       yield assertTrue(
         response.status == Status.Ok,
         body.contains("echo:fix this module"),
+      )).provideSomeLayer[Scope](appLayer)
+    },
+    test("POST /api/chat/:id/messages resolves preferred agent from session context when mention is absent") {
+      (for
+        chatRepo       <- ZIO.service[ChatRepository]
+        migrRepo       <- ZIO.service[TaskRepository]
+        llm            <- ZIO.service[LlmService]
+        gateway        <- ZIO.service[GatewayService]
+        registry       <- ZIO.service[ChannelRegistry]
+        convId         <- newConversation(chatRepo)
+        now            <- Clock.instant
+        _              <- chatRepo.upsertSessionContext(
+                            channelName = "websocket",
+                            sessionKey = "session-1",
+                            contextJson = StoredSessionContext(
+                              conversationId = Some(convId),
+                              metadata = Map("preferredAgent" -> "task-planner"),
+                            ).toJson,
+                            updatedAt = now,
+                          )
+        resolvedAgents <- Ref.make(List.empty[String])
+        resolver        = new AgentConfigResolver:
+                            override def resolveConfig(agentName: String): IO[PersistenceError, AIProviderConfig] =
+                              resolvedAgents.update(_ :+ agentName) *>
+                                ZIO.succeed(AIProviderConfig.withDefaults(AIProviderConfig()))
+        abortReg       <- Ref.make(Map.empty[Long, UIO[Unit]]).map(StreamAbortRegistryLive.apply)
+        actHub         <- Ref.make(Set.empty[Queue[ActivityEvent]]).map(subs => ActivityHubLive(stubActivityRepo, subs))
+        toolReg        <- llm4zio.tools.ToolRegistry.make
+        controller      = ChatControllerLive(
+                            chatRepository = chatRepo,
+                            llmService = llm,
+                            migrationRepository = migrRepo,
+                            issueAssignmentOrchestrator = testIssueAssignment,
+                            configResolver = resolver,
+                            gatewayService = gateway,
+                            channelRegistry = registry,
+                            streamAbortRegistry = abortReg,
+                            activityHub = actHub,
+                            toolRegistry = toolReg,
+                            httpClient = stubHttpClient,
+                            cliExecutor = stubCliExecutor,
+                          )
+        request         = Request.post(
+                            s"/api/chat/$convId/messages",
+                            Body.fromString(ConversationMessageRequest(content = "plan this migration").toJson),
+                          )
+        response       <- controller.routes.runZIO(request)
+        calledWith     <- resolvedAgents.get
+      yield assertTrue(
+        response.status == Status.Ok,
+        calledWith.contains("task-planner"),
       )).provideSomeLayer[Scope](appLayer)
     },
     test("POST /chat/:id/messages (fragment) returns HTML with user message and streams in background") {
@@ -441,6 +511,8 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        streamAbortRegistry = abortReg,
                        activityHub = actHub,
                        toolRegistry = toolReg,
+                       httpClient = stubHttpClient,
+                       cliExecutor = stubCliExecutor,
                      )
         request    = Request.post(
                        s"/chat/$convId/messages",
@@ -505,6 +577,8 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        streamAbortRegistry = abortReg,
                        activityHub = actHub,
                        toolRegistry = toolReg,
+                       httpClient = stubHttpClient,
+                       cliExecutor = stubCliExecutor,
                      )
         response  <- controller.routes.runZIO(Request.get("/api/sessions"))
         body      <- response.body.asString
@@ -539,6 +613,8 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
                        streamAbortRegistry = abortReg,
                        activityHub = actHub,
                        toolRegistry = toolReg,
+                       httpClient = stubHttpClient,
+                       cliExecutor = stubCliExecutor,
                      )
         request    = Request.post(
                        s"/api/chat/$convId/messages",

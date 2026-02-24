@@ -27,7 +27,7 @@ object GeminiApiProvider:
       override def executeWithHistory(messages: List[Message]): IO[LlmError, LlmResponse] =
         // Convert messages to Gemini content format
         val contents = messages.map { msg =>
-          GeminiContent(parts = List(GeminiPart(text = msg.content)))
+          GeminiContent(parts = List(GeminiPart(text = Some(msg.content))))
         }
         executeRequestWithContents(contents, None)
 
@@ -59,7 +59,7 @@ object GeminiApiProvider:
                           }
                         ))
           request     = GeminiGenerateContentRequestWithTools(
-                          contents = List(GeminiContent(parts = List(GeminiPart(text = prompt)))),
+                          contents = List(GeminiContent(parts = List(GeminiPart(text = Some(prompt))))),
                           tools = geminiTools,
                         )
           url         = s"${baseUrl.stripSuffix("/")}/v1beta/models/${config.model}:generateContent"
@@ -111,7 +111,7 @@ object GeminiApiProvider:
         prompt: String,
         schema: Option[JsonSchema],
       ): IO[LlmError, LlmResponse] =
-        val contents = List(GeminiContent(parts = List(GeminiPart(text = prompt))))
+        val contents = List(GeminiContent(parts = List(GeminiPart(text = Some(prompt)))))
         executeRequestWithContents(contents, schema)
 
       private def executeRequestWithContents(
@@ -145,7 +145,7 @@ object GeminiApiProvider:
           parsed   <- ZIO
                         .fromEither(body.fromJson[GeminiGenerateContentResponse])
                         .mapError(err => LlmError.ParseError(s"Failed to decode Gemini API response: $err", body))
-          output   <- extractText(parsed)
+          output   <- extractText(parsed, body)
           usage     = extractUsage(parsed)
         yield LlmResponse(
           content = output,
@@ -153,19 +153,16 @@ object GeminiApiProvider:
           metadata = baseMetadata(parsed),
         )
 
-      private def extractText(response: GeminiGenerateContentResponse): IO[LlmError, String] =
-        val text =
-          for
-            candidate <- response.candidates.headOption
-            part      <- candidate.content.parts.headOption
-            value      = part.text.trim
-            if value.nonEmpty
-          yield value
+      private def extractText(response: GeminiGenerateContentResponse, rawBody: String): IO[LlmError, String] =
+        val text = response.candidates.headOption.toList
+          .flatMap(_.content.parts)
+          .flatMap(_.text.map(_.trim))
+          .find(_.nonEmpty)
 
         ZIO.fromOption(text)
           .orElseFail(LlmError.ParseError(
-            "Gemini API response missing candidates[0].content.parts[0].text",
-            response.toJson,
+            "Gemini API response has no text content in candidates. The response may be safety-filtered or malformed.",
+            rawBody,
           ))
 
       private def extractUsage(response: GeminiGenerateContentResponse): Option[TokenUsage] =

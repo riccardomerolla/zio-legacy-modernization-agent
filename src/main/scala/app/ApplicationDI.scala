@@ -74,6 +74,8 @@ object ApplicationDI:
       GatewayConfig &
       Ref[GatewayConfig] &
       ModelService &
+      HttpClient &
+      GeminiCliExecutor &
       HttpAIClient &
       LlmService &
       StateService &
@@ -97,6 +99,7 @@ object ApplicationDI:
       GatewayService &
       TelegramPollingService &
       TaskProgressNotifier &
+      AgentConfigResolver &
       MemoryRepository &
       EmbeddingService
 
@@ -143,6 +146,8 @@ object ApplicationDI:
       MemoryStoreModule.live.mapError(err => new RuntimeException(err.toString)).orDie,
       ConfigRepository.live,
       TaskRepository.live,
+      ZLayer.succeed(config.resolvedProviderConfig),
+      AgentConfigResolver.live,
       // Create runtime config ref with merged DB settings
       configRefLayer,
       ModelService.live,
@@ -222,7 +227,6 @@ object ApplicationDI:
   def webServerLayer(config: GatewayConfig, storeConfig: StoreConfig): ZLayer[Any, Nothing, WebServer] =
     ZLayer.make[WebServer](
       commonLayers(config, storeConfig),
-      ZLayer.succeed(config.resolvedProviderConfig),
       TaskRunDashboardController.live,
       TaskRunTasksController.live,
       TaskRunReportsController.live,
@@ -233,7 +237,6 @@ object ApplicationDI:
       AppAgentMonitorController.live,
       ConfigWorkflowsController.live,
       TaskRunLogsController.live,
-      AgentConfigResolver.live,
       OrchestrationIssueAssignmentOrchestrator.live,
       StreamAbortRegistry.live,
       ToolRegistry.layer,

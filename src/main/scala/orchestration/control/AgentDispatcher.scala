@@ -5,8 +5,10 @@ import java.time.Instant
 
 import zio.*
 
+import _root_.config.entity.{ AIProvider, AIProviderConfig }
 import db.{ ConfigRepository, PersistenceError, TaskArtifactRow, TaskReportRow, TaskRepository }
-import llm4zio.core.LlmService
+import llm4zio.core.*
+import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import memory.entity.*
 
 final case class StepDispatchResult(
@@ -29,8 +31,35 @@ object AgentDispatcher:
     ZIO.serviceWithZIO[AgentDispatcher](_.dispatch(stepPlan, taskRunId))
 
   val live
-    : ZLayer[TaskRepository & AgentRegistry & LlmService & MemoryRepository & ConfigRepository, Nothing, AgentDispatcher] =
-    ZLayer.fromFunction(AgentDispatcherLive.apply)
+    : ZLayer[
+      TaskRepository & AgentRegistry & LlmService & MemoryRepository & ConfigRepository & AgentConfigResolver &
+        HttpClient & GeminiCliExecutor,
+      Nothing,
+      AgentDispatcher,
+    ] =
+    ZLayer.fromZIO {
+      for
+        repository     <- ZIO.service[TaskRepository]
+        registry       <- ZIO.service[AgentRegistry]
+        llmService     <- ZIO.service[LlmService]
+        memoryRepo     <- ZIO.service[MemoryRepository]
+        configRepo     <- ZIO.service[ConfigRepository]
+        configResolver <- ZIO.service[AgentConfigResolver]
+        httpClient     <- ZIO.service[HttpClient]
+        cliExecutor    <- ZIO.service[GeminiCliExecutor]
+        providerCache  <- Ref.Synchronized.make(Map.empty[LlmConfig, LlmService])
+      yield AgentDispatcherLive(
+        repository = repository,
+        registry = registry,
+        llmService = llmService,
+        memoryRepository = memoryRepo,
+        configRepository = configRepo,
+        configResolver = configResolver,
+        httpClient = httpClient,
+        cliExecutor = cliExecutor,
+        providerCache = providerCache,
+      )
+    }
 
 final case class AgentDispatcherLive(
   repository: TaskRepository,
@@ -38,6 +67,10 @@ final case class AgentDispatcherLive(
   llmService: LlmService,
   memoryRepository: MemoryRepository,
   configRepository: ConfigRepository,
+  configResolver: AgentConfigResolver,
+  httpClient: HttpClient,
+  cliExecutor: GeminiCliExecutor,
+  providerCache: Ref.Synchronized[Map[LlmConfig, LlmService]],
 ) extends AgentDispatcher:
 
   override def dispatch(
@@ -106,8 +139,7 @@ final case class AgentDispatcherLive(
                                                workflowId = run.workflowId,
                                                currentPhase = run.currentPhase,
                                              )
-                           response       <- llmService
-                                               .execute(prompt)
+                           response       <- executeWithAgentConfig(agentInfo.name, prompt)
                                                .mapError(err => PersistenceError.QueryFailed("llm.execute", err.toString))
                            completedAt    <- Clock.instant
                            _              <- repository.saveReport(
@@ -187,6 +219,84 @@ final case class AgentDispatcherLive(
        |
        |Return a concise markdown result for this step execution.
        |""".stripMargin
+
+  private def executeWithAgentConfig(agentName: String, prompt: String): IO[LlmError, LlmResponse] =
+    configResolver
+      .resolveConfig(agentName)
+      .either
+      .flatMap {
+        case Right(config) => withFailover(config, prompt)
+        case Left(_)       => llmService.execute(prompt)
+      }
+
+  private def withFailover(config: AIProviderConfig, prompt: String): IO[LlmError, LlmResponse] =
+    fallbackConfigs(config)
+      .foldLeft[IO[LlmError, LlmResponse]](ZIO.fail(LlmError.ConfigError("No LLM provider configured"))) {
+        (acc, cfg) =>
+          acc.orElse(
+            providerFor(cfg).flatMap(_.execute(prompt))
+          )
+      }
+
+  private def fallbackConfigs(primary: AIProviderConfig): List[LlmConfig] =
+    val primaryLlm = aiConfigToLlmConfig(primary)
+    val fallback   = primary.fallbackChain.models.map { ref =>
+      aiConfigToLlmConfig(
+        AIProviderConfig.withDefaults(
+          primary.copy(
+            provider = ref.provider.getOrElse(primary.provider),
+            model = ref.modelId,
+          )
+        )
+      )
+    }
+    (primaryLlm :: fallback).distinct
+
+  private def providerFor(cfg: LlmConfig): IO[LlmError, LlmService] =
+    providerCache.modifyZIO { current =>
+      current.get(cfg) match
+        case Some(existing) => ZIO.succeed((existing, current))
+        case None           =>
+          ZIO
+            .attempt(buildProvider(cfg))
+            .mapError(th => LlmError.ConfigError(Option(th.getMessage).getOrElse(th.toString)))
+            .map(created => (created, current + (cfg -> created)))
+    }
+
+  private def buildProvider(cfg: LlmConfig): LlmService =
+    cfg.provider match
+      case LlmProvider.GeminiCli => llm4zio.providers.GeminiCliProvider.make(cfg, cliExecutor)
+      case LlmProvider.GeminiApi => llm4zio.providers.GeminiApiProvider.make(cfg, httpClient)
+      case LlmProvider.OpenAI    => llm4zio.providers.OpenAIProvider.make(cfg, httpClient)
+      case LlmProvider.Anthropic => llm4zio.providers.AnthropicProvider.make(cfg, httpClient)
+      case LlmProvider.LmStudio  => llm4zio.providers.LmStudioProvider.make(cfg, httpClient)
+      case LlmProvider.Ollama    => llm4zio.providers.OllamaProvider.make(cfg, httpClient)
+      case LlmProvider.OpenCode  => llm4zio.providers.OpenCodeProvider.make(cfg, httpClient)
+
+  private def aiConfigToLlmConfig(aiConfig: AIProviderConfig): LlmConfig =
+    LlmConfig(
+      provider = aiProviderToLlmProvider(aiConfig.provider),
+      model = aiConfig.model,
+      baseUrl = aiConfig.baseUrl,
+      apiKey = aiConfig.apiKey,
+      timeout = aiConfig.timeout,
+      maxRetries = aiConfig.maxRetries,
+      requestsPerMinute = aiConfig.requestsPerMinute,
+      burstSize = aiConfig.burstSize,
+      acquireTimeout = aiConfig.acquireTimeout,
+      temperature = aiConfig.temperature,
+      maxTokens = aiConfig.maxTokens,
+    )
+
+  private def aiProviderToLlmProvider(aiProvider: AIProvider): LlmProvider =
+    aiProvider match
+      case AIProvider.GeminiCli => LlmProvider.GeminiCli
+      case AIProvider.GeminiApi => LlmProvider.GeminiApi
+      case AIProvider.OpenAi    => LlmProvider.OpenAI
+      case AIProvider.Anthropic => LlmProvider.Anthropic
+      case AIProvider.LmStudio  => LlmProvider.LmStudio
+      case AIProvider.Ollama    => LlmProvider.Ollama
+      case AIProvider.OpenCode  => LlmProvider.OpenCode
 
   private def ensureAgentWorkspace(
     taskRunId: Long,

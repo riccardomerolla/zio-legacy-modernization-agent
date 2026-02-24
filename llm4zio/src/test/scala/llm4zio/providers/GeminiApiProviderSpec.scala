@@ -20,7 +20,7 @@ object GeminiApiProviderSpec extends ZIOSpecDefault:
           candidates = List(
             GeminiCandidate(
               content = GeminiContent(
-                parts = List(GeminiPart(text = "Test response"))
+                parts = List(GeminiPart(text = Some("Test response")))
               )
             )
           ),
@@ -98,7 +98,7 @@ object GeminiApiProviderSpec extends ZIOSpecDefault:
                          candidates = List(
                            GeminiCandidate(
                              content = GeminiContent(
-                               parts = List(GeminiPart(text = """{"name":"Test"}"""))
+                               parts = List(GeminiPart(text = Some("""{"name":"Test"}""")))
                              )
                            )
                          )
@@ -114,5 +114,31 @@ object GeminiApiProviderSpec extends ZIOSpecDefault:
                     schema,
                   )
       } yield assertTrue(result.isInstanceOf[Json])
+    },
+    test("execute should return ParseError when Gemini response has no text candidate") {
+      val config     = LlmConfig(
+        provider = LlmProvider.GeminiApi,
+        model = "gemini-2.0-flash-exp",
+        baseUrl = Some("https://generativelanguage.googleapis.com"),
+        apiKey = Some("test-api-key"),
+      )
+      val httpClient = new MockHttpClient() {
+        override def postJson(url: String, body: String, headers: Map[String, String], timeout: Duration)
+          : IO[LlmError, String] =
+          ZIO.succeed("""{"promptFeedback":{"blockReason":"SAFETY"}}""")
+      }
+      val provider   = GeminiApiProvider.make(config, httpClient)
+
+      for {
+        result <- provider.execute("blocked prompt").exit
+      } yield assertTrue(
+        result match
+          case Exit.Failure(cause) =>
+            cause.failureOption match
+              case Some(LlmError.ParseError(message, raw)) =>
+                message.contains("no text content") && raw.nonEmpty
+              case _                                       => false
+          case _                   => false
+      )
     },
   )

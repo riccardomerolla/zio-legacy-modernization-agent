@@ -8,6 +8,7 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
+import _root_.config.entity.{ AIProvider, AIProviderConfig }
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
 import conversation.entity.api.*
@@ -15,6 +16,7 @@ import db.{ ChatRepository, PersistenceError, TaskRepository }
 import gateway.control.{ ChannelRegistry, GatewayService, GatewayServiceError, MessageChannelError }
 import gateway.entity.{ GatewayMessageRole as GatewayMessageRole, MessageDirection as GatewayMessageDirection, * }
 import llm4zio.core.{ ConversationThread, LlmError, LlmService, Streaming, ToolConversationManager }
+import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import llm4zio.tools.ToolRegistry
 import orchestration.control.{ AgentConfigResolver, IssueAssignmentOrchestrator }
 import shared.ids.Ids.{ ConversationId, EventId }
@@ -31,7 +33,8 @@ object ChatController:
   val live
     : ZLayer[
       ChatRepository & LlmService & TaskRepository & IssueAssignmentOrchestrator & AgentConfigResolver &
-        GatewayService & ChannelRegistry & StreamAbortRegistry & ActivityHub & ToolRegistry,
+        GatewayService & ChannelRegistry & StreamAbortRegistry & ActivityHub & ToolRegistry & HttpClient &
+        GeminiCliExecutor,
       Nothing,
       ChatController,
     ] =
@@ -48,6 +51,8 @@ final case class ChatControllerLive(
   streamAbortRegistry: StreamAbortRegistry,
   activityHub: ActivityHub,
   toolRegistry: ToolRegistry,
+  httpClient: HttpClient,
+  cliExecutor: GeminiCliExecutor,
 ) extends ChatController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -115,6 +120,7 @@ final case class ChatControllerLive(
                            .orElseFail(PersistenceError.QueryFailed("parseForm", "Missing content"))
           mention      = parsePreferredAgentMention(rawContent)
           content      = mention.content
+          preferred   <- resolvePreferredAgent(convId, mention.metadata.get("preferredAgent"))
           now         <- Clock.instant
           _           <- chatRepository.addMessage(
                            ConversationEntry(
@@ -144,10 +150,10 @@ final case class ChatControllerLive(
                            content,
                            None,
                            GatewayMessageDirection.Inbound,
-                           additionalMetadata = mention.metadata,
+                           additionalMetadata = withPreferredAgentMetadata(mention.metadata, preferred),
                          )
           _           <- routeThroughGateway(gatewayService.processInbound(userInbound))
-          _           <- streamAssistantResponse(convId, content).forkDaemon
+          _           <- streamAssistantResponse(convId, content, preferred).forkDaemon
           messages    <- chatRepository.getMessages(convId)
         yield html(HtmlViews.chatMessagesFragment(messages))
       }
@@ -255,6 +261,7 @@ final case class ChatControllerLive(
   ): IO[PersistenceError, ConversationEntry] =
     for
       mention     <- ZIO.succeed(parsePreferredAgentMention(userContent))
+      preferred   <- resolvePreferredAgent(conversationId, mention.metadata.get("preferredAgent"))
       now         <- Clock.instant
       _           <- chatRepository.addMessage(
                        ConversationEntry(
@@ -275,7 +282,7 @@ final case class ChatControllerLive(
                        content = mention.content,
                        metadata = metadata,
                        direction = GatewayMessageDirection.Inbound,
-                       additionalMetadata = mention.metadata,
+                       additionalMetadata = withPreferredAgentMetadata(mention.metadata, preferred),
                      )
       _           <- routeThroughGateway(gatewayService.processInbound(userInbound))
       toolsEnabled = metadata.flatMap(m => m.fromJson[Map[String, String]].toOption)
@@ -299,8 +306,7 @@ final case class ChatControllerLive(
                             .mapError(convertLlmError)
           yield toolResult.response
         else
-          llmService
-            .execute(mention.content)
+          executeWithPreferredAgent(preferred, mention.content)
             .mapError(convertLlmError)
       now2        <- Clock.instant
       aiMessage    = ConversationEntry(
@@ -331,11 +337,12 @@ final case class ChatControllerLive(
   private def streamAssistantResponse(
     conversationId: Long,
     userContent: String,
+    preferredAgent: Option[String],
   ): UIO[Unit] =
     val effect =
       for
         _                          <- sendStreamEvent(conversationId, "chat-stream-start", "")
-        pair                       <- Streaming.cancellable(llmService.executeStream(userContent))
+        pair                       <- Streaming.cancellable(executeStreamWithPreferredAgent(preferredAgent, userContent))
         (cancellableStream, cancel) = pair
         _                          <- streamAbortRegistry.register(conversationId, cancel)
         accumulated                <- cancellableStream
@@ -609,10 +616,193 @@ final case class ChatControllerLive(
       .map(_.trim)
       .filter(_.nonEmpty)
 
+  private def resolvePreferredAgent(
+    conversationId: Long,
+    mentionedAgent: Option[String],
+  ): IO[PersistenceError, Option[String]] =
+    mentionedAgent.map(_.trim).filter(_.nonEmpty) match
+      case some @ Some(_) => ZIO.succeed(some)
+      case None           =>
+        chatRepository
+          .getSessionContextStateByConversation(conversationId)
+          .map(_.flatMap(link => resolveAgentName(link.context.metadata)))
+
+  private def withPreferredAgentMetadata(
+    metadata: Map[String, String],
+    preferredAgent: Option[String],
+  ): Map[String, String] =
+    preferredAgent match
+      case Some(name) => metadata ++ Map("preferredAgent" -> name, "intent.agent" -> name)
+      case None       => metadata
+
   private def parseLongId(entity: String, raw: String): IO[PersistenceError, Long] =
     ZIO
       .fromOption(raw.toLongOption)
       .orElseFail(PersistenceError.QueryFailed(s"parse_$entity", s"Invalid $entity id: '$raw'"))
+
+  private def executeWithPreferredAgent(agentName: Option[String], prompt: String)
+    : IO[LlmError, llm4zio.core.LlmResponse] =
+    agentName.map(_.trim).filter(_.nonEmpty) match
+      case Some(name) =>
+        configResolver
+          .resolveConfig(name)
+          .either
+          .flatMap {
+            case Right(config) =>
+              ZIO.logInfo(s"chat using agent override '$name' provider=${config.provider} model=${config.model}") *>
+                executeWithConfig(config, prompt).catchAll(err =>
+                  ZIO.logWarning(
+                    s"chat agent override execution failed for '$name': ${formatLlmError(err)}; falling back to global provider"
+                  ) *> llmService.execute(prompt)
+                )
+            case Left(err)     =>
+              ZIO.logWarning(s"chat agent override resolution failed for '$name': $err; using global provider") *>
+                llmService.execute(prompt)
+          }
+      case None       =>
+        llmService.execute(prompt)
+
+  private def executeStreamWithPreferredAgent(
+    agentName: Option[String],
+    prompt: String,
+  ): zio.stream.Stream[LlmError, llm4zio.core.LlmChunk] =
+    zio.stream.ZStream.unwrap {
+      agentName.map(_.trim).filter(_.nonEmpty) match
+        case Some(name) =>
+          configResolver
+            .resolveConfig(name)
+            .either
+            .map {
+              case Right(config) =>
+                zio.stream.ZStream.fromZIO(
+                  ZIO.logInfo(
+                    s"chat stream using agent override '$name' provider=${config.provider} model=${config.model}"
+                  )
+                ).drain ++
+                  executeStreamWithConfig(config, prompt).catchAll(err =>
+                    zio.stream.ZStream.fromZIO(
+                      ZIO.logWarning(
+                        s"chat stream agent override execution failed for '$name': ${formatLlmError(err)}; falling back to global provider"
+                      )
+                    ).drain ++ llmService.executeStream(prompt)
+                  )
+              case Left(err)     =>
+                zio.stream.ZStream.fromZIO(
+                  ZIO.logWarning(
+                    s"chat stream agent override resolution failed for '$name': $err; using global provider"
+                  )
+                ).drain ++ llmService.executeStream(prompt)
+            }
+        case None       =>
+          ZIO.succeed(llmService.executeStream(prompt))
+    }
+
+  private def executeWithConfig(config: AIProviderConfig, prompt: String): IO[LlmError, llm4zio.core.LlmResponse] =
+    fallbackConfigs(config)
+      .foldLeft[IO[LlmError, llm4zio.core.LlmResponse]](ZIO.fail(LlmError.ConfigError("No LLM provider configured"))) {
+        (acc, cfg) => acc.orElse(providerFor(cfg).flatMap(_.execute(prompt)))
+      }
+
+  private def executeStreamWithConfig(
+    config: AIProviderConfig,
+    prompt: String,
+  ): zio.stream.Stream[LlmError, llm4zio.core.LlmChunk] =
+    failoverStreamByConfig(fallbackConfigs(config))(service => service.executeStream(prompt))
+
+  private def failoverStreamByConfig(
+    configs: List[llm4zio.core.LlmConfig]
+  )(
+    run: LlmService => zio.stream.Stream[LlmError, llm4zio.core.LlmChunk]
+  ): zio.stream.Stream[LlmError, llm4zio.core.LlmChunk] =
+    configs match
+      case head :: tail =>
+        zio.stream.ZStream.unwrap(
+          providerFor(head).either.map {
+            case Right(service) =>
+              run(service).catchAll(err =>
+                if tail.nonEmpty then failoverStreamByConfig(tail)(run) else zio.stream.ZStream.fail(err)
+              )
+            case Left(err)      =>
+              if tail.nonEmpty then failoverStreamByConfig(tail)(run) else zio.stream.ZStream.fail(err)
+          }
+        )
+      case Nil          =>
+        zio.stream.ZStream.fail(LlmError.ConfigError("No LLM provider configured"))
+
+  private def fallbackConfigs(primary: AIProviderConfig): List[llm4zio.core.LlmConfig] =
+    val primaryLlm = aiConfigToLlmConfig(primary)
+    val fallback   = primary.fallbackChain.models.map { ref =>
+      aiConfigToLlmConfig(
+        AIProviderConfig.withDefaults(
+          primary.copy(
+            provider = ref.provider.getOrElse(primary.provider),
+            model = ref.modelId,
+          )
+        )
+      )
+    }
+    (primaryLlm :: fallback).distinct
+
+  private def formatLlmError(error: LlmError): String =
+    error match
+      case LlmError.ParseError(message, raw)     =>
+        val compact = raw.replaceAll("\\s+", " ").trim
+        val sample  = if compact.length <= 240 then compact else compact.take(240) + "..."
+        s"ParseError(message=$message, raw=$sample)"
+      case LlmError.ProviderError(message, _)    =>
+        s"ProviderError(message=$message)"
+      case LlmError.AuthenticationError(message) =>
+        s"AuthenticationError(message=$message)"
+      case LlmError.InvalidRequestError(message) =>
+        s"InvalidRequestError(message=$message)"
+      case LlmError.RateLimitError(retryAfter)   =>
+        s"RateLimitError(retryAfter=${retryAfter.map(_.toString).getOrElse("unknown")})"
+      case LlmError.TimeoutError(duration)       =>
+        s"TimeoutError(duration=$duration)"
+      case LlmError.ToolError(toolName, message) =>
+        s"ToolError(tool=$toolName, message=$message)"
+      case LlmError.ConfigError(message)         =>
+        s"ConfigError(message=$message)"
+
+  private def providerFor(cfg: llm4zio.core.LlmConfig): IO[LlmError, LlmService] =
+    ZIO
+      .attempt(buildProvider(cfg))
+      .mapError(th => LlmError.ConfigError(Option(th.getMessage).getOrElse(th.toString)))
+
+  private def buildProvider(cfg: llm4zio.core.LlmConfig): LlmService =
+    cfg.provider match
+      case llm4zio.core.LlmProvider.GeminiCli => llm4zio.providers.GeminiCliProvider.make(cfg, cliExecutor)
+      case llm4zio.core.LlmProvider.GeminiApi => llm4zio.providers.GeminiApiProvider.make(cfg, httpClient)
+      case llm4zio.core.LlmProvider.OpenAI    => llm4zio.providers.OpenAIProvider.make(cfg, httpClient)
+      case llm4zio.core.LlmProvider.Anthropic => llm4zio.providers.AnthropicProvider.make(cfg, httpClient)
+      case llm4zio.core.LlmProvider.LmStudio  => llm4zio.providers.LmStudioProvider.make(cfg, httpClient)
+      case llm4zio.core.LlmProvider.Ollama    => llm4zio.providers.OllamaProvider.make(cfg, httpClient)
+      case llm4zio.core.LlmProvider.OpenCode  => llm4zio.providers.OpenCodeProvider.make(cfg, httpClient)
+
+  private def aiConfigToLlmConfig(aiConfig: AIProviderConfig): llm4zio.core.LlmConfig =
+    llm4zio.core.LlmConfig(
+      provider = aiProviderToLlmProvider(aiConfig.provider),
+      model = aiConfig.model,
+      baseUrl = aiConfig.baseUrl,
+      apiKey = aiConfig.apiKey,
+      timeout = aiConfig.timeout,
+      maxRetries = aiConfig.maxRetries,
+      requestsPerMinute = aiConfig.requestsPerMinute,
+      burstSize = aiConfig.burstSize,
+      acquireTimeout = aiConfig.acquireTimeout,
+      temperature = aiConfig.temperature,
+      maxTokens = aiConfig.maxTokens,
+    )
+
+  private def aiProviderToLlmProvider(aiProvider: AIProvider): llm4zio.core.LlmProvider =
+    aiProvider match
+      case AIProvider.GeminiCli => llm4zio.core.LlmProvider.GeminiCli
+      case AIProvider.GeminiApi => llm4zio.core.LlmProvider.GeminiApi
+      case AIProvider.OpenAi    => llm4zio.core.LlmProvider.OpenAI
+      case AIProvider.Anthropic => llm4zio.core.LlmProvider.Anthropic
+      case AIProvider.LmStudio  => llm4zio.core.LlmProvider.LmStudio
+      case AIProvider.Ollama    => llm4zio.core.LlmProvider.Ollama
+      case AIProvider.OpenCode  => llm4zio.core.LlmProvider.OpenCode
 
   private def sanitizeOptional[A](value: Option[A]): Option[A] =
     try
