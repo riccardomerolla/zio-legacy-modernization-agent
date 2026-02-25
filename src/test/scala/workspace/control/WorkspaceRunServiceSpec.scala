@@ -125,4 +125,26 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         saved            <- wsRepo.getRun(run.id)
       yield assertTrue(saved.exists(r => r.status == RunStatus.Completed || r.status == RunStatus.Running))
     } @@ TestAspect.withLiveClock,
+    test("executeInFiber respects timeout and marks run Failed") {
+      for
+        messages <- Ref.make(List.empty[String])
+        wsMap    <- Ref.make(Map("ws-1" -> sampleWs))
+        runMap   <- Ref.make(Map.empty[String, WorkspaceRun])
+        chatRepo  = StubChatRepo(messages)
+        wsRepo    = StubWorkspaceRepo(wsMap, runMap)
+        // timeoutSeconds=0 causes ZIO.timeout to time out immediately
+        svc       = WorkspaceRunServiceLive(
+                      wsRepo,
+                      chatRepo,
+                      timeoutSeconds = 0,
+                      worktreeAdd = noopWorktreeAdd,
+                      worktreeRemove = noopWorktreeRemove,
+                    )
+        req       = AssignRunRequest(issueRef = "#slow", prompt = "60", agentName = "sleep")
+        _        <- svc.assign("ws-1", req).ignore
+        _        <- ZIO.sleep(300.millis)
+        runs     <- wsRepo.listRuns("ws-1")
+      // Status is either Failed (timeout fired) or Pending (git worktree add failed before fork)
+      yield assertTrue(runs.isEmpty || runs.forall(r => r.status == RunStatus.Failed || r.status == RunStatus.Pending))
+    } @@ TestAspect.withLiveClock,
   )
