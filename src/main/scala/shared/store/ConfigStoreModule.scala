@@ -10,6 +10,7 @@ import io.github.riccardomerolla.zio.eclipsestore.config.{ EclipseStoreConfig, S
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import io.github.riccardomerolla.zio.eclipsestore.schema.{ SchemaBinaryCodec, TypedStore, TypedStoreLive }
 import io.github.riccardomerolla.zio.eclipsestore.service.{ EclipseStoreService, LifecycleCommand }
+import workspace.entity.{ Workspace, WorkspaceRun }
 
 private val configStoreHandlers =
   SchemaBinaryCodec.handlers(Schema[String])
@@ -17,6 +18,8 @@ private val configStoreHandlers =
     ++ SchemaBinaryCodec.handlers(Schema[Setting])
     ++ SchemaBinaryCodec.handlers(Schema[Workflow])
     ++ SchemaBinaryCodec.handlers(Schema[CustomAgent])
+    ++ SchemaBinaryCodec.handlers(Schema[Workspace])
+    ++ SchemaBinaryCodec.handlers(Schema[WorkspaceRun])
 
 object ConfigStoreModule:
 
