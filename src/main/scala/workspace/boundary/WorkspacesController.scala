@@ -39,6 +39,22 @@ object WorkspacesController:
           .catchAll(ZIO.succeed)
       },
 
+      // New workspace form fragment
+      Method.GET / "api" / "workspaces" / "new" -> handler { (_: Request) =>
+        ZIO.succeed(html(WorkspacesView.newWorkspaceForm))
+      },
+
+      // Edit workspace form fragment
+      Method.GET / "api" / "workspaces" / string("id") / "edit" -> handler { (id: String, _: Request) =>
+        repo.get(id)
+          .mapError(persistErr)
+          .map {
+            case None     => Response(status = Status.NotFound)
+            case Some(ws) => html(WorkspacesView.editWorkspaceForm(ws))
+          }
+          .catchAll(ZIO.succeed)
+      },
+
       // Create
       Method.POST / "api" / "workspaces" -> handler { (req: Request) =>
         (for
@@ -58,7 +74,8 @@ object WorkspacesController:
                      updatedAt = now,
                    )
           _     <- repo.save(newWs).mapError(persistErr)
-        yield Response.json(newWs.toJson).status(Status.Created)).catchAll(ZIO.succeed)
+          all   <- repo.list.mapError(persistErr)
+        yield html(WorkspacesView.page(all))).catchAll(ZIO.succeed)
       },
 
       // Update
@@ -80,7 +97,10 @@ object WorkspacesController:
                             description = patch.description,
                             updatedAt = now,
                           )
-                          repo.save(updated).mapError(persistErr).as(Response.json(updated.toJson))
+                          for
+                            _   <- repo.save(updated).mapError(persistErr)
+                            all <- repo.list.mapError(persistErr)
+                          yield html(WorkspacesView.page(all))
         yield resp).catchAll(ZIO.succeed)
       },
 

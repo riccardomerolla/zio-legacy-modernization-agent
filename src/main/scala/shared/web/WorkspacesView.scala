@@ -92,6 +92,81 @@ object WorkspacesView:
       div(id := s"runs-${ws.id}", cls := "mt-4"),
     )
 
+  def newWorkspaceForm: String =
+    modalForm(
+      title = "New Workspace",
+      formId = "ws-new-form",
+      submitUrl = "/api/workspaces",
+      method = "post",
+      ws = None,
+    )
+
+  def editWorkspaceForm(ws: Workspace): String =
+    modalForm(
+      title = s"Edit — ${ws.name}",
+      formId = s"ws-edit-form-${ws.id}",
+      submitUrl = s"/api/workspaces/${ws.id}",
+      method = "put",
+      ws = Some(ws),
+    )
+
+  private def modalForm(
+    title: String,
+    formId: String,
+    submitUrl: String,
+    method: String,
+    ws: Option[Workspace],
+  ): String =
+    div(cls := "rounded-xl border border-white/10 bg-slate-900/90 p-6 shadow-xl")(
+      div(cls := "mb-4 flex items-center justify-between")(
+        h2(cls := "text-lg font-semibold text-white")(title),
+        button(
+          `type`              := "button",
+          cls                 := "text-slate-400 hover:text-white text-xl leading-none",
+          attr("hx-get")      := "/settings/workspaces",
+          attr("hx-target")   := "body",
+          attr("hx-swap")     := "outerHTML",
+          attr("hx-push-url") := "true",
+        )("×"),
+      ),
+      tag("form")(
+        id                   := formId,
+        attr("hx-" + method) := submitUrl,
+        attr("hx-target")    := "body",
+        attr("hx-swap")      := "outerHTML",
+        attr("hx-push-url")  := "/settings/workspaces",
+        cls                  := "space-y-4",
+      )(
+        formField("name", "Name", ws.map(_.name).getOrElse(""), required = true),
+        formField("localPath", "Local path", ws.flatMap(v => Some(v.localPath)).getOrElse(""), required = true),
+        formField("defaultAgent", "Default agent", ws.flatMap(_.defaultAgent).getOrElse(""), required = false),
+        formField("description", "Description", ws.flatMap(_.description).getOrElse(""), required = false),
+        div(cls := "flex gap-3 pt-2")(
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400",
+          )("Save"),
+          a(
+            href := "/settings/workspaces",
+            cls  := "rounded-md border border-white/20 px-4 py-2 text-sm font-semibold text-slate-300 hover:text-white",
+          )("Cancel"),
+        ),
+      ),
+    ).render
+
+  private def formField(fieldName: String, labelText: String, fieldValue: String, required: Boolean): Frag =
+    div(
+      label(cls := "mb-1 block text-sm font-semibold text-slate-200", `for` := fieldName)(labelText),
+      input(
+        `type` := "text",
+        id     := fieldName,
+        name   := fieldName,
+        value  := fieldValue,
+        cls    := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none",
+        if required then scalatags.Text.all.required else (),
+      ),
+    )
+
   def runsFragment(runs: List[WorkspaceRun]): String =
     if runs.isEmpty then
       div(cls := "text-sm text-slate-500 py-2 text-center")("No runs yet.").render
