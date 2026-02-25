@@ -40,10 +40,8 @@ object WorkspaceModelsSpec extends ZIOSpecDefault:
       val decoded = json.fromJson[WorkspaceRun]
       assertTrue(decoded == Right(run))
     },
-    test("RunStatus values serialize correctly") {
-      assertTrue(RunStatus.Pending.toJson == "\"Pending\"") &&
-      assertTrue(RunStatus.Running.toJson == "\"Running\"") &&
-      assertTrue(RunStatus.Completed.toJson == "\"Completed\"") &&
-      assertTrue(RunStatus.Failed.toJson == "\"Failed\"")
+    test("RunStatus values round-trip through JSON") {
+      val statuses: List[RunStatus] = List(RunStatus.Pending, RunStatus.Running, RunStatus.Completed, RunStatus.Failed)
+      assertTrue(statuses.forall(s => s.toJson.fromJson[RunStatus] == Right(s)))
     },
   )

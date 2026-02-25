@@ -16,8 +16,12 @@ case class Workspace(
   updatedAt: Instant,
 ) derives JsonCodec, Schema
 
-enum RunStatus derives JsonCodec, Schema:
-  case Pending, Running, Completed, Failed
+sealed trait RunStatus derives JsonCodec, Schema
+object RunStatus:
+  case object Pending   extends RunStatus
+  case object Running   extends RunStatus
+  case object Completed extends RunStatus
+  case object Failed    extends RunStatus
 
 case class WorkspaceRun(
   id: String,
