@@ -248,6 +248,14 @@ final case class ChatControllerLive(
         yield Response.json(SessionDeleteResponse(deleted = true, sessionId = decoded).toJson)
       }
     },
+    Method.DELETE / "api" / "conversations" / string("id")   -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          convId <- parseLongId("conversation", id)
+          _      <- chatRepository.deleteConversation(convId)
+        yield Response(status = Status.NoContent)
+      }
+    },
   )
 
   private def html(content: String): Response =

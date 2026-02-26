@@ -26,6 +26,8 @@ case class Workspace(
   description: Option[String],
   enabled: Boolean = true,
   runMode: RunMode = RunMode.Host,
+  /** The CLI binary used to run agents in this workspace (e.g. "claude", "gemini", "opencode"). */
+  cliTool: String = "claude",
   createdAt: Instant,
   updatedAt: Instant,
 ) derives JsonCodec, Schema

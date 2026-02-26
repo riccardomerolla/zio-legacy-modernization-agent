@@ -83,6 +83,19 @@ final case class WorkspaceRunServiceLive(
       convId <- chatRepo
                   .createConversation(conv)
                   .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+      _      <- chatRepo
+                  .addMessage(
+                    ConversationEntry(
+                      conversationId = convId.toString,
+                      sender = "user",
+                      senderType = SenderType.User,
+                      content = req.prompt,
+                      messageType = MessageType.Text,
+                      createdAt = now,
+                      updatedAt = now,
+                    )
+                  )
+                  .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
       run     = WorkspaceRun(
                   id = runId,
                   workspaceId = workspaceId,
@@ -99,7 +112,21 @@ final case class WorkspaceRunServiceLive(
       _      <- wsRepo
                   .saveRun(run)
                   .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-      _      <- executeInFiber(run, ws.runMode).forkDaemon
+      _      <- chatRepo
+                  .addMessage(
+                    ConversationEntry(
+                      conversationId = convId.toString,
+                      sender = "system",
+                      senderType = SenderType.System,
+                      content =
+                        s"Agent `${req.agentName}` (via `${ws.cliTool}`) started on branch `${run.branchName}` in `${run.worktreePath}`",
+                      messageType = MessageType.Status,
+                      createdAt = now,
+                      updatedAt = now,
+                    )
+                  )
+                  .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+      _      <- executeInFiber(run, ws.runMode, ws.cliTool).forkDaemon
     yield run
 
   override def continueRun(runId: String, followUpPrompt: String): IO[WorkspaceError, Unit] =
@@ -116,25 +143,33 @@ final case class WorkspaceRunServiceLive(
                .flatMap(
                  _.fold[IO[WorkspaceError, Workspace]](ZIO.fail(WorkspaceError.NotFound(run.workspaceId)))(ZIO.succeed)
                )
-      _   <- executeInFiber(run.copy(prompt = followUpPrompt), ws.runMode).forkDaemon
+      _   <- executeInFiber(run.copy(prompt = followUpPrompt), ws.runMode, ws.cliTool).forkDaemon
     yield ()
 
-  private def executeInFiber(run: WorkspaceRun, runMode: RunMode): IO[WorkspaceError, Unit] =
-    val argv = CliAgentRunner.buildArgv(run.agentName, run.prompt, run.worktreePath, runMode)
+  private def executeInFiber(run: WorkspaceRun, runMode: RunMode, cliTool: String): IO[WorkspaceError, Unit] =
+    val argv    = CliAgentRunner.buildArgv(cliTool, run.prompt, run.worktreePath, runMode)
+    val argvStr = argv.map(a => if a.contains(" ") then s"'$a'" else a).mkString(" ")
     for
       _                <- wsRepo
                             .updateRunStatus(run.id, RunStatus.Running)
                             .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+      _                <- ZIO.logInfo(s"[run:${run.id}] launching: $argvStr  (cwd=${run.worktreePath})")
       resultOrTimeout  <- CliAgentRunner
                             .runProcess(argv, run.worktreePath)
                             .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
                             .mapError(e => WorkspaceError.WorktreeError(e.getMessage))
+                            .tapError(e => ZIO.logError(s"[run:${run.id}] process error: $e"))
       (lines, exitCode) = resultOrTimeout.getOrElse((List("Run timed out"), 1))
+      _                <- ZIO.logWarning(s"[run:${run.id}] timed out after ${timeoutSeconds}s")
+                            .when(resultOrTimeout.isEmpty)
+      _                <- ZIO.logInfo(s"[run:${run.id}] finished exit=$exitCode lines=${lines.size}")
+                            .when(resultOrTimeout.isDefined)
       _                <- streamLinesToConversation(run.conversationId, lines)
       status            = if resultOrTimeout.isDefined && exitCode == 0 then RunStatus.Completed else RunStatus.Failed
       _                <- wsRepo
                             .updateRunStatus(run.id, status)
                             .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+      _                <- ZIO.logInfo(s"[run:${run.id}] status=$status")
       _                <- worktreeRemove(run.worktreePath).ignore
     yield ()
 

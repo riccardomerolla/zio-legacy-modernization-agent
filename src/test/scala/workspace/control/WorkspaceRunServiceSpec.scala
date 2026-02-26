@@ -33,6 +33,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     def listIssuesByStatus(s: IssueStatus): IO[DbPersistenceError, List[AgentIssue]]                 = ZIO.succeed(Nil)
     def listUnassignedIssues(r: Long): IO[DbPersistenceError, List[AgentIssue]]                      = ZIO.succeed(Nil)
     def updateIssue(i: AgentIssue): IO[DbPersistenceError, Unit]                                     = ZIO.unit
+    def deleteIssue(id: Long): IO[DbPersistenceError, Unit]                                          = ZIO.unit
     def assignIssueToAgent(id: Long, name: String): IO[DbPersistenceError, Unit]                     = ZIO.unit
     def createAssignment(a: AgentAssignment): IO[DbPersistenceError, Long]                           = ZIO.succeed(1L)
     def getAssignment(id: Long): IO[DbPersistenceError, Option[AgentAssignment]]                     = ZIO.succeed(None)

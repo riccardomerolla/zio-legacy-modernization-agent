@@ -1,11 +1,15 @@
 package shared.web
 
+import config.entity.AgentInfo
+import issues.entity.api.AgentIssue
 import scalatags.Text.all.*
 import workspace.entity.{ RunMode, RunStatus, Workspace, WorkspaceRun }
 
 object WorkspacesView:
 
-  def page(workspaces: List[Workspace]): String =
+  val supportedCliTools: List[String] = List("claude", "gemini", "opencode", "codex", "copilot")
+
+  def page(workspaces: List[Workspace], agents: List[AgentInfo]): String =
     Layout.page("Workspaces", "/workspaces")(
       div(cls := "space-y-6")(
         div(cls := "rounded-xl border border-white/10 bg-slate-900/80 px-5 py-4")(
@@ -33,14 +37,15 @@ object WorkspacesView:
             ),
           )
         else
-          div(cls := "space-y-4")(workspaces.map(workspaceCard)*),
+          div(cls := "space-y-4")(workspaces.map(workspaceCard(_, agents))*),
       )
     )
 
-  private def workspaceCard(ws: Workspace): Frag =
+  private def workspaceCard(ws: Workspace, agents: List[AgentInfo]): Frag =
     div(
-      cls := "rounded-xl border border-white/10 bg-slate-900/60 p-5",
-      id  := s"ws-${ws.id}",
+      cls                := "rounded-xl border border-white/10 bg-slate-900/60 p-5",
+      id                 := s"ws-${ws.id}",
+      attr("data-ws-id") := ws.id,
     )(
       div(cls := "flex items-start justify-between gap-4")(
         div(
@@ -60,9 +65,7 @@ object WorkspacesView:
               ),
           ),
           p(cls := "mt-1 text-sm text-slate-400 font-mono")(ws.localPath),
-          ws.defaultAgent.map(a =>
-            p(cls := "mt-1 text-xs text-slate-500")(s"Default agent: $a")
-          ).getOrElse(frag()),
+          p(cls := "mt-1 text-xs text-slate-500")(s"CLI: ${ws.cliTool}"),
           p(cls := "mt-1 text-xs text-slate-500")(runModeLabel(ws.runMode)),
           ws.description.map(d =>
             p(cls := "mt-1 text-sm text-slate-400")(d)
@@ -90,7 +93,10 @@ object WorkspacesView:
           )("Delete"),
         ),
       ),
-      div(id := s"runs-${ws.id}", cls := "mt-4"),
+      div(cls := "mt-4 border-t border-white/10 pt-4")(
+        assignForm(ws.id, ws.defaultAgent, agents)
+      ),
+      div(id := s"runs-${ws.id}", cls := "mt-3"),
     )
 
   def newWorkspaceForm: String =
@@ -111,10 +117,18 @@ object WorkspacesView:
       ws = Some(ws),
     )
 
+  private def cliToolLabel(tool: String): String = tool match
+    case "claude"   => "Claude (claude --print)"
+    case "gemini"   => "Gemini CLI (gemini -p)"
+    case "opencode" => "OpenCode (opencode run)"
+    case "codex"    => "Codex (codex)"
+    case "copilot"  => "GitHub Copilot (gh copilot)"
+    case other      => other
+
   private def runModeLabel(runMode: RunMode): String =
     runMode match
-      case RunMode.Host                     => "Run mode: Host"
-      case RunMode.Docker(image, _, _, _)   => s"Run mode: \uD83D\uDC33 Docker ($image)"
+      case RunMode.Host                   => "Run mode: Host"
+      case RunMode.Docker(image, _, _, _) => s"Run mode: \uD83D\uDC33 Docker ($image)"
 
   private def modalForm(
     title: String,
@@ -145,8 +159,8 @@ object WorkspacesView:
       )(
         formField("name", "Name", ws.map(_.name).getOrElse(""), required = true),
         formField("localPath", "Local path", ws.flatMap(v => Some(v.localPath)).getOrElse(""), required = true),
-        formField("defaultAgent", "Default agent", ws.flatMap(_.defaultAgent).getOrElse(""), required = false),
         formField("description", "Description", ws.flatMap(_.description).getOrElse(""), required = false),
+        cliToolSelectField(ws.map(_.cliTool).getOrElse("claude")),
         runModeField(ws.map(_.runMode).getOrElse(RunMode.Host), formId),
         div(cls := "flex gap-3 pt-2")(
           button(
@@ -162,7 +176,7 @@ object WorkspacesView:
     ).render
 
   private def runModeField(currentMode: RunMode, scopeId: String): Frag =
-    val isDocker = currentMode.isInstanceOf[RunMode.Docker]
+    val isDocker                                  = currentMode.isInstanceOf[RunMode.Docker]
     val (dockerImage, dockerNetwork, dockerMount) = currentMode match
       case RunMode.Docker(img, _, mount, net) => (img, net.getOrElse(""), mount)
       case RunMode.Host                       => ("", "", true)
@@ -171,9 +185,9 @@ object WorkspacesView:
       div(cls := "flex gap-4")(
         label(cls := "flex items-center gap-1.5 text-sm text-slate-200")(
           input(
-            `type` := "radio",
-            name   := s"runModeType-$scopeId",
-            value  := "host",
+            `type`           := "radio",
+            name             := "runModeType",
+            value            := "host",
             if !isDocker then checked else (),
             attr("onchange") := s"document.getElementById('docker-fields-$scopeId').style.display='none'",
           ),
@@ -181,9 +195,9 @@ object WorkspacesView:
         ),
         label(cls := "flex items-center gap-1.5 text-sm text-slate-200")(
           input(
-            `type` := "radio",
-            name   := s"runModeType-$scopeId",
-            value  := "docker",
+            `type`           := "radio",
+            name             := "runModeType",
+            value            := "docker",
             if isDocker then checked else (),
             attr("onchange") := s"document.getElementById('docker-fields-$scopeId').style.display='block'",
           ),
@@ -200,19 +214,20 @@ object WorkspacesView:
             "Docker image"
           ),
           input(
-            `type`       := "text",
-            id           := s"dockerImage-$scopeId",
-            name         := s"dockerImage-$scopeId",
-            value        := dockerImage,
-            placeholder  := "e.g. ghcr.io/opencode-ai/opencode:latest",
-            cls          := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none",
+            `type`      := "text",
+            id          := s"dockerImage-$scopeId",
+            name        := "dockerImage",
+            value       := dockerImage,
+            placeholder := "e.g. ghcr.io/opencode-ai/opencode:latest",
+            cls         := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none",
           ),
         ),
         div(cls := "flex items-center gap-2")(
           input(
             `type` := "checkbox",
             id     := s"dockerMount-$scopeId",
-            name   := s"dockerMount-$scopeId",
+            name   := "dockerMount",
+            value  := "on",
             if dockerMount then checked else (),
           ),
           label(cls := "text-xs text-slate-300", `for` := s"dockerMount-$scopeId")(
@@ -226,12 +241,26 @@ object WorkspacesView:
           input(
             `type`      := "text",
             id          := s"dockerNetwork-$scopeId",
-            name        := s"dockerNetwork-$scopeId",
+            name        := "dockerNetwork",
             value       := dockerNetwork,
             placeholder := "e.g. none",
             cls         := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none",
           ),
         ),
+      ),
+    )
+
+  private def cliToolSelectField(current: String): Frag =
+    div(
+      label(cls := "mb-1 block text-sm font-semibold text-slate-200", `for` := "cliTool")("CLI Tool"),
+      tag("select")(
+        id   := "cliTool",
+        name := "cliTool",
+        cls  := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 focus:border-indigo-400/40 focus:outline-none",
+      )(
+        supportedCliTools.map { tool =>
+          option(value := tool, if tool == current then selected else ())(cliToolLabel(tool))
+        }*
       ),
     )
 
@@ -247,6 +276,12 @@ object WorkspacesView:
         if required then scalatags.Text.all.required else (),
       ),
     )
+
+  def assignErrorFragment(message: String): String =
+    div(cls := "mt-2 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200")(
+      span(cls := "font-semibold")("Run failed: "),
+      message,
+    ).render
 
   def runsFragment(runs: List[WorkspaceRun]): String =
     if runs.isEmpty then
@@ -271,15 +306,39 @@ object WorkspacesView:
             ),
             tbody(cls := "divide-y divide-white/5")(runs.map(runRow)*),
           )
-        ),
-        assignForm(runs.headOption.map(_.workspaceId).getOrElse("")),
+        )
       ).render
 
+  /** Standalone HTML fragment for a single run row — used by the HTMX poll endpoint. */
+  def runRowFragment(run: WorkspaceRun): String =
+    runRow(run).render
+
   private def runRow(run: WorkspaceRun): Frag =
-    tr(cls := "hover:bg-white/5")(
+    val isActive  = run.status == RunStatus.Pending || run.status == RunStatus.Running
+    val pollUrl   = s"/api/workspaces/${run.workspaceId}/runs/${run.id}/row"
+    val baseAttrs = Seq(
+      cls := "hover:bg-white/5",
+      id  := s"run-row-${run.id}",
+    )
+    val pollAttrs = if isActive then
+      Seq(
+        attr("hx-get")     := pollUrl,
+        attr("hx-trigger") := "every 3s",
+        attr("hx-target")  := s"#run-row-${run.id}",
+        attr("hx-swap")    := "outerHTML",
+      )
+    else Seq.empty
+    tr((baseAttrs ++ pollAttrs)*)(
       td(cls := "py-2 pl-4 pr-3 text-sm font-medium text-white")(run.issueRef),
       td(cls := "px-3 py-2 text-sm text-slate-300")(run.agentName),
-      td(cls := "px-3 py-2 text-sm")(statusBadge(run.status)),
+      td(cls := "px-3 py-2 text-sm")(
+        if isActive then
+          div(cls := "flex items-center gap-1.5")(
+            div(cls := "h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse"),
+            statusBadge(run.status),
+          )
+        else statusBadge(run.status)
+      ),
       td(cls := "px-3 py-2 text-sm")(
         a(href := s"/chat/${run.conversationId}", cls := "text-indigo-400 hover:text-indigo-300 hover:underline")(
           "View Chat"
@@ -295,34 +354,94 @@ object WorkspacesView:
       case RunStatus.Failed    => ("Failed", "border-rose-400/30 bg-rose-500/20 text-rose-200")
     span(cls := s"rounded-full border px-2 py-0.5 text-xs font-semibold $colour")(label)
 
-  private def assignForm(workspaceId: String): Frag =
-    div(cls := "mt-4 border-t border-white/10 pt-4")(
-      p(cls := "text-sm font-semibold text-slate-200 mb-2")("Assign new run"),
-      div(cls := "flex flex-wrap gap-2")(
+  private def assignForm(workspaceId: String, defaultAgent: Option[String], agents: List[AgentInfo]): Frag =
+    val searchId      = s"issue-search-$workspaceId"
+    val resultsId     = s"issue-results-$workspaceId"
+    val refId         = s"issue-ref-$workspaceId"
+    val promptId      = s"issue-prompt-$workspaceId"
+    val agentSelectId = s"agent-select-$workspaceId"
+    div(cls := "space-y-3")(
+      p(cls := "text-sm font-semibold text-slate-200")("Assign run to agent"),
+      // Issue search row
+      div(cls := "relative")(
         input(
-          `type`      := "text",
-          name        := "issueRef",
-          placeholder := "Issue ref (#42)",
-          cls         := "rounded-md border border-white/15 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 w-28",
+          id                 := searchId,
+          `type`             := "text",
+          placeholder        := "Search open issues…",
+          cls                := "w-full rounded-md border border-white/15 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500",
+          attr("hx-get")     := "/api/workspaces/issues/search",
+          attr("hx-trigger") := "input changed delay:300ms",
+          attr("hx-target")  := s"#$resultsId",
+          attr("hx-swap")    := "innerHTML",
+          attr("hx-vals")    := s"""js:{q: document.getElementById('$searchId').value}""",
         ),
-        input(
-          `type`      := "text",
-          name        := "prompt",
-          placeholder := "Task prompt",
-          cls         := "rounded-md border border-white/15 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 flex-1",
+        div(
+          id                 := resultsId,
+          cls                := "absolute z-10 mt-1 w-full rounded-md border border-white/10 bg-slate-800 shadow-lg empty:hidden",
         ),
-        input(
-          `type`      := "text",
-          name        := "agentName",
-          placeholder := "Agent (gemini-cli)",
-          cls         := "rounded-md border border-white/15 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 w-36",
+      ),
+      // Hidden fields populated on issue selection
+      input(`type` := "hidden", id := refId, name    := "issueRef", value := ""),
+      input(`type` := "hidden", id := promptId, name := "prompt", value   := ""),
+      // Agent select + submit row
+      div(cls := "flex flex-wrap gap-2 items-center")(
+        span(
+          id  := s"selected-label-$workspaceId",
+          cls := "text-xs text-slate-400 italic flex-1",
+        )("No issue selected"),
+        tag("select")(
+          id   := agentSelectId,
+          name := "agentName",
+          cls  := "rounded-md border border-white/15 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-100 focus:border-indigo-400/40 focus:outline-none",
+        )(
+          agents.map { a =>
+            val isDefault = defaultAgent.contains(a.name)
+            option(value := a.name, if isDefault then selected else ())(a.displayName)
+          }*
         ),
         button(
-          cls                := "rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-400",
+          cls                := "rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40",
           attr("hx-post")    := s"/api/workspaces/$workspaceId/runs",
-          attr("hx-include") := "closest div",
-          attr("hx-target")  := "closest div[id^='runs-']",
+          attr("hx-include") := s"#$refId, #$promptId, #$agentSelectId",
+          attr("hx-target")  := s"#runs-$workspaceId",
           attr("hx-swap")    := "innerHTML",
-        )("Assign"),
+        )("Run"),
       ),
     )
+
+  /** HTMX fragment: list of selectable issue rows for the assign-run search dropdown. */
+  def issueSearchResults(issues: List[AgentIssue]): String =
+    if issues.isEmpty then
+      div(cls := "px-3 py-2 text-sm text-slate-400")("No open issues found").render
+    else
+      div(
+        issues.map { issue =>
+          val issueId    = issue.id.getOrElse("")
+          val issueTitle = issue.title
+          val issueDesc  = issue.description.take(80) + (if issue.description.length > 80 then "…" else "")
+          // On click: populate the hidden fields and update the label, then close the dropdown
+          val onclick    =
+            s"""(function(el){
+               |  var card = el.closest('[data-ws-id]');
+               |  var wsId = card ? card.dataset.wsId : '';
+               |  document.getElementById('issue-ref-'+wsId).value='${escapeJs(issueId)}';
+               |  document.getElementById('issue-prompt-'+wsId).value='${escapeJs(issueTitle)}';
+               |  document.getElementById('selected-label-'+wsId).textContent='#${escapeJs(issueId)}: ${escapeJs(
+                issueTitle
+              )}';
+               |  document.getElementById('issue-results-'+wsId).innerHTML='';
+               |  document.getElementById('issue-search-'+wsId).value='';
+               |})(this)""".stripMargin.replaceAll("\n", " ")
+          button(
+            `type`          := "button",
+            cls             := "w-full text-left px-3 py-2 hover:bg-slate-700 border-b border-white/5 last:border-0",
+            attr("onclick") := onclick,
+          )(
+            div(cls := "text-sm text-slate-100")(s"#$issueId  $issueTitle"),
+            div(cls := "text-xs text-slate-400 mt-0.5")(issueDesc),
+          )
+        }*
+      ).render
+
+  private def escapeJs(s: String): String =
+    s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")

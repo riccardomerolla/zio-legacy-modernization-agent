@@ -4,6 +4,9 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
+import db.ChatRepository
+import issues.entity.api.IssueStatus
+import orchestration.control.AgentRegistry
 import shared.errors.PersistenceError
 import shared.web.WorkspacesView
 import workspace.control.{ AssignRunRequest, WorkspaceRunService }
@@ -11,7 +14,12 @@ import workspace.entity.*
 
 object WorkspacesController:
 
-  def routes(repo: WorkspaceRepository, runSvc: WorkspaceRunService): Routes[Any, Response] =
+  def routes(
+    repo: WorkspaceRepository,
+    runSvc: WorkspaceRunService,
+    chatRepo: ChatRepository,
+    agentRegistry: AgentRegistry,
+  ): Routes[Any, Response] =
     Routes(
       // Redirect /workspaces → /settings/workspaces
       Method.GET / "workspaces" -> handler { (_: Request) =>
@@ -25,9 +33,10 @@ object WorkspacesController:
 
       // Full page
       Method.GET / "settings" / "workspaces" -> handler { (_: Request) =>
-        repo.list
-          .mapError(persistErr)
-          .map(ws => html(WorkspacesView.page(ws)))
+        (for
+          ws     <- repo.list.mapError(persistErr)
+          agents <- agentRegistry.getAllAgents
+        yield html(WorkspacesView.page(ws, agents)))
           .catchAll(ZIO.succeed)
       },
 
@@ -39,7 +48,7 @@ object WorkspacesController:
           .catchAll(ZIO.succeed)
       },
 
-      // New workspace form fragment
+      // New workspace form fragment (no agents needed — modal is static)
       Method.GET / "api" / "workspaces" / "new" -> handler { (_: Request) =>
         ZIO.succeed(html(WorkspacesView.newWorkspaceForm))
       },
@@ -58,34 +67,30 @@ object WorkspacesController:
       // Create
       Method.POST / "api" / "workspaces" -> handler { (req: Request) =>
         (for
-          body  <- req.body.asString.mapError(_ => Response.internalServerError("body read failed"))
-          patch <- ZIO
-                     .fromEither(body.fromJson[WorkspaceCreateRequest])
-                     .mapError(e => Response.badRequest(e))
-          now   <- Clock.instant
-          newWs  = Workspace(
-                     id = java.util.UUID.randomUUID().toString,
-                     name = patch.name,
-                     localPath = patch.localPath,
-                     defaultAgent = patch.defaultAgent,
-                     description = patch.description,
-                     enabled = true,
-                     runMode = patch.runMode,
-                     createdAt = now,
-                     updatedAt = now,
-                   )
-          _     <- repo.save(newWs).mapError(persistErr)
-          all   <- repo.list.mapError(persistErr)
-        yield html(WorkspacesView.page(all))).catchAll(ZIO.succeed)
+          patch  <- parseFormBody(req)
+          now    <- Clock.instant
+          newWs   = Workspace(
+                      id = java.util.UUID.randomUUID().toString,
+                      name = patch.name,
+                      localPath = patch.localPath,
+                      defaultAgent = patch.defaultAgent,
+                      description = patch.description,
+                      enabled = true,
+                      runMode = patch.runMode,
+                      cliTool = patch.cliTool,
+                      createdAt = now,
+                      updatedAt = now,
+                    )
+          _      <- repo.save(newWs).mapError(persistErr)
+          all    <- repo.list.mapError(persistErr)
+          agents <- agentRegistry.getAllAgents
+        yield html(WorkspacesView.page(all, agents))).catchAll(ZIO.succeed)
       },
 
       // Update
       Method.PUT / "api" / "workspaces" / string("id") -> handler { (id: String, req: Request) =>
         (for
-          body     <- req.body.asString.mapError(_ => Response.internalServerError("body read failed"))
-          patch    <- ZIO
-                        .fromEither(body.fromJson[WorkspaceCreateRequest])
-                        .mapError(e => Response.badRequest(e))
+          patch    <- parseFormBody(req)
           existing <- repo.get(id).mapError(persistErr)
           now      <- Clock.instant
           resp     <- existing match
@@ -97,12 +102,14 @@ object WorkspacesController:
                             defaultAgent = patch.defaultAgent,
                             description = patch.description,
                             runMode = patch.runMode,
+                            cliTool = patch.cliTool,
                             updatedAt = now,
                           )
                           for
-                            _   <- repo.save(updated).mapError(persistErr)
-                            all <- repo.list.mapError(persistErr)
-                          yield html(WorkspacesView.page(all))
+                            _      <- repo.save(updated).mapError(persistErr)
+                            all    <- repo.list.mapError(persistErr)
+                            agents <- agentRegistry.getAllAgents
+                          yield html(WorkspacesView.page(all, agents))
         yield resp).catchAll(ZIO.succeed)
       },
 
@@ -125,24 +132,31 @@ object WorkspacesController:
       // Assign run
       Method.POST / "api" / "workspaces" / string("id") / "runs" -> handler { (id: String, req: Request) =>
         (for
-          body   <- req.body.asString.mapError(_ => Response.internalServerError("body read failed"))
-          assign <- ZIO
-                      .fromEither(body.fromJson[AssignRunRequest])
-                      .mapError(e => Response.badRequest(e))
-          _      <- runSvc
-                      .assign(id, assign)
-                      .mapError {
-                        case WorkspaceError.NotFound(_)        => Response(status = Status.NotFound)
-                        case WorkspaceError.Disabled(_)        => Response(status = Status.Conflict)
-                        case WorkspaceError.WorktreeError(msg) =>
-                          Response.json(s"""{"error":"$msg"}""").status(Status.Conflict)
-                        case other                             => Response.internalServerError(other.toString)
-                      }
-          runs   <- repo.listRuns(id).mapError(persistErr)
-        yield html(WorkspacesView.runsFragment(runs))).catchAll(ZIO.succeed)
+          assign <- parseAssignBody(req)
+          result <- runSvc.assign(id, assign).either
+          resp   <- result match
+                      case Right(_)                                   =>
+                        repo.listRuns(id).mapError(persistErr).map(runs => html(WorkspacesView.runsFragment(runs)))
+                      case Left(WorkspaceError.NotFound(_))           =>
+                        ZIO.succeed(html(WorkspacesView.assignErrorFragment("Workspace not found")))
+                      case Left(WorkspaceError.Disabled(_))           =>
+                        ZIO.succeed(html(WorkspacesView.assignErrorFragment("Workspace is disabled")))
+                      case Left(WorkspaceError.DockerNotAvailable(r)) =>
+                        ZIO.succeed(html(WorkspacesView.assignErrorFragment(s"Docker not available: $r")))
+                      case Left(WorkspaceError.WorktreeError(msg))    =>
+                        ZIO.succeed(html(WorkspacesView.assignErrorFragment(s"Git worktree error: $msg")))
+                      case Left(other)                                =>
+                        ZIO.succeed(html(WorkspacesView.assignErrorFragment(other.toString)))
+        yield resp)
+          .catchAll(err => ZIO.succeed(err))
+          .catchAllDefect(t =>
+            ZIO.logError(s"Unhandled defect in assign run: ${t.getMessage}") *> ZIO.succeed(
+              html(WorkspacesView.assignErrorFragment(t.getMessage))
+            )
+          )
       },
 
-      // Run status
+      // Run status (JSON)
       Method.GET / "api" / "workspaces" / string("wsId") / "runs" / string("runId") ->
         handler { (wsId: String, runId: String, _: Request) =>
           repo.getRun(runId)
@@ -153,7 +167,92 @@ object WorkspacesController:
             }
             .catchAll(ZIO.succeed)
         },
+
+      // Run row poll fragment (HTML) — used by HTMX to refresh a single row
+      Method.GET / "api" / "workspaces" / string("wsId") / "runs" / string("runId") / "row" ->
+        handler { (wsId: String, runId: String, _: Request) =>
+          repo.getRun(runId)
+            .mapError(persistErr)
+            .map {
+              case None      => Response(status = Status.NotFound)
+              case Some(run) => html(WorkspacesView.runRowFragment(run))
+            }
+            .catchAll(ZIO.succeed)
+        },
+
+      // Issue search — returns open/unassigned issues matching ?q= for the assign-run selector
+      Method.GET / "api" / "workspaces" / "issues" / "search" -> handler { (req: Request) =>
+        val query = req.queryParam("q").map(_.trim.toLowerCase).filter(_.nonEmpty)
+        chatRepo
+          .listIssuesByStatus(IssueStatus.Open)
+          .mapError(e => Response.internalServerError(e.toString))
+          .map { issues =>
+            val matched = query.fold(issues)(q =>
+              issues.filter(i => i.title.toLowerCase.contains(q) || i.description.toLowerCase.contains(q))
+            )
+            html(WorkspacesView.issueSearchResults(matched.take(10)))
+          }
+          .catchAll(ZIO.succeed)
+      },
     )
+
+  /** Parse a URL-encoded form body (as sent by HTMX by default) into a WorkspaceCreateRequest. */
+  private def parseFormBody(req: Request): IO[Response, WorkspaceCreateRequest] =
+    req.body.asString
+      .mapError(_ => Response.internalServerError("body read failed"))
+      .flatMap { body =>
+        val fields = body
+          .split("&")
+          .collect {
+            case s if s.contains("=") =>
+              val idx = s.indexOf('=')
+              urlDecode(s.substring(0, idx)) -> urlDecode(s.substring(idx + 1))
+          }
+          .toMap
+
+        val name         = fields.getOrElse("name", "")
+        val localPath    = fields.getOrElse("localPath", "")
+        val defaultAgent = fields.get("defaultAgent").filter(_.nonEmpty)
+        val description  = fields.get("description").filter(_.nonEmpty)
+        val cliTool      = fields.get("cliTool").filter(_.nonEmpty).getOrElse("claude")
+        val runModeType  = fields.getOrElse("runModeType", "host")
+        val runMode      =
+          if runModeType == "docker" then
+            val image         = fields.getOrElse("dockerImage", "")
+            val network       = fields.get("dockerNetwork").filter(_.nonEmpty)
+            val mountWorktree = fields.get("dockerMount").contains("on")
+            RunMode.Docker(image = image, mountWorktree = mountWorktree, network = network)
+          else RunMode.Host
+
+        if name.isEmpty || localPath.isEmpty then
+          ZIO.fail(Response.badRequest("name and localPath are required"))
+        else
+          ZIO.succeed(WorkspaceCreateRequest(name, localPath, defaultAgent, description, runMode, cliTool))
+      }
+
+  /** Parse a URL-encoded form body into an AssignRunRequest. */
+  private def parseAssignBody(req: Request): IO[Response, AssignRunRequest] =
+    req.body.asString
+      .mapError(_ => Response.internalServerError("body read failed"))
+      .flatMap { body =>
+        val fields    = body
+          .split("&")
+          .collect {
+            case s if s.contains("=") =>
+              val idx = s.indexOf('=')
+              urlDecode(s.substring(0, idx)) -> urlDecode(s.substring(idx + 1))
+          }
+          .toMap
+        val issueRef  = fields.getOrElse("issueRef", "")
+        val prompt    = fields.getOrElse("prompt", "")
+        val agentName = fields.getOrElse("agentName", "")
+        if issueRef.isEmpty || prompt.isEmpty || agentName.isEmpty then
+          ZIO.fail(Response.badRequest("issueRef, prompt and agentName are required"))
+        else ZIO.succeed(AssignRunRequest(issueRef, prompt, agentName))
+      }
+
+  private def urlDecode(s: String): String =
+    java.net.URLDecoder.decode(s, java.nio.charset.StandardCharsets.UTF_8)
 
   private def persistErr(e: PersistenceError): Response =
     Response.internalServerError(e.toString)
@@ -167,4 +266,5 @@ case class WorkspaceCreateRequest(
   defaultAgent: Option[String],
   description: Option[String],
   runMode: RunMode = RunMode.Host,
+  cliTool: String = "claude",
 ) derives JsonCodec

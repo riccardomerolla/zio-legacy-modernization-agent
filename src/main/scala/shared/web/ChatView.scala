@@ -325,47 +325,60 @@ object ChatView:
     val channel        = sanitizeOptionalString(conv.channel)
       .orElse(sessionMeta.flatMap(meta => sanitizeString(meta.channelName)))
       .getOrElse("web")
-    a(
-      href := s"/chat/$conversationId",
-      cls  := "bg-white/5 hover:bg-white/10 ring-1 ring-white/10 rounded-lg p-4 transition-all hover:ring-indigo-500/50 cursor-pointer block",
-    )(
-      div(cls := "flex items-start justify-between mb-2")(
-        div(cls := "min-w-0")(
-          h3(cls := "text-lg font-semibold text-white max-w-xs truncate")(conv.title),
-          div(cls := "mt-1 flex items-center gap-2 text-xs")(
-            channelBadge(channel),
-            sessionMeta
-              .filter(meta => sanitizeString(meta.channelName).contains("telegram"))
-              .flatMap(meta =>
-                sanitizeString(meta.sessionKey).map(key =>
-                  span(cls := "text-amber-300/90")(s"via Telegram ($key)")
-                )
-              ),
+    div(id := s"conv-card-$conversationId", cls := "group flex items-stretch gap-2")(
+      a(
+        href := s"/chat/$conversationId",
+        cls  := "flex-1 bg-white/5 hover:bg-white/10 ring-1 ring-white/10 rounded-lg p-4 transition-all hover:ring-indigo-500/50 cursor-pointer block",
+      )(
+        div(cls := "flex items-start justify-between mb-2")(
+          div(cls := "min-w-0")(
+            h3(cls := "text-lg font-semibold text-white max-w-xs truncate")(conv.title),
+            div(cls := "mt-1 flex items-center gap-2 text-xs")(
+              channelBadge(channel),
+              sessionMeta
+                .filter(meta => sanitizeString(meta.channelName).contains("telegram"))
+                .flatMap(meta =>
+                  sanitizeString(meta.sessionKey).map(key =>
+                    span(cls := "text-amber-300/90")(s"via Telegram ($key)")
+                  )
+                ),
+            ),
           ),
-        ),
-        span(
-          cls := s"inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ${
-              if conv.status == "active" then
-                "bg-green-500/10 text-green-400 ring-1 ring-inset ring-green-500/20"
-              else
-                "bg-gray-500/10 text-gray-400 ring-1 ring-inset ring-gray-500/20"
-            }"
-        )(
           span(
-            cls   := "w-1.5 h-1.5 rounded-full mr-1.5",
-            style := s"background-color: ${if conv.status == "active" then "#10b981" else "#6b7280"}",
+            cls := s"inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ${
+                if conv.status == "active" then
+                  "bg-green-500/10 text-green-400 ring-1 ring-inset ring-green-500/20"
+                else
+                  "bg-gray-500/10 text-gray-400 ring-1 ring-inset ring-gray-500/20"
+              }"
+          )(
+            span(
+              cls   := "w-1.5 h-1.5 rounded-full mr-1.5",
+              style := s"background-color: ${if conv.status == "active" then "#10b981" else "#6b7280"}",
+            ),
+            conv.status,
           ),
-          conv.status,
+        ),
+        div(cls := "pt-2")(
+          p(cls := "text-gray-300 text-sm mb-2 truncate")(preview)
+        ),
+        div(cls := "flex items-center justify-between text-xs text-gray-500")(
+          span(s"${conv.messages.length} message${if conv.messages.length != 1 then "s" else ""}"),
+          span(cls := "text-right")(
+            lastMessage.map(_.createdAt).map(formatTimestamp).getOrElse(formatTimestamp(conv.updatedAt))
+          ),
         ),
       ),
-      div(cls := "pt-2")(
-        p(cls := "text-gray-300 text-sm mb-2 truncate")(preview)
-      ),
-      div(cls := "flex items-center justify-between text-xs text-gray-500")(
-        span(s"${conv.messages.length} message${if conv.messages.length != 1 then "s" else ""}"),
-        span(cls := "text-right")(
-          lastMessage.map(_.createdAt).map(formatTimestamp).getOrElse(formatTimestamp(conv.updatedAt))
-        ),
+      button(
+        cls                          := "invisible group-hover:visible flex-shrink-0 self-center flex items-center justify-center w-8 h-8 rounded-md bg-red-600/20 hover:bg-red-500 text-red-400 hover:text-white transition-colors",
+        attr("hx-delete")            := s"/api/conversations/$conversationId",
+        attr("hx-confirm")           := s"Delete conversation '${conv.title}'?",
+        attr("hx-on::after-request") := "if(event.detail.successful){window.location.reload();}",
+        attr("title")                := "Delete conversation",
+      )(
+        raw(
+          """<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>"""
+        )
       ),
     )
 

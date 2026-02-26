@@ -346,6 +346,8 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
         ZIO.fail(PersistenceError.QueryFailed("listUnassignedIssues", "unused"))
       override def updateIssue(issue: AgentIssue): IO[PersistenceError, Unit]                         =
         ZIO.fail(PersistenceError.QueryFailed("updateIssue", "unused"))
+      override def deleteIssue(id: Long): IO[PersistenceError, Unit]                                  =
+        ZIO.unit
       override def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit]   =
         ZIO.fail(PersistenceError.QueryFailed("assignIssueToAgent", "unused"))
       override def createAssignment(assignment: AgentAssignment): IO[PersistenceError, Long]          =

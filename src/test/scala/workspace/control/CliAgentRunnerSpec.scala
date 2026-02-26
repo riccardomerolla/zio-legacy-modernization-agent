@@ -7,13 +7,13 @@ import workspace.entity.RunMode
 
 object CliAgentRunnerSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] = suite("CliAgentRunnerSpec")(
-    // RunMode.Host — same as before
-    test("buildArgv for echo agent returns [echo, prompt]") {
+    // RunMode.Host
+    test("buildArgv for unknown cli tool passes prompt as single arg") {
       val argv = CliAgentRunner.buildArgv("echo", "hello world", "/tmp/wt")
       assertTrue(argv == List("echo", "hello world"))
     },
-    test("buildArgv for gemini-cli returns correct args") {
-      val argv = CliAgentRunner.buildArgv("gemini-cli", "fix the bug", "/tmp/wt")
+    test("buildArgv for gemini returns correct args") {
+      val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt")
       assertTrue(argv == List("gemini", "-p", "fix the bug", "/tmp/wt"))
     },
     test("buildArgv for opencode returns correct args") {
@@ -32,30 +32,42 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
       val argv = CliAgentRunner.buildArgv("copilot", "fix the bug", "/tmp/wt")
       assertTrue(argv == List("gh", "copilot", "suggest", "-t", "shell", "fix the bug"))
     },
-    test("buildArgv for unknown agent passes prompt as single arg") {
-      val argv = CliAgentRunner.buildArgv("my-agent", "do something", "/tmp/wt")
-      assertTrue(argv == List("my-agent", "do something"))
+    test("buildArgv for custom tool falls through to [tool, prompt]") {
+      val argv = CliAgentRunner.buildArgv("my-tool", "do something", "/tmp/wt")
+      assertTrue(argv == List("my-tool", "do something"))
     },
     test("buildArgv with RunMode.Host is identical to default") {
-      val argvDefault  = CliAgentRunner.buildArgv("gemini-cli", "fix it", "/tmp/wt")
-      val argvExplicit = CliAgentRunner.buildArgv("gemini-cli", "fix it", "/tmp/wt", RunMode.Host)
+      val argvDefault  = CliAgentRunner.buildArgv("gemini", "fix it", "/tmp/wt")
+      val argvExplicit = CliAgentRunner.buildArgv("gemini", "fix it", "/tmp/wt", RunMode.Host)
       assertTrue(argvDefault == argvExplicit)
     },
     test("buildArgv with RunMode.Docker wraps in docker run with mount and workdir") {
       val argv = CliAgentRunner.buildArgv(
-        "gemini-cli",
+        "gemini",
         "fix it",
         "/tmp/wt",
         RunMode.Docker("gemini:latest", Nil, mountWorktree = true, None),
       )
       assertTrue(
-        argv == List("docker", "run", "--rm", "-v", "/tmp/wt:/workspace", "--workdir", "/workspace", "gemini:latest",
-          "gemini", "-p", "fix it", "/workspace")
+        argv == List(
+          "docker",
+          "run",
+          "--rm",
+          "-v",
+          "/tmp/wt:/workspace",
+          "--workdir",
+          "/workspace",
+          "gemini:latest",
+          "gemini",
+          "-p",
+          "fix it",
+          "/workspace",
+        )
       )
     },
     test("buildArgv with RunMode.Docker and network includes --network flag") {
       val argv = CliAgentRunner.buildArgv(
-        "gemini-cli",
+        "gemini",
         "fix it",
         "/tmp/wt",
         RunMode.Docker("gemini:latest", Nil, mountWorktree = true, network = Some("none")),
@@ -64,7 +76,7 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
     },
     test("buildArgv with RunMode.Docker and mountWorktree=false omits -v and --workdir") {
       val argv = CliAgentRunner.buildArgv(
-        "gemini-cli",
+        "gemini",
         "fix it",
         "/tmp/wt",
         RunMode.Docker("gemini:latest", Nil, mountWorktree = false, None),

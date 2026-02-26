@@ -150,10 +150,12 @@ final case class IssueControllerLive(
       ErrorHandlingMiddleware.fromPersistence {
         runId match
           case Some(value) =>
-            for
-              parsed <- parseLongId("run", value)
-              issues <- chatRepository.listIssuesByRun(parsed)
-            yield Response.json(issues.toJson)
+            val effect: IO[PersistenceError, List[AgentIssue]] =
+              value.toLongOption match
+                case Some(longId) => chatRepository.listIssuesByRun(longId)
+                case None         =>
+                  chatRepository.listIssues(0, 500).map(_.filter(i => Option(i.runId).flatten.contains(value)))
+            effect.map(issues => Response.json(issues.toJson))
           case None        => chatRepository.listIssues(0, 500).map(issues => Response.json(issues.toJson))
       }
     },
@@ -190,6 +192,14 @@ final case class IssueControllerLive(
         yield Response.json(issues.toJson)
       }
     },
+    Method.DELETE / "api" / "issues" / string("id")                -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          issueId <- parseLongId("issue", id)
+          _       <- chatRepository.deleteIssue(issueId)
+        yield Response(status = Status.NoContent)
+      }
+    },
   )
 
   private def html(content: String): Response =
@@ -198,12 +208,17 @@ final case class IssueControllerLive(
   private def loadIssues(runId: Option[String], statusFilter: Option[String]): IO[PersistenceError, List[AgentIssue]] =
     runId match
       case Some(value) =>
-        for
-          parsed <- parseLongId("run", value)
-          issues <- chatRepository.listIssuesByRun(parsed)
-        yield statusFilter match
-          case Some(raw) => issues.filter(matchesStatus(_, raw))
-          case None      => issues
+        // Workspace run IDs are UUIDs (String); legacy task run IDs are Longs.
+        // Try Long first; fall back to string-equality filter on all issues.
+        val baseEffect: IO[PersistenceError, List[AgentIssue]] =
+          value.toLongOption match
+            case Some(longId) => chatRepository.listIssuesByRun(longId)
+            case None         => chatRepository.listIssues(0, 500).map(_.filter(_.runId.contains(value)))
+        baseEffect.map(issues =>
+          statusFilter match
+            case Some(raw) => issues.filter(matchesStatus(_, raw))
+            case None      => issues
+        )
       case None        =>
         statusFilter match
           case Some(raw) =>

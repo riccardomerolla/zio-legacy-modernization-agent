@@ -144,6 +144,13 @@ final case class ChatRepositoryLive(
       _  <- checkpoint("updateIssue")
     yield ()
 
+  override def deleteIssue(id: Long): IO[PersistenceError, Unit] =
+    for
+      _ <- requireExists[AgentIssueRow](issueKey(id.toString), "agent_issues", "deleteIssue")
+      _ <- kv.remove[String](issueKey(id.toString)).mapError(storeErr("deleteIssue"))
+      _ <- checkpoint("deleteIssue")
+    yield ()
+
   override def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit] =
     for
       now      <- Clock.instant

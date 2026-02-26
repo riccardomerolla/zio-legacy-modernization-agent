@@ -31,6 +31,7 @@ trait ChatRepository:
   def listIssuesByStatus(status: IssueStatus): IO[PersistenceError, List[AgentIssue]]
   def listUnassignedIssues(runId: Long): IO[PersistenceError, List[AgentIssue]]
   def updateIssue(issue: AgentIssue): IO[PersistenceError, Unit]
+  def deleteIssue(id: Long): IO[PersistenceError, Unit]
   def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit]
 
   // Agent Assignments
@@ -200,6 +201,9 @@ object ChatRepository:
 
   def updateIssue(issue: AgentIssue): ZIO[ChatRepository, PersistenceError, Unit] =
     ZIO.serviceWithZIO[ChatRepository](_.updateIssue(issue))
+
+  def deleteIssue(id: Long): ZIO[ChatRepository, PersistenceError, Unit] =
+    ZIO.serviceWithZIO[ChatRepository](_.deleteIssue(id))
 
   def assignIssueToAgent(issueId: Long, agentName: String): ZIO[ChatRepository, PersistenceError, Unit] =
     ZIO.serviceWithZIO[ChatRepository](_.assignIssueToAgent(issueId, agentName))
