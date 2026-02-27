@@ -1,7 +1,5 @@
 package orchestration.control
 
-import java.time.Instant
-
 import zio.*
 import zio.json.*
 
@@ -9,24 +7,24 @@ import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
 import conversation.entity.api.{ ChatConversation, ConversationEntry, MessageType, SenderType }
 import db.{ ChatRepository, PersistenceError, TaskRepository }
-import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
+import issues.entity.{ IssueEvent, IssueRepository }
+import issues.entity.api.{ AgentIssueView, IssueStatus, IssuePriority }
 import llm4zio.core.{ LlmError, LlmService }
-import shared.ids.Ids.{ EventId, TaskRunId }
+import shared.ids.Ids.{ AgentId, EventId, IssueId, TaskRunId }
 
 trait IssueAssignmentOrchestrator:
-  def assignIssue(issueId: Long, agentName: String): IO[PersistenceError, AgentIssue]
+  def assignIssue(issueId: String, agentName: String): IO[PersistenceError, AgentIssueView]
 
 object IssueAssignmentOrchestrator:
 
-  def assignIssue(issueId: Long, agentName: String): ZIO[IssueAssignmentOrchestrator, PersistenceError, AgentIssue] =
+  def assignIssue(issueId: String, agentName: String): ZIO[IssueAssignmentOrchestrator, PersistenceError, AgentIssueView] =
     ZIO.serviceWithZIO[IssueAssignmentOrchestrator](_.assignIssue(issueId, agentName))
 
-  val live
-    : ZLayer[
-      ChatRepository & TaskRepository & LlmService & AgentConfigResolver & ActivityHub,
-      Nothing,
-      IssueAssignmentOrchestrator,
-    ] =
+  val live: ZLayer[
+    ChatRepository & TaskRepository & LlmService & AgentConfigResolver & ActivityHub & IssueRepository,
+    Nothing,
+    IssueAssignmentOrchestrator,
+  ] =
     ZLayer.scoped {
       for
         chatRepository      <- ZIO.service[ChatRepository]
@@ -34,6 +32,7 @@ object IssueAssignmentOrchestrator:
         llmService          <- ZIO.service[LlmService]
         configResolver      <- ZIO.service[AgentConfigResolver]
         activityHub         <- ZIO.service[ActivityHub]
+        issueRepository     <- ZIO.service[IssueRepository]
         queue               <- Queue.unbounded[AssignmentTask]
         service              =
           IssueAssignmentOrchestratorLive(
@@ -42,6 +41,7 @@ object IssueAssignmentOrchestrator:
             llmService,
             configResolver,
             activityHub,
+            issueRepository,
             queue,
           )
         _                   <- service.processQueue.forever.forkScoped
@@ -49,9 +49,9 @@ object IssueAssignmentOrchestrator:
     }
 
 final private case class AssignmentTask(
-  assignmentId: Long,
-  issueId: Long,
+  issueId: String,
   agentName: String,
+  conversationId: String,
 )
 
 final private case class IssueAssignmentOrchestratorLive(
@@ -60,108 +60,85 @@ final private case class IssueAssignmentOrchestratorLive(
   llmService: LlmService,
   configResolver: AgentConfigResolver,
   activityHub: ActivityHub,
+  issueRepository: IssueRepository,
   queue: Queue[AssignmentTask],
 ) extends IssueAssignmentOrchestrator:
 
-  override def assignIssue(issueId: Long, agentName: String): IO[PersistenceError, AgentIssue] =
+  override def assignIssue(issueId: String, agentName: String): IO[PersistenceError, AgentIssueView] =
     for
-      issue         <- chatRepository.getIssue(issueId).someOrFail(PersistenceError.NotFound("issue", issueId))
-      assignments   <- chatRepository.listAssignmentsByIssue(issueId)
-      existingActive =
-        assignments.find(assignment =>
-          assignment.agentName.equalsIgnoreCase(agentName) &&
-          (assignment.status.equalsIgnoreCase("pending") || assignment.status.equalsIgnoreCase("processing"))
-        )
-      result        <- existingActive match
-                         case Some(_) =>
-                           ensureIssueConversation(issue, agentName)
-                         case None    =>
-                           for
-                             now          <- Clock.instant
-                             _            <- chatRepository.assignIssueToAgent(issueId, agentName)
-                             conversation <- ensureIssueConversation(issue, agentName)
-                             assignmentId <- chatRepository.createAssignment(
-                                               AgentAssignment(
-                                                 issueId = issueId.toString,
-                                                 agentName = agentName,
-                                                 status = "pending",
-                                                 assignedAt = now,
-                                               )
-                                             )
-                             _            <- queue.offer(AssignmentTask(assignmentId, issueId, agentName))
-                             _            <- activityHub.publish(
-                                               ActivityEvent(
-                                                 id = EventId.generate,
-                                                 eventType = ActivityEventType.AgentAssigned,
-                                                 source = "issue-assignment",
-                                                 runId = issue.runId.map(TaskRunId.apply),
-                                                 agentName = Some(agentName),
-                                                 summary =
-                                                   s"Agent '$agentName' assigned to issue #$issueId: ${issue.title}",
-                                                 createdAt = now,
-                                               )
-                                             )
-                           yield conversation
-    yield result
+      issue   <- issueRepository.get(IssueId(issueId)).mapError(mapRepoError)
+      now     <- Clock.instant
+      _       <- issueRepository
+                   .append(
+                     IssueEvent.Assigned(
+                       issueId = IssueId(issueId),
+                       agent = AgentId(agentName),
+                       assignedAt = now,
+                       occurredAt = now,
+                     )
+                   )
+                   .mapError(mapRepoError)
+      convId  <- ensureIssueConversation(issueId, issue, agentName)
+      _       <- queue.offer(AssignmentTask(issueId, agentName, convId))
+      _       <- activityHub.publish(
+                   ActivityEvent(
+                     id = EventId.generate,
+                     eventType = ActivityEventType.AgentAssigned,
+                     source = "issue-assignment",
+                     runId = issue.runId.map(r => TaskRunId(r.value)),
+                     agentName = Some(agentName),
+                     summary = s"Agent '$agentName' assigned to issue #$issueId: ${issue.title}",
+                     createdAt = now,
+                   )
+                 )
+      updated <- issueRepository.get(IssueId(issueId)).mapError(mapRepoError)
+    yield domainToView(updated)
+
+  private def ensureIssueConversation(
+    issueId: String,
+    issue: issues.entity.AgentIssue,
+    agentName: String,
+  ): IO[PersistenceError, String] =
+    issue.conversationId match
+      case Some(cid) => ZIO.succeed(cid.value)
+      case None      =>
+        for
+          now    <- Clock.instant
+          convId <- chatRepository.createConversation(
+                      ChatConversation(
+                        runId = issue.runId.map(_.value),
+                        title = s"Issue #$issueId: ${issue.title}",
+                        description = Some("Auto-generated conversation from issue assignment"),
+                        createdAt = now,
+                        updatedAt = now,
+                        createdBy = Some("system"),
+                      )
+                    )
+        yield convId.toString
 
   private[orchestration] def processQueue: UIO[Unit] =
     queue.take.flatMap(processTask).catchAll(err => ZIO.logError(s"Issue assignment worker failed: $err"))
 
   private def processTask(task: AssignmentTask): IO[PersistenceError, Unit] =
     (for
-      issue      <- chatRepository
-                      .getIssue(task.issueId)
-                      .someOrFail(PersistenceError.NotFound("issue", task.issueId))
-      now        <- Clock.instant
-      assignment <- chatRepository
-                      .getAssignment(task.assignmentId)
-                      .someOrFail(PersistenceError.NotFound("agent_assignment", task.assignmentId))
-      _          <- chatRepository.updateAssignment(
-                      assignment.copy(
-                        status = "processing",
-                        startedAt = Some(now),
-                      )
-                    )
-      _          <- sendIssueContextToAgent(issue, task.agentName)
-      doneAt     <- Clock.instant
-      latest     <- chatRepository
-                      .getAssignment(task.assignmentId)
-                      .someOrFail(PersistenceError.NotFound("agent_assignment", task.assignmentId))
-      _          <- chatRepository.updateAssignment(
-                      latest.copy(
-                        status = "completed",
-                        completedAt = Some(doneAt),
-                      )
-                    )
+      issue <- issueRepository.get(IssueId(task.issueId)).mapError(mapRepoError)
+      _     <- sendIssueContextToAgent(issue, task.agentName, task.conversationId)
     yield ()).catchAll { err =>
-      for
-        failedAt <- Clock.instant
-        maybe    <- chatRepository.getAssignment(task.assignmentId)
-        _        <- ZIO.foreachDiscard(maybe) { assignment =>
-                      chatRepository.updateAssignment(
-                        assignment.copy(
-                          status = "failed",
-                          completedAt = Some(failedAt),
-                          executionLog = Some(err.toString),
-                        )
-                      )
-                    }
-        _        <- ZIO.logError(s"Issue assignment ${task.assignmentId} failed: $err")
-      yield ()
+      ZIO.logError(s"Issue assignment ${task.issueId} failed: $err")
     }
 
-  private def sendIssueContextToAgent(issue: AgentIssue, agentName: String): IO[PersistenceError, Unit] =
+  private def sendIssueContextToAgent(
+    issue: issues.entity.AgentIssue,
+    agentName: String,
+    conversationId: String,
+  ): IO[PersistenceError, Unit] =
     for
-      conversationId  <- ZIO
-                           .fromOption(issue.conversationId)
-                           .orElseFail(PersistenceError.QueryFailed("issue", "Issue is missing linked conversation"))
-      conversationKey <-
-        ZIO
-          .fromOption(conversationId.toLongOption)
-          .orElseFail(PersistenceError.QueryFailed("issue", s"Invalid conversation id: $conversationId"))
+      conversationKey <- ZIO
+                           .fromOption(conversationId.toLongOption)
+                           .orElseFail(PersistenceError.QueryFailed("issue", s"Invalid conversation id: $conversationId"))
       runMetadata     <- issue.runId match
                            case Some(runId) =>
-                             runId.toLongOption match
+                             runId.value.toLongOption match
                                case Some(parsedId) => migrationRepository.getRun(parsedId)
                                case None           => ZIO.none
                            case None        => ZIO.none
@@ -199,53 +176,8 @@ final private case class IssueAssignmentOrchestratorLive(
       _               <- chatRepository.updateConversation(conv.copy(updatedAt = now2))
     yield ()
 
-  private def ensureIssueConversation(issue: AgentIssue, agentName: String): IO[PersistenceError, AgentIssue] =
-    issue.conversationId match
-      case Some(_) =>
-        for
-          issueKey <- ZIO
-                        .fromOption(issue.id.flatMap(_.toLongOption))
-                        .orElseFail(PersistenceError.QueryFailed("issue", "Issue ID missing during assignment"))
-          current  <- chatRepository.getIssue(issueKey).someOrFail(PersistenceError.NotFound("issue", issueKey))
-        yield current
-      case None    =>
-        for
-          issueId <- ZIO
-                       .fromOption(issue.id)
-                       .flatMap(id =>
-                         ZIO.fromOption(id.toLongOption).orElseFail(PersistenceError.QueryFailed(
-                           "issue",
-                           s"Invalid issue id: $id",
-                         ))
-                       )
-                       .orElseFail(PersistenceError.QueryFailed("issue", "Issue ID missing during assignment"))
-          now     <- Clock.instant
-          convId  <- chatRepository.createConversation(
-                       ChatConversation(
-                         runId = issue.runId,
-                         title = s"Issue #$issueId: ${issue.title}",
-                         description = Some("Auto-generated conversation from issue assignment"),
-                         createdAt = now,
-                         updatedAt = now,
-                         createdBy = Some("system"),
-                       )
-                     )
-          _       <- chatRepository.updateIssue(
-                       issue.copy(
-                         conversationId = Some(convId.toString),
-                         assignedAgent = Some(agentName),
-                         assignedAt = Some(now),
-                         status = IssueStatus.Assigned,
-                         updatedAt = now,
-                       )
-                     )
-          updated <- chatRepository
-                       .getIssue(issueId)
-                       .someOrFail(PersistenceError.NotFound("issue", issueId))
-        yield updated
-
   private def buildIssueAssignmentPrompt(
-    issue: AgentIssue,
+    issue: issues.entity.AgentIssue,
     agentName: String,
     run: Option[db.TaskRunRow],
     customSystemPrompt: Option[String],
@@ -267,16 +199,14 @@ final private case class IssueAssignmentOrchestratorLive(
            |
            |""".stripMargin
       case None         => ""
-
     s"""${systemContext}Issue assignment for agent: $agentName
        |
        |Issue title: ${issue.title}
        |Issue type: ${issue.issueType}
        |Priority: ${issue.priority}
-       |Tags: ${issue.tags.getOrElse("none")}
-       |Preferred agent: ${issue.preferredAgent.getOrElse("none")}
-       |Context path: ${issue.contextPath.getOrElse("none")}
-       |Source folder: ${issue.sourceFolder.getOrElse("none")}
+       |Tags: ${if issue.tags.isEmpty then "none" else issue.tags.mkString(", ")}
+       |Context path: ${if issue.contextPath.isEmpty then "none" else issue.contextPath}
+       |Source folder: ${if issue.sourceFolder.isEmpty then "none" else issue.sourceFolder}
        |
        |$runContext
        |
@@ -286,27 +216,71 @@ final private case class IssueAssignmentOrchestratorLive(
        |Please execute this task and provide a concise implementation summary and next actions.
        |""".stripMargin
 
+  private def mapRepoError(e: shared.errors.PersistenceError): PersistenceError =
+    e match
+      case shared.errors.PersistenceError.NotFound(entity, id)           =>
+        PersistenceError.QueryFailed(entity, s"Not found: $id")
+      case shared.errors.PersistenceError.QueryFailed(op, cause)         =>
+        PersistenceError.QueryFailed(op, cause)
+      case shared.errors.PersistenceError.SerializationFailed(entity, c) =>
+        PersistenceError.QueryFailed(entity, c)
+      case shared.errors.PersistenceError.StoreUnavailable(msg)          =>
+        PersistenceError.QueryFailed("store", msg)
+
+  private def domainToView(i: issues.entity.AgentIssue): AgentIssueView =
+    import issues.entity.IssueState
+    val (status, assignedAgent, assignedAt, completedAt, errorMessage) = i.state match
+      case IssueState.Open(_)                 => (IssueStatus.Open, None, None, None, None)
+      case IssueState.Assigned(agent, at)     => (IssueStatus.Assigned, Some(agent.value), Some(at), None, None)
+      case IssueState.InProgress(agent, at)   => (IssueStatus.InProgress, Some(agent.value), Some(at), None, None)
+      case IssueState.Completed(agent, at, _) => (IssueStatus.Completed, Some(agent.value), None, Some(at), None)
+      case IssueState.Failed(agent, at, msg)  => (IssueStatus.Failed, Some(agent.value), None, Some(at), Some(msg))
+      case IssueState.Skipped(at, _)          => (IssueStatus.Skipped, None, None, Some(at), None)
+    val priority = IssuePriority.values.find(_.toString.equalsIgnoreCase(i.priority)).getOrElse(IssuePriority.Medium)
+    val createdAt = i.state match
+      case IssueState.Open(at) => at
+      case _                   => java.time.Instant.EPOCH
+    AgentIssueView(
+      id = Some(i.id.value),
+      runId = i.runId.map(_.value),
+      conversationId = i.conversationId.map(_.value),
+      title = i.title,
+      description = i.description,
+      issueType = i.issueType,
+      tags = if i.tags.isEmpty then None else Some(i.tags.mkString(",")),
+      contextPath = Option(i.contextPath).filter(_.nonEmpty),
+      sourceFolder = Option(i.sourceFolder).filter(_.nonEmpty),
+      priority = priority,
+      status = status,
+      assignedAgent = assignedAgent,
+      assignedAt = assignedAt,
+      completedAt = completedAt,
+      errorMessage = errorMessage,
+      createdAt = createdAt,
+      updatedAt = assignedAt.orElse(completedAt).getOrElse(createdAt),
+    )
+
   private def convertLlmError(error: LlmError): PersistenceError =
     error match
-      case LlmError.ProviderError(message, cause) =>
+      case LlmError.ProviderError(message, cause)  =>
         PersistenceError.QueryFailed(
           "llm_service",
           s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
         )
-      case LlmError.RateLimitError(retryAfter)    =>
+      case LlmError.RateLimitError(retryAfter)     =>
         PersistenceError.QueryFailed(
           "llm_service",
           s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
         )
-      case LlmError.AuthenticationError(message)  =>
+      case LlmError.AuthenticationError(message)   =>
         PersistenceError.QueryFailed("llm_service", s"Authentication failed: $message")
-      case LlmError.InvalidRequestError(message)  =>
+      case LlmError.InvalidRequestError(message)   =>
         PersistenceError.QueryFailed("llm_service", s"Invalid request: $message")
-      case LlmError.TimeoutError(duration)        =>
+      case LlmError.TimeoutError(duration)         =>
         PersistenceError.QueryFailed("llm_service", s"Request timed out after ${duration.toSeconds}s")
-      case LlmError.ParseError(message, raw)      =>
+      case LlmError.ParseError(message, raw)       =>
         PersistenceError.QueryFailed("llm_service", s"Parse error: $message\nRaw: ${raw.take(200)}")
-      case LlmError.ToolError(toolName, message)  =>
+      case LlmError.ToolError(toolName, message)   =>
         PersistenceError.QueryFailed("llm_service", s"Tool error ($toolName): $message")
-      case LlmError.ConfigError(message)          =>
+      case LlmError.ConfigError(message)           =>
         PersistenceError.QueryFailed("llm_service", s"Configuration error: $message")

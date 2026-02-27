@@ -99,10 +99,9 @@ final case class IssueControllerLive(
     Method.POST / "issues" / string("id") / "assign"               -> handler { (id: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          issueId   <- parseLongId("issue", id)
           form      <- parseForm(req)
           agentName <- required(form, "agentName")
-          _         <- issueAssignmentOrchestrator.assignIssue(issueId, agentName)
+          _         <- issueAssignmentOrchestrator.assignIssue(id, agentName)
         yield Response(status = Status.SeeOther, headers = Headers(Header.Custom("Location", s"/issues/$id")))
       }
     },
@@ -144,12 +143,11 @@ final case class IssueControllerLive(
     Method.PATCH / "api" / "issues" / string("id") / "assign"      -> handler { (id: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          issueId       <- parseLongId("issue", id)
           body          <- req.body.asString.mapError(err => PersistenceError.QueryFailed("request_body", err.getMessage))
           assignRequest <- ZIO
                              .fromEither(body.fromJson[AssignIssueRequest])
                              .mapError(err => PersistenceError.QueryFailed("json_parse", err))
-          _             <- issueAssignmentOrchestrator.assignIssue(issueId, assignRequest.agentName)
+          _             <- issueAssignmentOrchestrator.assignIssue(id, assignRequest.agentName)
           updated       <- issueRepository.get(IssueId(id)).mapError(mapIssueRepoError)
         yield Response.json(domainToView(updated).toJson)
       }
