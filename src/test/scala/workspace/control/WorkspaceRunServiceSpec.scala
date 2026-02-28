@@ -7,8 +7,9 @@ import zio.test.*
 
 import conversation.entity.api.{ ChatConversation, ConversationEntry }
 import db.{ ChatRepository, PersistenceError as DbPersistenceError }
-import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
+import issues.entity.{ IssueFilter, IssueRepository }
 import shared.errors.PersistenceError
+import shared.ids.Ids.IssueId
 import workspace.entity.*
 
 object WorkspaceRunServiceSpec extends ZIOSpecDefault:
@@ -26,35 +27,84 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
       messages.update(_ :+ m.content).as(1L)
     def getMessages(cid: Long): IO[DbPersistenceError, List[ConversationEntry]]                      = ZIO.succeed(Nil)
     def getMessagesSince(cid: Long, since: Instant): IO[DbPersistenceError, List[ConversationEntry]] = ZIO.succeed(Nil)
-    def createIssue(i: AgentIssue): IO[DbPersistenceError, Long]                                     = ZIO.succeed(1L)
-    def getIssue(id: Long): IO[DbPersistenceError, Option[AgentIssue]]                               = ZIO.succeed(None)
-    def listIssues(o: Int, l: Int): IO[DbPersistenceError, List[AgentIssue]]                         = ZIO.succeed(Nil)
-    def listIssuesByRun(r: Long): IO[DbPersistenceError, List[AgentIssue]]                           = ZIO.succeed(Nil)
-    def listIssuesByStatus(s: IssueStatus): IO[DbPersistenceError, List[AgentIssue]]                 = ZIO.succeed(Nil)
-    def listUnassignedIssues(r: Long): IO[DbPersistenceError, List[AgentIssue]]                      = ZIO.succeed(Nil)
-    def updateIssue(i: AgentIssue): IO[DbPersistenceError, Unit]                                     = ZIO.unit
-    def deleteIssue(id: Long): IO[DbPersistenceError, Unit]                                          = ZIO.unit
-    def assignIssueToAgent(id: Long, name: String): IO[DbPersistenceError, Unit]                     = ZIO.unit
-    def createAssignment(a: AgentAssignment): IO[DbPersistenceError, Long]                           = ZIO.succeed(1L)
-    def getAssignment(id: Long): IO[DbPersistenceError, Option[AgentAssignment]]                     = ZIO.succeed(None)
-    def listAssignmentsByIssue(id: Long): IO[DbPersistenceError, List[AgentAssignment]]              = ZIO.succeed(Nil)
-    def updateAssignment(a: AgentAssignment): IO[DbPersistenceError, Unit]                           = ZIO.unit
 
-  // In-memory stub WorkspaceRepository
+  private object StubIssueRepo extends IssueRepository:
+    def append(event: issues.entity.IssueEvent): IO[PersistenceError, Unit] = ZIO.unit
+    def get(id: IssueId): IO[PersistenceError, issues.entity.AgentIssue] =
+      ZIO.fail(PersistenceError.NotFound("issue", id.value))
+    def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] = ZIO.succeed(Nil)
+
+  // In-memory event-sourced stub WorkspaceRepository
   private class StubWorkspaceRepo(
     wsRef: Ref[Map[String, Workspace]],
     runRef: Ref[Map[String, WorkspaceRun]],
   ) extends WorkspaceRepository:
-    def list: IO[PersistenceError, List[Workspace]]                                   = wsRef.get.map(_.values.toList)
-    def get(id: String): IO[PersistenceError, Option[Workspace]]                      = wsRef.get.map(_.get(id))
-    def save(ws: Workspace): IO[PersistenceError, Unit]                               = wsRef.update(_ + (ws.id -> ws))
-    def delete(id: String): IO[PersistenceError, Unit]                                = wsRef.update(_ - id)
-    def listRuns(wid: String): IO[PersistenceError, List[WorkspaceRun]]               =
+
+    def append(event: WorkspaceEvent): IO[PersistenceError, Unit] =
+      event match
+        case e: WorkspaceEvent.Created  =>
+          val ws = Workspace(
+            id = e.workspaceId,
+            name = e.name,
+            localPath = e.localPath,
+            defaultAgent = e.defaultAgent,
+            description = e.description,
+            enabled = true,
+            runMode = e.runMode,
+            cliTool = e.cliTool,
+            createdAt = e.occurredAt,
+            updatedAt = e.occurredAt,
+          )
+          wsRef.update(_ + (ws.id -> ws))
+        case e: WorkspaceEvent.Updated  =>
+          wsRef.update(m =>
+            m.get(e.workspaceId).fold(m)(ws =>
+              m + (e.workspaceId -> ws.copy(
+                name = e.name,
+                localPath = e.localPath,
+                defaultAgent = e.defaultAgent,
+                description = e.description,
+                cliTool = e.cliTool,
+                runMode = e.runMode,
+                updatedAt = e.occurredAt,
+              ))
+            )
+          )
+        case e: WorkspaceEvent.Enabled  =>
+          wsRef.update(m => m.get(e.workspaceId).fold(m)(ws => m + (e.workspaceId -> ws.copy(enabled = true))))
+        case e: WorkspaceEvent.Disabled =>
+          wsRef.update(m => m.get(e.workspaceId).fold(m)(ws => m + (e.workspaceId -> ws.copy(enabled = false))))
+        case e: WorkspaceEvent.Deleted  => wsRef.update(_ - e.workspaceId)
+
+    def list: IO[PersistenceError, List[Workspace]]              = wsRef.get.map(_.values.toList)
+    def get(id: String): IO[PersistenceError, Option[Workspace]] = wsRef.get.map(_.get(id))
+    def delete(id: String): IO[PersistenceError, Unit]           = wsRef.update(_ - id)
+
+    def appendRun(event: WorkspaceRunEvent): IO[PersistenceError, Unit] =
+      event match
+        case e: WorkspaceRunEvent.Assigned      =>
+          val run = WorkspaceRun(
+            id = e.runId,
+            workspaceId = e.workspaceId,
+            issueRef = e.issueRef,
+            agentName = e.agentName,
+            prompt = e.prompt,
+            conversationId = e.conversationId,
+            worktreePath = e.worktreePath,
+            branchName = e.branchName,
+            status = RunStatus.Pending,
+            createdAt = e.occurredAt,
+            updatedAt = e.occurredAt,
+          )
+          runRef.update(_ + (run.id -> run))
+        case e: WorkspaceRunEvent.StatusChanged =>
+          runRef.update(m =>
+            m.get(e.runId).fold(m)(r => m + (e.runId -> r.copy(status = e.status, updatedAt = e.occurredAt)))
+          )
+
+    def listRuns(wid: String): IO[PersistenceError, List[WorkspaceRun]] =
       runRef.get.map(_.values.filter(_.workspaceId == wid).toList)
-    def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]]                = runRef.get.map(_.get(id))
-    def saveRun(run: WorkspaceRun): IO[PersistenceError, Unit]                        = runRef.update(_ + (run.id -> run))
-    def updateRunStatus(runId: String, status: RunStatus): IO[PersistenceError, Unit] =
-      runRef.update(m => m.get(runId).fold(m)(r => m + (runId -> r.copy(status = status))))
+    def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]]  = runRef.get.map(_.get(id))
 
   private val sampleWs = Workspace(
     id = "ws-1",
@@ -63,6 +113,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     defaultAgent = Some("echo"),
     description = None,
     enabled = true,
+    runMode = RunMode.Host,
+    cliTool = "echo",
     createdAt = Instant.parse("2026-02-24T10:00:00Z"),
     updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
   )
@@ -93,6 +145,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         WorkspaceRunServiceLive(
           wsRepo,
           chatRepo,
+          StubIssueRepo,
           worktreeAdd = noopWorktreeAdd,
           worktreeRemove = noopWorktreeRemove,
           dockerCheck = dockerCheck,
@@ -152,6 +205,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         svc       = WorkspaceRunServiceLive(
                       wsRepo,
                       chatRepo,
+                      StubIssueRepo,
                       timeoutSeconds = 0,
                       worktreeAdd = noopWorktreeAdd,
                       worktreeRemove = noopWorktreeRemove,

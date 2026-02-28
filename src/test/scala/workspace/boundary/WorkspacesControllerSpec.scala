@@ -9,8 +9,6 @@ import zio.test.*
 
 import _root_.config.entity.*
 import conversation.entity.api.*
-import db.{ ChatRepository, PersistenceError }
-import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
 import orchestration.control.AgentRegistry
 import taskrun.entity.TaskStep
 import workspace.control.{ AssignRunRequest, WorkspaceRunService }
@@ -25,49 +23,41 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
     defaultAgent = Some("code-agent"),
     description = None,
     enabled = true,
+    runMode = RunMode.Host,
+    cliTool = "claude",
     createdAt = Instant.parse("2026-02-24T10:00:00Z"),
     updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
   )
 
   private class StubWorkspaceRepo(ref: Ref[Map[String, Workspace]]) extends WorkspaceRepository:
-    def list: IO[shared.errors.PersistenceError, List[Workspace]]                           = ref.get.map(_.values.toList)
-    def get(id: String): IO[shared.errors.PersistenceError, Option[Workspace]]              = ref.get.map(_.get(id))
-    def save(ws: Workspace): IO[shared.errors.PersistenceError, Unit]                       = ref.update(_ + (ws.id -> ws))
-    def delete(id: String): IO[shared.errors.PersistenceError, Unit]                        = ref.update(_ - id)
-    def listRuns(wid: String): IO[shared.errors.PersistenceError, List[WorkspaceRun]]       = ZIO.succeed(Nil)
-    def getRun(id: String): IO[shared.errors.PersistenceError, Option[WorkspaceRun]]        = ZIO.succeed(None)
-    def saveRun(r: WorkspaceRun): IO[shared.errors.PersistenceError, Unit]                  = ZIO.unit
-    def updateRunStatus(id: String, s: RunStatus): IO[shared.errors.PersistenceError, Unit] = ZIO.unit
+    def append(event: WorkspaceEvent): IO[shared.errors.PersistenceError, Unit]       =
+      event match
+        case e: WorkspaceEvent.Created =>
+          ref.update(_ + (e.workspaceId -> Workspace(
+            e.workspaceId,
+            e.name,
+            e.localPath,
+            e.defaultAgent,
+            e.description,
+            true,
+            e.runMode,
+            e.cliTool,
+            e.occurredAt,
+            e.occurredAt,
+          )))
+        case e: WorkspaceEvent.Deleted => ref.update(_ - e.workspaceId)
+        case _                         => ZIO.unit
+    def list: IO[shared.errors.PersistenceError, List[Workspace]]                     = ref.get.map(_.values.toList)
+    def get(id: String): IO[shared.errors.PersistenceError, Option[Workspace]]        = ref.get.map(_.get(id))
+    def delete(id: String): IO[shared.errors.PersistenceError, Unit]                  = ref.update(_ - id)
+    def appendRun(event: WorkspaceRunEvent): IO[shared.errors.PersistenceError, Unit] = ZIO.unit
+    def listRuns(wid: String): IO[shared.errors.PersistenceError, List[WorkspaceRun]] = ZIO.succeed(Nil)
+    def getRun(id: String): IO[shared.errors.PersistenceError, Option[WorkspaceRun]]  = ZIO.succeed(None)
 
   private class StubRunService extends WorkspaceRunService:
     def assign(wid: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
       ZIO.fail(WorkspaceError.NotFound(wid))
     def continueRun(runId: String, followUp: String): IO[WorkspaceError, Unit]       = ZIO.unit
-
-  private object StubChatRepo extends ChatRepository:
-    def createConversation(c: ChatConversation): IO[PersistenceError, Long]                        = ZIO.succeed(1L)
-    def getConversation(id: Long): IO[PersistenceError, Option[ChatConversation]]                  = ZIO.succeed(None)
-    def listConversations(o: Int, l: Int): IO[PersistenceError, List[ChatConversation]]            = ZIO.succeed(Nil)
-    def getConversationsByChannel(ch: String): IO[PersistenceError, List[ChatConversation]]        = ZIO.succeed(Nil)
-    def listConversationsByRun(runId: Long): IO[PersistenceError, List[ChatConversation]]          = ZIO.succeed(Nil)
-    def updateConversation(c: ChatConversation): IO[PersistenceError, Unit]                        = ZIO.unit
-    def deleteConversation(id: Long): IO[PersistenceError, Unit]                                   = ZIO.unit
-    def addMessage(m: ConversationEntry): IO[PersistenceError, Long]                               = ZIO.succeed(1L)
-    def getMessages(cid: Long): IO[PersistenceError, List[ConversationEntry]]                      = ZIO.succeed(Nil)
-    def getMessagesSince(cid: Long, since: Instant): IO[PersistenceError, List[ConversationEntry]] = ZIO.succeed(Nil)
-    def createIssue(i: AgentIssue): IO[PersistenceError, Long]                                     = ZIO.succeed(1L)
-    def getIssue(id: Long): IO[PersistenceError, Option[AgentIssue]]                               = ZIO.succeed(None)
-    def listIssues(o: Int, l: Int): IO[PersistenceError, List[AgentIssue]]                         = ZIO.succeed(Nil)
-    def listIssuesByRun(runId: Long): IO[PersistenceError, List[AgentIssue]]                       = ZIO.succeed(Nil)
-    def listIssuesByStatus(s: IssueStatus): IO[PersistenceError, List[AgentIssue]]                 = ZIO.succeed(Nil)
-    def listUnassignedIssues(runId: Long): IO[PersistenceError, List[AgentIssue]]                  = ZIO.succeed(Nil)
-    def updateIssue(i: AgentIssue): IO[PersistenceError, Unit]                                     = ZIO.unit
-    def deleteIssue(id: Long): IO[PersistenceError, Unit]                                          = ZIO.unit
-    def assignIssueToAgent(iid: Long, name: String): IO[PersistenceError, Unit]                    = ZIO.unit
-    def createAssignment(a: AgentAssignment): IO[PersistenceError, Long]                           = ZIO.succeed(1L)
-    def getAssignment(id: Long): IO[PersistenceError, Option[AgentAssignment]]                     = ZIO.succeed(None)
-    def listAssignmentsByIssue(iid: Long): IO[PersistenceError, List[AgentAssignment]]             = ZIO.succeed(Nil)
-    def updateAssignment(a: AgentAssignment): IO[PersistenceError, Unit]                           = ZIO.unit
 
   private object StubAgentRegistry extends AgentRegistry:
     def registerAgent(r: RegisterAgentRequest): UIO[AgentInfo]                  =
@@ -90,7 +80,6 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
     WorkspacesController.routes(
       StubWorkspaceRepo(wsRef),
       StubRunService(),
-      StubChatRepo,
       StubAgentRegistry,
     )
 

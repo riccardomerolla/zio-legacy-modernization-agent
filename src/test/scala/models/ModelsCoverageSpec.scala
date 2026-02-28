@@ -5,6 +5,8 @@ import java.time.Instant
 import zio.Scope
 import zio.test.*
 
+import issues.entity.api.{ AgentAssignmentView, AgentIssueView }
+
 object ModelsCoverageSpec extends ZIOSpecDefault:
 
   def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("ModelsCoverageSpec")(
@@ -87,14 +89,14 @@ object ModelsCoverageSpec extends ZIOSpecDefault:
     suite("ChatModels")(
       test("agent issue and assignment keep fields") {
         val now        = Instant.EPOCH
-        val issue      = AgentIssue(
+        val issue      = AgentIssueView(
           title = "Broken parse",
           description = "Parser fails",
           issueType = "parse",
           createdAt = now,
           updatedAt = now,
         )
-        val assignment = AgentAssignment(
+        val assignment = AgentAssignmentView(
           issueId = "42",
           agentName = "agent-x",
           assignedAt = now,

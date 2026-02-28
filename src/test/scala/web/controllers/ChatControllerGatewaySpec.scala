@@ -14,7 +14,7 @@ import conversation.entity.api.*
 import db.*
 import gateway.control.*
 import gateway.entity.*
-import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
+import issues.entity.api.AgentIssueView
 import llm4zio.core.*
 import llm4zio.providers.{ GeminiCliExecutor, HttpClient }
 import llm4zio.tools.{ AnyTool, JsonSchema }
@@ -95,7 +95,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
 
   private val testIssueAssignment: IssueAssignmentOrchestrator =
     new IssueAssignmentOrchestrator:
-      override def assignIssue(issueId: Long, agentName: String): IO[PersistenceError, AgentIssue] =
+      override def assignIssue(issueId: String, agentName: String): IO[PersistenceError, AgentIssueView] =
         ZIO.fail(PersistenceError.NotFound("issue", issueId))
 
   private val stubActivityRepo: ActivityRepository = new ActivityRepository:
@@ -331,33 +331,6 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
 
       override def listSessionContexts: IO[PersistenceError, List[SessionContextLink]] =
         ref.get.map(_.sessionContexts.values.toList)
-
-      override def createIssue(issue: AgentIssue): IO[PersistenceError, Long]                         =
-        ZIO.fail(PersistenceError.QueryFailed("createIssue", "unused"))
-      override def getIssue(id: Long): IO[PersistenceError, Option[AgentIssue]]                       =
-        ZIO.fail(PersistenceError.QueryFailed("getIssue", "unused"))
-      override def listIssues(offset: Int, limit: Int): IO[PersistenceError, List[AgentIssue]]        =
-        ZIO.fail(PersistenceError.QueryFailed("listIssues", "unused"))
-      override def listIssuesByRun(runId: Long): IO[PersistenceError, List[AgentIssue]]               =
-        ZIO.fail(PersistenceError.QueryFailed("listIssuesByRun", "unused"))
-      override def listIssuesByStatus(status: IssueStatus): IO[PersistenceError, List[AgentIssue]]    =
-        ZIO.fail(PersistenceError.QueryFailed("listIssuesByStatus", "unused"))
-      override def listUnassignedIssues(runId: Long): IO[PersistenceError, List[AgentIssue]]          =
-        ZIO.fail(PersistenceError.QueryFailed("listUnassignedIssues", "unused"))
-      override def updateIssue(issue: AgentIssue): IO[PersistenceError, Unit]                         =
-        ZIO.fail(PersistenceError.QueryFailed("updateIssue", "unused"))
-      override def deleteIssue(id: Long): IO[PersistenceError, Unit]                                  =
-        ZIO.unit
-      override def assignIssueToAgent(issueId: Long, agentName: String): IO[PersistenceError, Unit]   =
-        ZIO.fail(PersistenceError.QueryFailed("assignIssueToAgent", "unused"))
-      override def createAssignment(assignment: AgentAssignment): IO[PersistenceError, Long]          =
-        ZIO.fail(PersistenceError.QueryFailed("createAssignment", "unused"))
-      override def getAssignment(id: Long): IO[PersistenceError, Option[AgentAssignment]]             =
-        ZIO.fail(PersistenceError.QueryFailed("getAssignment", "unused"))
-      override def listAssignmentsByIssue(issueId: Long): IO[PersistenceError, List[AgentAssignment]] =
-        ZIO.fail(PersistenceError.QueryFailed("listAssignmentsByIssue", "unused"))
-      override def updateAssignment(assignment: AgentAssignment): IO[PersistenceError, Unit]          =
-        ZIO.fail(PersistenceError.QueryFailed("updateAssignment", "unused"))
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("ChatControllerGatewaySpec")(
     test("POST /api/chat/:id/messages preserves API behavior and publishes through gateway") {
