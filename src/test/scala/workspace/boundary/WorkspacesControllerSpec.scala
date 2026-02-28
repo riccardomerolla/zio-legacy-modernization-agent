@@ -8,7 +8,6 @@ import zio.json.*
 import zio.test.*
 
 import _root_.config.entity.*
-import conversation.entity.api.*
 import orchestration.control.AgentRegistry
 import taskrun.entity.TaskStep
 import workspace.control.{ AssignRunRequest, WorkspaceRunService }

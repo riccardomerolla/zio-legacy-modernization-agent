@@ -17,7 +17,8 @@ trait IssueAssignmentOrchestrator:
 
 object IssueAssignmentOrchestrator:
 
-  def assignIssue(issueId: String, agentName: String): ZIO[IssueAssignmentOrchestrator, PersistenceError, AgentIssueView] =
+  def assignIssue(issueId: String, agentName: String)
+    : ZIO[IssueAssignmentOrchestrator, PersistenceError, AgentIssueView] =
     ZIO.serviceWithZIO[IssueAssignmentOrchestrator](_.assignIssue(issueId, agentName))
 
   val live: ZLayer[
@@ -78,7 +79,7 @@ final private case class IssueAssignmentOrchestratorLive(
                      )
                    )
                    .mapError(mapRepoError)
-      convId  <- ensureIssueConversation(issueId, issue, agentName)
+      convId  <- ensureIssueConversation(issueId, issue)
       _       <- queue.offer(AssignmentTask(issueId, agentName, convId))
       _       <- activityHub.publish(
                    ActivityEvent(
@@ -97,7 +98,6 @@ final private case class IssueAssignmentOrchestratorLive(
   private def ensureIssueConversation(
     issueId: String,
     issue: issues.entity.AgentIssue,
-    agentName: String,
   ): IO[PersistenceError, String] =
     issue.conversationId match
       case Some(cid) => ZIO.succeed(cid.value)
@@ -133,9 +133,10 @@ final private case class IssueAssignmentOrchestratorLive(
     conversationId: String,
   ): IO[PersistenceError, Unit] =
     for
-      conversationKey <- ZIO
-                           .fromOption(conversationId.toLongOption)
-                           .orElseFail(PersistenceError.QueryFailed("issue", s"Invalid conversation id: $conversationId"))
+      conversationKey <-
+        ZIO
+          .fromOption(conversationId.toLongOption)
+          .orElseFail(PersistenceError.QueryFailed("issue", s"Invalid conversation id: $conversationId"))
       runMetadata     <- issue.runId match
                            case Some(runId) =>
                              runId.value.toLongOption match
@@ -236,8 +237,8 @@ final private case class IssueAssignmentOrchestratorLive(
       case IssueState.Completed(agent, at, _) => (IssueStatus.Completed, Some(agent.value), None, Some(at), None)
       case IssueState.Failed(agent, at, msg)  => (IssueStatus.Failed, Some(agent.value), None, Some(at), Some(msg))
       case IssueState.Skipped(at, _)          => (IssueStatus.Skipped, None, None, Some(at), None)
-    val priority = IssuePriority.values.find(_.toString.equalsIgnoreCase(i.priority)).getOrElse(IssuePriority.Medium)
-    val createdAt = i.state match
+    val priority                                                       = IssuePriority.values.find(_.toString.equalsIgnoreCase(i.priority)).getOrElse(IssuePriority.Medium)
+    val createdAt                                                      = i.state match
       case IssueState.Open(at) => at
       case _                   => java.time.Instant.EPOCH
     AgentIssueView(
@@ -262,25 +263,25 @@ final private case class IssueAssignmentOrchestratorLive(
 
   private def convertLlmError(error: LlmError): PersistenceError =
     error match
-      case LlmError.ProviderError(message, cause)  =>
+      case LlmError.ProviderError(message, cause) =>
         PersistenceError.QueryFailed(
           "llm_service",
           s"Provider error: $message${cause.map(c => s" (${c.getMessage})").getOrElse("")}",
         )
-      case LlmError.RateLimitError(retryAfter)     =>
+      case LlmError.RateLimitError(retryAfter)    =>
         PersistenceError.QueryFailed(
           "llm_service",
           s"Rate limited${retryAfter.map(d => s", retry after ${d.toSeconds}s").getOrElse("")}",
         )
-      case LlmError.AuthenticationError(message)   =>
+      case LlmError.AuthenticationError(message)  =>
         PersistenceError.QueryFailed("llm_service", s"Authentication failed: $message")
-      case LlmError.InvalidRequestError(message)   =>
+      case LlmError.InvalidRequestError(message)  =>
         PersistenceError.QueryFailed("llm_service", s"Invalid request: $message")
-      case LlmError.TimeoutError(duration)         =>
+      case LlmError.TimeoutError(duration)        =>
         PersistenceError.QueryFailed("llm_service", s"Request timed out after ${duration.toSeconds}s")
-      case LlmError.ParseError(message, raw)       =>
+      case LlmError.ParseError(message, raw)      =>
         PersistenceError.QueryFailed("llm_service", s"Parse error: $message\nRaw: ${raw.take(200)}")
-      case LlmError.ToolError(toolName, message)   =>
+      case LlmError.ToolError(toolName, message)  =>
         PersistenceError.QueryFailed("llm_service", s"Tool error ($toolName): $message")
-      case LlmError.ConfigError(message)           =>
+      case LlmError.ConfigError(message)          =>
         PersistenceError.QueryFailed("llm_service", s"Configuration error: $message")

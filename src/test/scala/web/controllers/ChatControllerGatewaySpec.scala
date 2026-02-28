@@ -96,7 +96,7 @@ object ChatControllerGatewaySpec extends ZIOSpecDefault:
   private val testIssueAssignment: IssueAssignmentOrchestrator =
     new IssueAssignmentOrchestrator:
       override def assignIssue(issueId: String, agentName: String): IO[PersistenceError, AgentIssueView] =
-        ZIO.fail(PersistenceError.NotFound("issue", issueId))
+        ZIO.fail(PersistenceError.QueryFailed("issue", s"Not found: $issueId"))
 
   private val stubActivityRepo: ActivityRepository = new ActivityRepository:
     override def createEvent(

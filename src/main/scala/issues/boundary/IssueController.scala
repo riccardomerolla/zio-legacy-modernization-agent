@@ -13,7 +13,7 @@ import zio.json.*
 
 import db.{ ChatRepository, PersistenceError, TaskRepository }
 import issues.entity.{ IssueEvent, IssueFilter, IssueRepository, IssueState, IssueStateTag }
-import issues.entity.{ AgentIssue as DomainIssue }
+import issues.entity.AgentIssue as DomainIssue
 import issues.entity.api.{ AgentIssueCreateRequest, AgentIssueView, AssignIssueRequest, IssuePriority, IssueStatus }
 import orchestration.control.{ AgentRegistry, IssueAssignmentOrchestrator }
 import shared.ids.Ids.{ IssueId, TaskRunId }
@@ -27,7 +27,8 @@ object IssueController:
   def routes: ZIO[IssueController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[IssueController](_.routes)
 
-  val live: ZLayer[ChatRepository & TaskRepository & IssueAssignmentOrchestrator & IssueRepository, Nothing, IssueController] =
+  val live
+    : ZLayer[ChatRepository & TaskRepository & IssueAssignmentOrchestrator & IssueRepository, Nothing, IssueController] =
     ZLayer.fromFunction(IssueControllerLive.apply)
 
 final case class IssueControllerLive(
@@ -131,7 +132,9 @@ final case class IssueControllerLive(
       val runIdStr = req.queryParam("run_id").map(_.trim).filter(_.nonEmpty)
       ErrorHandlingMiddleware.fromPersistence {
         val filter = IssueFilter(runId = runIdStr.map(TaskRunId.apply))
-        issueRepository.list(filter).mapError(mapIssueRepoError).map(issues => Response.json(issues.map(domainToView).toJson))
+        issueRepository.list(filter).mapError(mapIssueRepoError).map(issues =>
+          Response.json(issues.map(domainToView).toJson)
+        )
       }
     },
     Method.GET / "api" / "issues" / string("id")                   -> handler { (id: String, _: Request) =>
@@ -172,13 +175,13 @@ final case class IssueControllerLive(
 
   private def mapIssueRepoError(e: shared.errors.PersistenceError): PersistenceError =
     e match
-      case shared.errors.PersistenceError.NotFound(entity, id) =>
+      case shared.errors.PersistenceError.NotFound(entity, id)               =>
         PersistenceError.QueryFailed(s"$entity", s"Not found: $id")
-      case shared.errors.PersistenceError.QueryFailed(op, cause) =>
+      case shared.errors.PersistenceError.QueryFailed(op, cause)             =>
         PersistenceError.QueryFailed(op, cause)
       case shared.errors.PersistenceError.SerializationFailed(entity, cause) =>
         PersistenceError.QueryFailed(entity, cause)
-      case shared.errors.PersistenceError.StoreUnavailable(msg) =>
+      case shared.errors.PersistenceError.StoreUnavailable(msg)              =>
         PersistenceError.QueryFailed("store", msg)
 
   private def domainToView(i: DomainIssue): AgentIssueView =
@@ -189,8 +192,8 @@ final case class IssueControllerLive(
       case IssueState.Completed(agent, at, _) => (IssueStatus.Completed, Some(agent.value), None, Some(at), None)
       case IssueState.Failed(agent, at, msg)  => (IssueStatus.Failed, Some(agent.value), None, Some(at), Some(msg))
       case IssueState.Skipped(at, _)          => (IssueStatus.Skipped, None, None, Some(at), None)
-    val priority = IssuePriority.values.find(_.toString.equalsIgnoreCase(i.priority)).getOrElse(IssuePriority.Medium)
-    val createdAt = i.state match
+    val priority                                                       = IssuePriority.values.find(_.toString.equalsIgnoreCase(i.priority)).getOrElse(IssuePriority.Medium)
+    val createdAt                                                      = i.state match
       case IssueState.Open(at) => at
       case _                   => java.time.Instant.EPOCH
     AgentIssueView(
@@ -213,7 +216,8 @@ final case class IssueControllerLive(
       updatedAt = assignedAt.orElse(completedAt).getOrElse(createdAt),
     )
 
-  private def loadIssues(runId: Option[String], statusFilter: Option[String]): IO[PersistenceError, List[AgentIssueView]] =
+  private def loadIssues(runId: Option[String], statusFilter: Option[String])
+    : IO[PersistenceError, List[AgentIssueView]] =
     val filter = IssueFilter(
       runId = runId.map(TaskRunId.apply),
       states = statusFilter.flatMap(parseIssueStateTag).map(Set(_)).getOrElse(Set.empty),
@@ -254,11 +258,6 @@ final case class IssueControllerLive(
     ZIO
       .fromOption(form.get(key).map(_.trim).filter(_.nonEmpty))
       .orElseFail(PersistenceError.QueryFailed("parseForm", s"Missing field '$key'"))
-
-  private def parseLongId(entity: String, raw: String): IO[PersistenceError, Long] =
-    ZIO
-      .fromOption(raw.toLongOption)
-      .orElseFail(PersistenceError.QueryFailed(s"parse_$entity", s"Invalid $entity id: '$raw'"))
 
   private def importIssuesFromConfiguredFolder: IO[PersistenceError, Int] =
     for
