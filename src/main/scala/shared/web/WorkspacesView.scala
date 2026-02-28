@@ -1,7 +1,7 @@
 package shared.web
 
 import config.entity.AgentInfo
-import issues.entity.api.AgentIssue
+import issues.entity.api.AgentIssueView
 import scalatags.Text.all.*
 import workspace.entity.{ RunMode, RunStatus, Workspace, WorkspaceRun }
 
@@ -259,7 +259,8 @@ object WorkspacesView:
         cls  := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 focus:border-indigo-400/40 focus:outline-none",
       )(
         supportedCliTools.map { tool =>
-          option(value := tool, if tool == current then selected else ())(cliToolLabel(tool))
+          if tool == current then option(value := tool, selected)(cliToolLabel(tool))
+          else option(value := tool)(cliToolLabel(tool))
         }*
       ),
     )
@@ -395,8 +396,8 @@ object WorkspacesView:
           cls  := "rounded-md border border-white/15 bg-slate-800/80 px-3 py-1.5 text-sm text-slate-100 focus:border-indigo-400/40 focus:outline-none",
         )(
           agents.map { a =>
-            val isDefault = defaultAgent.contains(a.name)
-            option(value := a.name, if isDefault then selected else ())(a.displayName)
+            if defaultAgent.contains(a.name) then option(value := a.name, selected)(a.displayName)
+            else option(value := a.name)(a.displayName)
           }*
         ),
         button(
@@ -410,7 +411,7 @@ object WorkspacesView:
     )
 
   /** HTMX fragment: list of selectable issue rows for the assign-run search dropdown. */
-  def issueSearchResults(issues: List[AgentIssue]): String =
+  def issueSearchResults(issues: List[AgentIssueView]): String =
     if issues.isEmpty then
       div(cls := "px-3 py-2 text-sm text-slate-400")("No open issues found").render
     else

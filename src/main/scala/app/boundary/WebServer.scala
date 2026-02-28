@@ -15,7 +15,6 @@ import conversation.boundary.{
   ChatController as ConversationChatController,
   WebSocketController as ConversationWebSocketController,
 }
-import db.ChatRepository
 import gateway.boundary.{
   ChannelController as GatewayChannelController,
   TelegramController as GatewayTelegramController,
@@ -39,7 +38,7 @@ trait WebServer:
 object WebServer:
 
   val live: ZLayer[
-    TaskRunDashboardController & TaskRunTasksController & TaskRunReportsController & TaskRunGraphController & SettingsBoundaryController & ConfigBoundaryController & ConfigAgentsController & AppAgentMonitorController & ConversationChatController & IssuesIssueController & ConfigWorkflowsController & GatewayTelegramController & ActivityController & MemoryBoundaryController & GatewayChannelController & AppHealthController & TaskRunLogsController & ConversationWebSocketController & WorkspaceRepository & WorkspaceRunService & ChatRepository & AgentRegistry,
+    TaskRunDashboardController & TaskRunTasksController & TaskRunReportsController & TaskRunGraphController & SettingsBoundaryController & ConfigBoundaryController & ConfigAgentsController & AppAgentMonitorController & ConversationChatController & IssuesIssueController & ConfigWorkflowsController & GatewayTelegramController & ActivityController & MemoryBoundaryController & GatewayChannelController & AppHealthController & TaskRunLogsController & ConversationWebSocketController & WorkspaceRepository & WorkspaceRunService & AgentRegistry,
     Nothing,
     WebServer,
   ] = ZLayer {
@@ -64,7 +63,6 @@ object WebServer:
       websocket   <- ZIO.service[ConversationWebSocketController]
       wsRepo      <- ZIO.service[WorkspaceRepository]
       wsRunSvc    <- ZIO.service[WorkspaceRunService]
-      chatRepo    <- ZIO.service[ChatRepository]
       agentReg    <- ZIO.service[AgentRegistry]
       staticRoutes = Routes.serveResources(Path.empty / "static")
     yield new WebServer {
@@ -72,7 +70,6 @@ object WebServer:
         dashboard.routes ++ tasks.routes ++ reports.routes ++ graph.routes ++ settings.routes ++ config.routes ++ agents.routes ++ monitor.routes ++ chat.routes ++ issues.routes ++ workflows.routes ++ telegram.routes ++ activity.routes ++ memory.routes ++ channels.routes ++ health.routes ++ logs.routes ++ websocket.routes ++ WorkspacesController.routes(
           wsRepo,
           wsRunSvc,
-          chatRepo,
           agentReg,
         ) ++ staticRoutes
     }

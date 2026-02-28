@@ -5,7 +5,7 @@ import config.entity.{ AgentChannelBinding, AgentInfo, WorkflowDefinition }
 import conversation.entity.api.{ ChatConversation, ConversationEntry, ConversationSessionMeta }
 import db.{ TaskReportRow, TaskRunRow }
 import gateway.entity.ChatSession
-import issues.entity.api.{ AgentAssignment, AgentIssue }
+import issues.entity.api.{ AgentAssignmentView, AgentIssueView }
 
 object HtmlViews:
 
@@ -141,7 +141,7 @@ object HtmlViews:
 
   def issuesView(
     runId: Option[String],
-    issues: List[AgentIssue],
+    issues: List[AgentIssueView],
     statusFilter: Option[String],
     query: Option[String],
     tagFilter: Option[String],
@@ -152,8 +152,8 @@ object HtmlViews:
     IssuesView.newForm(runId)
 
   def issueDetail(
-    issue: AgentIssue,
-    assignments: List[AgentAssignment],
+    issue: AgentIssueView,
+    assignments: List[AgentAssignmentView],
     availableAgents: List[AgentInfo],
   ): String =
     IssuesView.detail(issue, assignments, availableAgents)

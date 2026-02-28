@@ -3,14 +3,14 @@ package shared.web
 import java.time.Instant
 
 import config.entity.AgentInfo
-import issues.entity.api.{ AgentAssignment, AgentIssue, IssueStatus }
+import issues.entity.api.{ AgentAssignmentView, AgentIssueView, IssueStatus }
 import scalatags.Text.all.*
 
 object IssuesView:
 
   def list(
     runId: Option[String],
-    issues: List[AgentIssue],
+    issues: List[AgentIssueView],
     statusFilter: Option[String],
     query: Option[String],
     tagFilter: Option[String],
@@ -135,7 +135,7 @@ object IssuesView:
       Option(thunk).getOrElse(fallback)
     catch case _: Throwable => fallback
 
-  def detail(issue: AgentIssue, assignments: List[AgentAssignment], availableAgents: List[AgentInfo]): String =
+  def detail(issue: AgentIssueView, assignments: List[AgentAssignmentView], availableAgents: List[AgentInfo]): String =
     val issueIdStr    = safe(issue.id, "-")
     val selectedAgent = safe(issue.preferredAgent).match
       case "" => safe(issue.assignedAgent)
@@ -280,7 +280,7 @@ object IssuesView:
       ),
     )
 
-  private def issueRow(issue: AgentIssue): Frag =
+  private def issueRow(issue: AgentIssueView): Frag =
     val issueIdStr = safe(issue.id, "-")
     div(id := s"issue-row-$issueIdStr", cls := "border-b border-white/10 px-4 py-4 last:border-b-0 group")(
       div(cls := "flex items-start gap-3")(

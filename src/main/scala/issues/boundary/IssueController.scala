@@ -48,7 +48,7 @@ final case class IssueControllerLive(
         for
           issues  <- loadIssues(runId, statusFilter)
           filtered = filterIssues(issues, query, tagFilter)
-        yield html(HtmlViews.issuesView(runId, filtered.asInstanceOf, statusFilter, query, tagFilter))
+        yield html(HtmlViews.issuesView(runId, filtered, statusFilter, query, tagFilter))
       }
     },
     Method.GET / "issues" / "new"                                  -> handler { (req: Request) =>
@@ -93,7 +93,7 @@ final case class IssueControllerLive(
           customAgents   <- taskRepository.listCustomAgents
           enabledCustom   = customAgents.filter(_.enabled)
           availableAgents = AgentRegistry.allAgents(enabledCustom).filter(_.usesAI)
-        yield html(HtmlViews.issueDetail(domainToView(issue).asInstanceOf, List.empty, availableAgents))
+        yield html(HtmlViews.issueDetail(domainToView(issue), List.empty, availableAgents))
       }
     },
     Method.POST / "issues" / string("id") / "assign"               -> handler { (id: String, req: Request) =>

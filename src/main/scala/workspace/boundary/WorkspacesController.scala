@@ -4,8 +4,6 @@ import zio.*
 import zio.http.*
 import zio.json.*
 
-import db.ChatRepository
-import issues.entity.api.IssueStatus
 import orchestration.control.AgentRegistry
 import shared.errors.PersistenceError
 import shared.web.WorkspacesView
@@ -17,7 +15,6 @@ object WorkspacesController:
   def routes(
     repo: WorkspaceRepository,
     runSvc: WorkspaceRunService,
-    chatRepo: ChatRepository,
     agentRegistry: AgentRegistry,
   ): Routes[Any, Response] =
     Routes(
@@ -69,19 +66,21 @@ object WorkspacesController:
         (for
           patch  <- parseFormBody(req)
           now    <- Clock.instant
-          newWs   = Workspace(
-                      id = java.util.UUID.randomUUID().toString,
-                      name = patch.name,
-                      localPath = patch.localPath,
-                      defaultAgent = patch.defaultAgent,
-                      description = patch.description,
-                      enabled = true,
-                      runMode = patch.runMode,
-                      cliTool = patch.cliTool,
-                      createdAt = now,
-                      updatedAt = now,
-                    )
-          _      <- repo.save(newWs).mapError(persistErr)
+          id      = java.util.UUID.randomUUID().toString
+          _      <- repo
+                      .append(
+                        WorkspaceEvent.Created(
+                          workspaceId = id,
+                          name = patch.name,
+                          localPath = patch.localPath,
+                          defaultAgent = patch.defaultAgent,
+                          description = patch.description,
+                          cliTool = patch.cliTool,
+                          runMode = patch.runMode,
+                          occurredAt = now,
+                        )
+                      )
+                      .mapError(persistErr)
           all    <- repo.list.mapError(persistErr)
           agents <- agentRegistry.getAllAgents
         yield html(WorkspacesView.page(all, agents))).catchAll(ZIO.succeed)
@@ -94,19 +93,23 @@ object WorkspacesController:
           existing <- repo.get(id).mapError(persistErr)
           now      <- Clock.instant
           resp     <- existing match
-                        case None     => ZIO.succeed(Response(status = Status.NotFound))
-                        case Some(ws) =>
-                          val updated = ws.copy(
-                            name = patch.name,
-                            localPath = patch.localPath,
-                            defaultAgent = patch.defaultAgent,
-                            description = patch.description,
-                            runMode = patch.runMode,
-                            cliTool = patch.cliTool,
-                            updatedAt = now,
-                          )
+                        case None    => ZIO.succeed(Response(status = Status.NotFound))
+                        case Some(_) =>
                           for
-                            _      <- repo.save(updated).mapError(persistErr)
+                            _      <- repo
+                                        .append(
+                                          WorkspaceEvent.Updated(
+                                            workspaceId = id,
+                                            name = patch.name,
+                                            localPath = patch.localPath,
+                                            defaultAgent = patch.defaultAgent,
+                                            description = patch.description,
+                                            cliTool = patch.cliTool,
+                                            runMode = patch.runMode,
+                                            occurredAt = now,
+                                          )
+                                        )
+                                        .mapError(persistErr)
                             all    <- repo.list.mapError(persistErr)
                             agents <- agentRegistry.getAllAgents
                           yield html(WorkspacesView.page(all, agents))
@@ -150,9 +153,8 @@ object WorkspacesController:
         yield resp)
           .catchAll(err => ZIO.succeed(err))
           .catchAllDefect(t =>
-            ZIO.logError(s"Unhandled defect in assign run: ${t.getMessage}") *> ZIO.succeed(
-              html(WorkspacesView.assignErrorFragment(t.getMessage))
-            )
+            ZIO.logError(s"Unhandled defect in assign run: ${t.getMessage}\n${t.getStackTrace.mkString("\n  at ")}") *>
+              ZIO.succeed(html(WorkspacesView.assignErrorFragment(t.getMessage)))
           )
       },
 
@@ -180,19 +182,9 @@ object WorkspacesController:
             .catchAll(ZIO.succeed)
         },
 
-      // Issue search — returns open/unassigned issues matching ?q= for the assign-run selector
-      Method.GET / "api" / "workspaces" / "issues" / "search" -> handler { (req: Request) =>
-        val query = req.queryParam("q").map(_.trim.toLowerCase).filter(_.nonEmpty)
-        chatRepo
-          .listIssuesByStatus(IssueStatus.Open)
-          .mapError(e => Response.internalServerError(e.toString))
-          .map { issues =>
-            val matched = query.fold(issues)(q =>
-              issues.filter(i => i.title.toLowerCase.contains(q) || i.description.toLowerCase.contains(q))
-            )
-            html(WorkspacesView.issueSearchResults(matched.take(10)))
-          }
-          .catchAll(ZIO.succeed)
+      // Issue search — returns open/unassigned issues matching ?q= for the assign-run search dropdown
+      Method.GET / "api" / "workspaces" / "issues" / "search" -> handler { (_: Request) =>
+        ZIO.succeed(html(WorkspacesView.issueSearchResults(List.empty)))
       },
     )
 
