@@ -30,9 +30,11 @@ object WorkspaceModelsSpec extends ZIOSpecDefault:
         id = "ws-1",
         name = "my-api",
         localPath = "/home/user/projects/my-api",
-        defaultAgent = Some("gemini-cli"),
+        defaultAgent = Some("gemini"),
         description = None,
         enabled = true,
+        runMode = RunMode.Host,
+        cliTool = "gemini",
         createdAt = Instant.parse("2026-02-24T10:00:00Z"),
         updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
       )
@@ -49,6 +51,7 @@ object WorkspaceModelsSpec extends ZIOSpecDefault:
         description = None,
         enabled = true,
         runMode = RunMode.Docker(image = "ghcr.io/opencode-ai/opencode:latest", network = Some("none")),
+        cliTool = "opencode",
         createdAt = Instant.parse("2026-02-24T10:00:00Z"),
         updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
       )

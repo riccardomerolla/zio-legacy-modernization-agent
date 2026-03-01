@@ -18,20 +18,6 @@ object RunMode:
     network: Option[String] = None,
   ) extends RunMode
 
-case class Workspace(
-  id: String,
-  name: String,
-  localPath: String,
-  defaultAgent: Option[String],
-  description: Option[String],
-  enabled: Boolean = true,
-  runMode: RunMode = RunMode.Host,
-  /** The CLI binary used to run agents in this workspace (e.g. "claude", "gemini", "opencode"). */
-  cliTool: String = "claude",
-  createdAt: Instant,
-  updatedAt: Instant,
-) derives JsonCodec, Schema
-
 sealed trait RunStatus derives JsonCodec, Schema
 object RunStatus:
   case object Pending   extends RunStatus
@@ -39,6 +25,92 @@ object RunStatus:
   case object Completed extends RunStatus
   case object Failed    extends RunStatus
 
+/** Read-side projection of the Workspace aggregate. Rebuilt by folding [[WorkspaceEvent]]s. Never persisted directly as
+  * a mutable record — only as a snapshot cache for fast reads.
+  */
+case class Workspace(
+  id: String,
+  name: String,
+  localPath: String,
+  defaultAgent: Option[String],
+  description: Option[String],
+  enabled: Boolean,
+  runMode: RunMode,
+  cliTool: String,
+  createdAt: Instant,
+  updatedAt: Instant,
+) derives JsonCodec, Schema
+
+object Workspace:
+  def fromEvents(events: List[WorkspaceEvent]): Either[String, Workspace] =
+    events match
+      case Nil => Left("Cannot rebuild Workspace from an empty event stream")
+      case _   =>
+        events
+          .foldLeft[Either[String, Option[Workspace]]](Right(None)) { (acc, event) =>
+            acc.flatMap(current => applyEvent(current, event))
+          }
+          .flatMap {
+            case Some(ws) => Right(ws)
+            case None     => Left("Workspace event stream did not produce a state")
+          }
+
+  private def applyEvent(
+    current: Option[Workspace],
+    event: WorkspaceEvent,
+  ): Either[String, Option[Workspace]] =
+    event match
+      case e: WorkspaceEvent.Created =>
+        current match
+          case Some(_) => Left(s"Workspace ${e.workspaceId} already initialised")
+          case None    =>
+            Right(
+              Some(
+                Workspace(
+                  id = e.workspaceId,
+                  name = e.name,
+                  localPath = e.localPath,
+                  defaultAgent = e.defaultAgent,
+                  description = e.description,
+                  enabled = true,
+                  runMode = e.runMode,
+                  cliTool = e.cliTool,
+                  createdAt = e.occurredAt,
+                  updatedAt = e.occurredAt,
+                )
+              )
+            )
+
+      case e: WorkspaceEvent.Updated =>
+        current
+          .toRight(s"Workspace ${e.workspaceId} not initialised before Updated event")
+          .map(ws =>
+            Some(
+              ws.copy(
+                name = e.name,
+                localPath = e.localPath,
+                defaultAgent = e.defaultAgent,
+                description = e.description,
+                cliTool = e.cliTool,
+                runMode = e.runMode,
+                updatedAt = e.occurredAt,
+              )
+            )
+          )
+
+      case e: WorkspaceEvent.Enabled =>
+        current
+          .toRight(s"Workspace ${e.workspaceId} not initialised before Enabled event")
+          .map(ws => Some(ws.copy(enabled = true, updatedAt = e.occurredAt)))
+
+      case e: WorkspaceEvent.Disabled =>
+        current
+          .toRight(s"Workspace ${e.workspaceId} not initialised before Disabled event")
+          .map(ws => Some(ws.copy(enabled = false, updatedAt = e.occurredAt)))
+
+      case _: WorkspaceEvent.Deleted => Right(None)
+
+/** Read-side projection of the WorkspaceRun aggregate. */
 case class WorkspaceRun(
   id: String,
   workspaceId: String,
@@ -52,6 +124,52 @@ case class WorkspaceRun(
   createdAt: Instant,
   updatedAt: Instant,
 ) derives JsonCodec, Schema
+
+object WorkspaceRun:
+  def fromEvents(events: List[WorkspaceRunEvent]): Either[String, WorkspaceRun] =
+    events match
+      case Nil => Left("Cannot rebuild WorkspaceRun from an empty event stream")
+      case _   =>
+        events
+          .foldLeft[Either[String, Option[WorkspaceRun]]](Right(None)) { (acc, event) =>
+            acc.flatMap(current => applyEvent(current, event))
+          }
+          .flatMap {
+            case Some(run) => Right(run)
+            case None      => Left("WorkspaceRun event stream did not produce a state")
+          }
+
+  private def applyEvent(
+    current: Option[WorkspaceRun],
+    event: WorkspaceRunEvent,
+  ): Either[String, Option[WorkspaceRun]] =
+    event match
+      case e: WorkspaceRunEvent.Assigned =>
+        current match
+          case Some(_) => Left(s"WorkspaceRun ${e.runId} already initialised")
+          case None    =>
+            Right(
+              Some(
+                WorkspaceRun(
+                  id = e.runId,
+                  workspaceId = e.workspaceId,
+                  issueRef = e.issueRef,
+                  agentName = e.agentName,
+                  prompt = e.prompt,
+                  conversationId = e.conversationId,
+                  worktreePath = e.worktreePath,
+                  branchName = e.branchName,
+                  status = RunStatus.Pending,
+                  createdAt = e.occurredAt,
+                  updatedAt = e.occurredAt,
+                )
+              )
+            )
+
+      case e: WorkspaceRunEvent.StatusChanged =>
+        current
+          .toRight(s"WorkspaceRun ${e.runId} not initialised before StatusChanged event")
+          .map(run => Some(run.copy(status = e.status, updatedAt = e.occurredAt)))
 
 enum WorkspaceError:
   case NotFound(id: String)

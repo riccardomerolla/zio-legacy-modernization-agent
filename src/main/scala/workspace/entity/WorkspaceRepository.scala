@@ -1,126 +1,236 @@
 package workspace.entity
 
 import zio.*
+import zio.json.*
 
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import shared.errors.PersistenceError
-import shared.store.ConfigStoreModule
+import shared.store.DataStoreModule
 
 trait WorkspaceRepository:
+  def append(event: WorkspaceEvent): IO[PersistenceError, Unit]
   def list: IO[PersistenceError, List[Workspace]]
   def get(id: String): IO[PersistenceError, Option[Workspace]]
-  def save(ws: Workspace): IO[PersistenceError, Unit]
   def delete(id: String): IO[PersistenceError, Unit]
 
+  def appendRun(event: WorkspaceRunEvent): IO[PersistenceError, Unit]
   def listRuns(workspaceId: String): IO[PersistenceError, List[WorkspaceRun]]
   def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]]
-  def saveRun(run: WorkspaceRun): IO[PersistenceError, Unit]
-  def updateRunStatus(runId: String, status: RunStatus): IO[PersistenceError, Unit]
 
 object WorkspaceRepository:
-  val live: ZLayer[ConfigStoreModule.ConfigStoreService, Nothing, WorkspaceRepository] =
-    ZLayer.fromFunction(WorkspaceRepositoryES.apply)
+  val live: ZLayer[DataStoreModule.DataStoreService, Nothing, WorkspaceRepository] =
+    ZLayer.fromZIO(
+      for
+        svc <- ZIO.service[DataStoreModule.DataStoreService]
+        repo = WorkspaceRepositoryES(svc)
+        // One-time cleanup: remove pre-event-sourcing keys (workspace:* / workspace-run:*)
+        // and any snapshot:workspace:* entries (which can contain badly-serialised ADTs
+        // from earlier EclipseStore type-dictionary entries).  After the first clean run
+        // this is a no-op.  Events are the durable source-of-truth and are never removed here.
+        _   <- repo.purgeSnapshotsAndLegacyKeys.ignoreLogged
+      yield repo
+    )
 
 final case class WorkspaceRepositoryES(
-  configStore: ConfigStoreModule.ConfigStoreService
+  dataStore: DataStoreModule.DataStoreService
 ) extends WorkspaceRepository:
 
-  private val ts = configStore.store
+  private val ts = dataStore.store
 
-  private def wsKey(id: String): String  = s"workspace:$id"
-  private def runKey(id: String): String = s"workspace-run:$id"
+  // ── key conventions ──────────────────────────────────────────────────────
+
+  private def wsEventKey(id: String, seq: Long): String = s"events:workspace:$id:$seq"
+  private def wsEventPrefix(id: String): String         = s"events:workspace:$id:"
+  private def wsAllEventsPrefix: String                 = "events:workspace:"
+
+  private def runEventKey(id: String, seq: Long): String = s"events:workspace-run:$id:$seq"
+  private def runEventPrefix(id: String): String         = s"events:workspace-run:$id:"
+  private def runAllEventsPrefix: String                 = "events:workspace-run:"
 
   private def storeErr(op: String)(e: EclipseStoreError): PersistenceError =
     PersistenceError.QueryFailed(op, e.toString)
 
-  override def list: IO[PersistenceError, List[Workspace]] =
-    fetchByPrefix[Workspace]("workspace:", "listWorkspaces")
-      .flatMap(ws => ZIO.foreach(ws)(migrateWorkspace))
-      .map(_.sortBy(_.name.toLowerCase))
+  // ── workspace events ─────────────────────────────────────────────────────
 
-  override def get(id: String): IO[PersistenceError, Option[Workspace]] =
-    ts.fetch[String, Workspace](wsKey(id))
-      .mapError(storeErr("getWorkspace"))
-      .flatMap(_.fold(ZIO.succeed(None))(ws => migrateWorkspace(ws).map(Some(_))))
-
-  override def save(ws: Workspace): IO[PersistenceError, Unit] =
-    ts.store(wsKey(ws.id), ws).mapError(storeErr("saveWorkspace"))
-
-  override def delete(id: String): IO[PersistenceError, Unit] =
-    ts.remove[String](wsKey(id)).mapError(storeErr("deleteWorkspace"))
-
-  override def listRuns(workspaceId: String): IO[PersistenceError, List[WorkspaceRun]] =
-    fetchByPrefix[WorkspaceRun]("workspace-run:", "listRuns")
-      .flatMap(runs => ZIO.foreach(runs)(migrateRun))
-      .map(_.filter(_.workspaceId == workspaceId).sortBy(_.createdAt).reverse)
-
-  override def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]] =
-    ts.fetch[String, WorkspaceRun](runKey(id))
-      .mapError(storeErr("getRun"))
-      .flatMap(_.fold(ZIO.succeed(None))(run => migrateRun(run).map(Some(_))))
-
-  override def saveRun(run: WorkspaceRun): IO[PersistenceError, Unit] =
-    ts.store(runKey(run.id), run).mapError(storeErr("saveRun"))
-
-  override def updateRunStatus(runId: String, status: RunStatus): IO[PersistenceError, Unit] =
+  override def append(event: WorkspaceEvent): IO[PersistenceError, Unit] =
     for
-      existing <- getRun(runId).flatMap(
-                    _.fold[IO[PersistenceError, WorkspaceRun]](
-                      ZIO.fail(PersistenceError.NotFound("workspace-run", runId))
-                    )(ZIO.succeed)
-                  )
-      now      <- Clock.instant
-      _        <- saveRun(existing.copy(status = status, updatedAt = now))
+      seq <- nextSeq(wsEventPrefix(event.workspaceId), "appendWorkspaceEvent")
+      json = event.toJson
+      _   <- ts.store(wsEventKey(event.workspaceId, seq), json).mapError(storeErr("appendWorkspaceEvent"))
     yield ()
 
-  /** Repair a workspace whose `runMode` field was persisted before the RunMode ADT was introduced. EclipseStore
-    * restores the object graph using the old class instances, so the value is non-null but belongs to a stale
-    * classloader version that won't match the current `RunMode` cases. We detect this by attempting a match; on failure
-    * we default to Host and re-save so the migration only runs once.
-    */
-  private def migrateWorkspace(ws: Workspace): IO[PersistenceError, Workspace] =
-    val safeMode: RunMode =
-      try
-        ws.runMode match
-          case RunMode.Host      => RunMode.Host
-          case d: RunMode.Docker => d
-      catch
-        case _: MatchError => RunMode.Host
-    // cliTool may be null for workspaces persisted before the field was added
-    val safeTool: String  = Option(ws.cliTool).filter(_.nonEmpty).getOrElse("claude")
-    val needsMigration    = !(safeMode eq ws.runMode) || safeTool != ws.cliTool
-    if !needsMigration then ZIO.succeed(ws)
-    else
-      val migrated = ws.copy(runMode = safeMode, cliTool = safeTool)
-      save(migrated).as(migrated) <*
-        ZIO.logWarning(s"Migrated workspace ${ws.id} runMode/cliTool (stale binary record)")
+  // Read-side: always rebuilt from the event log — no snapshot stored.
+  // For the small number of workspaces expected this is instant; it avoids
+  // any EclipseStore type-dictionary entry for `Workspace` / `RunMode` / `RunStatus`.
 
-  /** Repair a WorkspaceRun whose `status` field is a stale classloader instance of RunStatus. */
-  private def migrateRun(run: WorkspaceRun): IO[PersistenceError, WorkspaceRun] =
-    val safeStatus: RunStatus =
-      try
-        run.status match
-          case RunStatus.Pending   => RunStatus.Pending
-          case RunStatus.Running   => RunStatus.Running
-          case RunStatus.Completed => RunStatus.Completed
-          case RunStatus.Failed    => RunStatus.Failed
-      catch case _: MatchError => RunStatus.Failed
-    if safeStatus eq run.status then ZIO.succeed(run)
-    else
-      val migrated = run.copy(status = safeStatus)
-      saveRun(migrated).as(migrated) <*
-        ZIO.logWarning(s"Migrated run ${run.id} status to ${safeStatus} (stale binary record)")
+  override def list: IO[PersistenceError, List[Workspace]] =
+    allWorkspaceIds("listWorkspaces").flatMap { ids =>
+      ZIO.foreach(ids)(id => rebuildWorkspace(id, "listWorkspaces"))
+        .map(_.flatten.sortBy(_.name.toLowerCase))
+    }
 
-  private def fetchByPrefix[V](
+  override def get(id: String): IO[PersistenceError, Option[Workspace]] =
+    rebuildWorkspace(id, "getWorkspace")
+
+  override def delete(id: String): IO[PersistenceError, Unit] =
+    for
+      now <- Clock.instant
+      _   <- append(WorkspaceEvent.Deleted(id, now))
+      _   <- removeByPrefix(wsEventPrefix(id), "deleteWorkspaceEvents")
+    yield ()
+
+  // ── workspace run events ──────────────────────────────────────────────────
+
+  override def appendRun(event: WorkspaceRunEvent): IO[PersistenceError, Unit] =
+    for
+      seq <- nextSeq(runEventPrefix(event.runId), "appendRunEvent")
+      json = event.toJson
+      _   <- ts.store(runEventKey(event.runId, seq), json).mapError(storeErr("appendRunEvent"))
+    yield ()
+
+  override def listRuns(workspaceId: String): IO[PersistenceError, List[WorkspaceRun]] =
+    allRunIds("listRuns").flatMap { ids =>
+      ZIO.foreach(ids)(id => rebuildRun(id, "listRuns"))
+        .map(_.flatten.filter(_.workspaceId == workspaceId).sortBy(_.createdAt).reverse)
+    }
+
+  override def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]] =
+    rebuildRun(id, "getRun")
+
+  // ── private rebuild helpers ───────────────────────────────────────────────
+
+  /** Collect all distinct workspace IDs that have at least one event. */
+  private def allWorkspaceIds(op: String): IO[PersistenceError, List[String]] =
+    dataStore.rawStore
+      .streamKeys[String]
+      .filter(_.startsWith(wsAllEventsPrefix))
+      .runCollect
+      .mapError(storeErr(op))
+      .map { keys =>
+        keys.toList
+          .flatMap { key =>
+            // key format: events:workspace:<id>:<seq>
+            val stripped = key.stripPrefix(wsAllEventsPrefix)
+            stripped.lastIndexOf(':') match
+              case -1  => None
+              case idx => Some(stripped.substring(0, idx))
+          }
+          .distinct
+      }
+
+  /** Collect all distinct run IDs that have at least one event. */
+  private def allRunIds(op: String): IO[PersistenceError, List[String]] =
+    dataStore.rawStore
+      .streamKeys[String]
+      .filter(_.startsWith(runAllEventsPrefix))
+      .runCollect
+      .mapError(storeErr(op))
+      .map { keys =>
+        keys.toList
+          .flatMap { key =>
+            val stripped = key.stripPrefix(runAllEventsPrefix)
+            stripped.lastIndexOf(':') match
+              case -1  => None
+              case idx => Some(stripped.substring(0, idx))
+          }
+          .distinct
+      }
+
+  private def rebuildWorkspace(id: String, op: String): IO[PersistenceError, Option[Workspace]] =
+    loadEvents[WorkspaceEvent](wsEventPrefix(id), op).map(Workspace.fromEvents(_).toOption)
+
+  private def rebuildRun(id: String, op: String): IO[PersistenceError, Option[WorkspaceRun]] =
+    loadEvents[WorkspaceRunEvent](runEventPrefix(id), op).map(WorkspaceRun.fromEvents(_).toOption)
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+
+  private def nextSeq(prefix: String, op: String): IO[PersistenceError, Long] =
+    dataStore.rawStore
+      .streamKeys[String]
+      .filter(_.startsWith(prefix))
+      .runCollect
+      .mapError(storeErr(op))
+      .map { keys =>
+        keys.flatMap(_.stripPrefix(prefix).toLongOption).maxOption.map(_ + 1L).getOrElse(1L)
+      }
+
+  // Events are stored as JSON strings (via zio-json).  Storing typed objects would cause
+  // EclipseStore's default binary serializer to handle the ADT subtype classes, which
+  // creates fresh JVM instances of case objects (RunMode.Host, RunStatus.*) that fail
+  // Scala's equals-based pattern matching after deserialization on restart.
+  private def loadEvents[E: JsonDecoder](
     prefix: String,
     op: String,
-  )(using zio.schema.Schema[V]
-  ): IO[PersistenceError, List[V]] =
-    configStore.rawStore
+  ): IO[PersistenceError, List[E]] =
+    dataStore.rawStore
+      .streamKeys[String]
+      .filter(_.startsWith(prefix))
+      .runCollect
+      .mapError(storeErr(op))
+      .map(keys =>
+        keys.toList
+          .flatMap { key =>
+            key.stripPrefix(prefix).toLongOption.map(seq => seq -> key)
+          }
+          .sortBy(_._1)
+          .map(_._2)
+      )
+      .flatMap(keys =>
+        ZIO.foreach(keys)(key =>
+          ts.fetch[String, String](key)
+            .mapError(storeErr(op))
+            .flatMap {
+              case None       => ZIO.succeed(None)
+              case Some(json) =>
+                json.fromJson[E] match
+                  case Right(event) => ZIO.succeed(Some(event))
+                  case Left(err)    =>
+                    ZIO.logWarning(
+                      s"Skipping event at key $key — JSON decode failed ($err). " +
+                        "This entry may have been stored in an old binary format; " +
+                        "delete and re-create the workspace to recover."
+                    ).as(None)
+            }
+        ).map(_.flatten)
+      )
+
+  /** Removes all snapshot keys (snapshot:workspace:* / snapshot:workspace-run:*) and pre-event-sourcing bare keys
+    * (workspace:* / workspace-run:*). Called once at startup; idempotent. Events are never removed here.
+    */
+  private[entity] def purgeSnapshotsAndLegacyKeys: IO[PersistenceError, Unit] =
+    for
+      allKeys <- dataStore.rawStore
+                   .streamKeys[String]
+                   .runCollect
+                   .mapError(storeErr("purgeSnapshotsAndLegacyKeys"))
+      toRemove = allKeys.filter { k =>
+                   // old mutable-snapshot keys (pre-event-sourcing)
+                   val isLegacy   =
+                     (k.startsWith("workspace:") && !k.startsWith("workspace-run:") &&
+                       !k.startsWith("workspace-events:")) ||
+                     (k.startsWith("workspace-run:") && !k.startsWith("workspace-run-events:"))
+                   // snapshot keys — these bypass the JSON codec and land in EclipseStore's
+                   // type-dictionary with native field-level serialisation; on class reload
+                   // the ADT cases (RunMode.Host, RunStatus.*) come back as fresh instances
+                   // that fail Scala pattern-matching.  Always regenerate from events instead.
+                   val isSnapshot =
+                     k.startsWith("snapshot:workspace:") || k.startsWith("snapshot:workspace-run:")
+                   isLegacy || isSnapshot
+                 }
+      _       <- ZIO.when(toRemove.nonEmpty)(
+                   ZIO.logWarning(s"Purging ${toRemove.size} legacy/snapshot workspace keys from store") *>
+                     ZIO.foreachDiscard(toRemove)(key =>
+                       ts.remove[String](key).mapError(storeErr("purgeSnapshotsAndLegacyKeys"))
+                     )
+                 )
+    yield ()
+
+  private def removeByPrefix(prefix: String, op: String): IO[PersistenceError, Unit] =
+    dataStore.rawStore
       .streamKeys[String]
       .filter(_.startsWith(prefix))
       .runCollect
       .mapError(storeErr(op))
       .flatMap(keys =>
-        ZIO.foreach(keys.toList)(key => ts.fetch[String, V](key).mapError(storeErr(op))).map(_.flatten)
+        ZIO.foreachDiscard(keys)(key => ts.remove[String](key).mapError(storeErr(op)))
       )

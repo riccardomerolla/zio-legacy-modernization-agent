@@ -29,8 +29,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     def getMessagesSince(cid: Long, since: Instant): IO[DbPersistenceError, List[ConversationEntry]] = ZIO.succeed(Nil)
 
   private object StubIssueRepo extends IssueRepository:
-    def append(event: issues.entity.IssueEvent): IO[PersistenceError, Unit] = ZIO.unit
-    def get(id: IssueId): IO[PersistenceError, issues.entity.AgentIssue] =
+    def append(event: issues.entity.IssueEvent): IO[PersistenceError, Unit]             = ZIO.unit
+    def get(id: IssueId): IO[PersistenceError, issues.entity.AgentIssue]                =
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
     def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] = ZIO.succeed(Nil)
 

@@ -7,7 +7,7 @@ import zio.*
 import zio.test.*
 
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
-import shared.store.*
+import shared.store.{ DataStoreModule, StoreConfig }
 
 object WorkspaceRepositorySpec extends ZIOSpecDefault:
 
@@ -26,155 +26,188 @@ object WorkspaceRepositorySpec extends ZIOSpecDefault:
       }.ignore
     )(use)
 
-  private def layerFor(dataDir: Path): ZLayer[Any, EclipseStoreError, ConfigStoreModule.ConfigStoreService] =
+  private def layerFor(dataDir: Path): ZLayer[Any, EclipseStoreError, DataStoreModule.DataStoreService] =
     ZLayer.succeed(
       StoreConfig(
         configStorePath = dataDir.resolve("config-store").toString,
         dataStorePath = dataDir.resolve("data-store").toString,
       )
-    ) >>> ConfigStoreModule.live
+    ) >>> DataStoreModule.live
 
-  private val sampleWs = Workspace(
-    id = "ws-1",
+  private val now = Instant.parse("2026-02-24T10:00:00Z")
+
+  private val createdWs = WorkspaceEvent.Created(
+    workspaceId = "ws-1",
     name = "my-api",
     localPath = "/tmp/my-api",
-    defaultAgent = Some("gemini-cli"),
+    defaultAgent = Some("gemini"),
     description = None,
-    enabled = true,
-    createdAt = Instant.parse("2026-02-24T10:00:00Z"),
-    updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
+    cliTool = "gemini",
+    runMode = RunMode.Host,
+    occurredAt = now,
   )
 
-  private val dockerWs = Workspace(
-    id = "ws-docker",
+  private val createdDockerWs = WorkspaceEvent.Created(
+    workspaceId = "ws-docker",
     name = "sandboxed-api",
     localPath = "/tmp/sandboxed-api",
     defaultAgent = Some("opencode"),
     description = None,
-    enabled = true,
+    cliTool = "opencode",
     runMode = RunMode.Docker("my-image:latest", Nil, mountWorktree = true, network = Some("none")),
-    createdAt = Instant.parse("2026-02-24T10:00:00Z"),
-    updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
+    occurredAt = now,
   )
 
-  private val sampleRun = WorkspaceRun(
-    id = "run-1",
+  private val assignedRun = WorkspaceRunEvent.Assigned(
+    runId = "run-1",
     workspaceId = "ws-1",
     issueRef = "#42",
-    agentName = "gemini-cli",
+    agentName = "gemini",
     prompt = "fix it",
     conversationId = "conv-1",
     worktreePath = "/tmp/wt",
     branchName = "agent/42-run1abc",
-    status = RunStatus.Pending,
-    createdAt = Instant.parse("2026-02-24T10:00:00Z"),
-    updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
+    occurredAt = now,
   )
 
   def spec: Spec[TestEnvironment & Scope, Any] =
     suite("WorkspaceRepositorySpec")(
-      // --- Task 2: codec round-trip via TypedStore ---
-      test("Workspace round-trips through TypedStore") {
+      test("append Created event and get snapshot") {
         withTempDir { dir =>
           (for
-            svc    <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            _      <- svc.store.store("workspace:ws-1", sampleWs)
-            loaded <- svc.store.fetch[String, Workspace]("workspace:ws-1")
-          yield assertTrue(loaded.contains(sampleWs))).provideLayer(layerFor(dir))
+            svc <- ZIO.service[DataStoreModule.DataStoreService]
+            repo = WorkspaceRepositoryES(svc)
+            _   <- repo.append(createdWs)
+            got <- repo.get("ws-1")
+          yield assertTrue(
+            got.isDefined &&
+            got.get.name == "my-api" &&
+            got.get.cliTool == "gemini" &&
+            got.get.enabled == true
+          )).provideLayer(layerFor(dir))
         }
       },
-      test("WorkspaceRun round-trips through TypedStore") {
+      test("list returns all workspaces sorted by name") {
         withTempDir { dir =>
           (for
-            svc    <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            _      <- svc.store.store("workspace-run:run-1", sampleRun)
-            loaded <- svc.store.fetch[String, WorkspaceRun]("workspace-run:run-1")
-          yield assertTrue(loaded.contains(sampleRun))).provideLayer(layerFor(dir))
-        }
-      },
-      // --- Task 3: WorkspaceRepository CRUD ---
-      test("WorkspaceRepository saves and lists workspaces") {
-        withTempDir { dir =>
-          (for
-            svc  <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            svc  <- ZIO.service[DataStoreModule.DataStoreService]
             repo  = WorkspaceRepositoryES(svc)
-            _    <- repo.save(sampleWs)
+            _    <- repo.append(createdWs)
+            _    <- repo.append(createdDockerWs)
             list <- repo.list
-          yield assertTrue(list.exists(_.id == "ws-1"))).provideLayer(layerFor(dir))
+          yield assertTrue(list.map(_.id).contains("ws-1") && list.map(_.id).contains("ws-docker")))
+            .provideLayer(layerFor(dir))
         }
       },
-      test("WorkspaceRepository get returns None for missing id") {
+      test("append Updated event changes fields") {
         withTempDir { dir =>
           (for
-            svc <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            svc <- ZIO.service[DataStoreModule.DataStoreService]
+            repo = WorkspaceRepositoryES(svc)
+            _   <- repo.append(createdWs)
+            _   <- repo.append(
+                     WorkspaceEvent.Updated(
+                       workspaceId = "ws-1",
+                       name = "my-api-v2",
+                       localPath = "/tmp/my-api-v2",
+                       defaultAgent = None,
+                       description = Some("updated"),
+                       cliTool = "claude",
+                       runMode = RunMode.Host,
+                       occurredAt = now.plusSeconds(1),
+                     )
+                   )
+            got <- repo.get("ws-1")
+          yield assertTrue(
+            got.exists(_.name == "my-api-v2") &&
+            got.exists(_.cliTool == "claude") &&
+            got.exists(_.description.contains("updated"))
+          )).provideLayer(layerFor(dir))
+        }
+      },
+      test("delete removes workspace from list and get") {
+        withTempDir { dir =>
+          (for
+            svc  <- ZIO.service[DataStoreModule.DataStoreService]
+            repo  = WorkspaceRepositoryES(svc)
+            _    <- repo.append(createdWs)
+            _    <- repo.delete("ws-1")
+            got  <- repo.get("ws-1")
+            list <- repo.list
+          yield assertTrue(got.isEmpty && list.isEmpty)).provideLayer(layerFor(dir))
+        }
+      },
+      test("get returns None for missing id") {
+        withTempDir { dir =>
+          (for
+            svc <- ZIO.service[DataStoreModule.DataStoreService]
             repo = WorkspaceRepositoryES(svc)
             got <- repo.get("missing")
           yield assertTrue(got.isEmpty)).provideLayer(layerFor(dir))
         }
       },
-      test("WorkspaceRepository delete removes entry") {
+      test("appendRun Assigned event and getRun snapshot") {
         withTempDir { dir =>
           (for
-            svc <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            repo = WorkspaceRepositoryES(svc)
-            _   <- repo.save(sampleWs)
-            _   <- repo.delete("ws-1")
-            got <- repo.get("ws-1")
-          yield assertTrue(got.isEmpty)).provideLayer(layerFor(dir))
-        }
-      },
-      test("WorkspaceRepository saves and retrieves a WorkspaceRun") {
-        withTempDir { dir =>
-          (for
-            svc    <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            svc    <- ZIO.service[DataStoreModule.DataStoreService]
             repo    = WorkspaceRepositoryES(svc)
-            _      <- repo.saveRun(sampleRun)
+            _      <- repo.appendRun(assignedRun)
             loaded <- repo.getRun("run-1")
-          yield assertTrue(loaded.contains(sampleRun))).provideLayer(layerFor(dir))
+          yield assertTrue(
+            loaded.isDefined &&
+            loaded.get.issueRef == "#42" &&
+            loaded.get.status == RunStatus.Pending
+          )).provideLayer(layerFor(dir))
         }
       },
-      test("WorkspaceRepository listRuns returns only runs for the given workspace") {
-        withTempDir { dir =>
-          val run2 = WorkspaceRun(
-            "r2",
-            "ws-2",
-            "#2",
-            "opencode",
-            "p",
-            "c2",
-            "/wt2",
-            "b2",
-            RunStatus.Failed,
-            Instant.parse("2026-02-24T10:00:00Z"),
-            Instant.parse("2026-02-24T10:00:00Z"),
-          )
-          (for
-            svc  <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            repo  = WorkspaceRepositoryES(svc)
-            _    <- repo.saveRun(sampleRun)
-            _    <- repo.saveRun(run2)
-            runs <- repo.listRuns("ws-1")
-          yield assertTrue(runs.length == 1 && runs.head.id == "run-1")).provideLayer(layerFor(dir))
-        }
-      },
-      test("WorkspaceRepository updateRunStatus changes status") {
+      test("appendRun StatusChanged updates run status") {
         withTempDir { dir =>
           (for
-            svc    <- ZIO.service[ConfigStoreModule.ConfigStoreService]
+            svc    <- ZIO.service[DataStoreModule.DataStoreService]
             repo    = WorkspaceRepositoryES(svc)
-            _      <- repo.saveRun(sampleRun)
-            _      <- repo.updateRunStatus("run-1", RunStatus.Completed)
+            _      <- repo.appendRun(assignedRun)
+            _      <- repo.appendRun(WorkspaceRunEvent.StatusChanged("run-1", RunStatus.Completed, now.plusSeconds(5)))
             loaded <- repo.getRun("run-1")
           yield assertTrue(loaded.exists(_.status == RunStatus.Completed))).provideLayer(layerFor(dir))
         }
       },
-      test("Workspace with RunMode.Docker round-trips through TypedStore") {
+      test("listRuns returns only runs for the given workspace") {
+        withTempDir { dir =>
+          val run2 = WorkspaceRunEvent.Assigned(
+            runId = "run-2",
+            workspaceId = "ws-2",
+            issueRef = "#2",
+            agentName = "opencode",
+            prompt = "p",
+            conversationId = "c2",
+            worktreePath = "/wt2",
+            branchName = "b2",
+            occurredAt = now,
+          )
+          (for
+            svc  <- ZIO.service[DataStoreModule.DataStoreService]
+            repo  = WorkspaceRepositoryES(svc)
+            _    <- repo.appendRun(assignedRun)
+            _    <- repo.appendRun(run2)
+            runs <- repo.listRuns("ws-1")
+          yield assertTrue(runs.length == 1 && runs.head.id == "run-1")).provideLayer(layerFor(dir))
+        }
+      },
+      test("Workspace with RunMode.Docker round-trips through events") {
         withTempDir { dir =>
           (for
-            svc    <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            _      <- svc.store.store("workspace:ws-docker", dockerWs)
-            loaded <- svc.store.fetch[String, Workspace]("workspace:ws-docker")
-          yield assertTrue(loaded.contains(dockerWs))).provideLayer(layerFor(dir))
+            svc <- ZIO.service[DataStoreModule.DataStoreService]
+            repo = WorkspaceRepositoryES(svc)
+            _   <- repo.append(createdDockerWs)
+            got <- repo.get("ws-docker")
+          yield assertTrue(
+            got.exists(_.runMode == RunMode.Docker(
+              "my-image:latest",
+              Nil,
+              mountWorktree = true,
+              network = Some("none"),
+            ))
+          )).provideLayer(layerFor(dir))
         }
       },
     )

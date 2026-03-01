@@ -14,11 +14,11 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
     },
     test("buildArgv for gemini returns correct args") {
       val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt")
-      assertTrue(argv == List("gemini", "-p", "fix the bug", "/tmp/wt"))
+      assertTrue(argv == List("gemini", "-p", "fix the bug"))
     },
     test("buildArgv for opencode returns correct args") {
       val argv = CliAgentRunner.buildArgv("opencode", "fix the bug", "/tmp/wt")
-      assertTrue(argv == List("opencode", "run", "--prompt", "fix the bug", "/tmp/wt"))
+      assertTrue(argv == List("opencode", "run", "--prompt", "fix the bug"))
     },
     test("buildArgv for claude returns correct args") {
       val argv = CliAgentRunner.buildArgv("claude", "fix the bug", "/tmp/wt")
@@ -61,7 +61,6 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
           "gemini",
           "-p",
           "fix it",
-          "/workspace",
         )
       )
     },

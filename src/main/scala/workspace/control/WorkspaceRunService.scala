@@ -72,14 +72,14 @@ final case class WorkspaceRunServiceLive(
                   case RunMode.Docker(_, _, _, _) => dockerCheck
                   case RunMode.Host               => ZIO.unit
       issue  <- {
-                  val refStr = req.issueRef.stripPrefix("#")
-                  if refStr.isEmpty then ZIO.succeed(None)
-                  else
-                    issueRepo.get(IssueId(refStr))
-                      .map(Some(_))
-                      .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-                      .catchAll(_ => ZIO.succeed(None))
-                }
+        val refStr = req.issueRef.stripPrefix("#")
+        if refStr.isEmpty then ZIO.succeed(None)
+        else
+          issueRepo.get(IssueId(refStr))
+            .map(Some(_))
+            .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+            .catchAll(_ => ZIO.succeed(None))
+      }
       runId   = java.util.UUID.randomUUID().toString
       short   = runId.take(8)
       branch  = s"agent/${req.issueRef.stripPrefix("#")}-$short"
@@ -180,12 +180,12 @@ final case class WorkspaceRunServiceLive(
            |Working directory: $worktreePath""".stripMargin
       case Some(i) =>
         s"""Issue ${req.issueRef}: ${i.title}${
-          if i.description.nonEmpty then s"\nDescription:\n${i.description}" else ""
-        }${
-          if i.contextPath.nonEmpty then s"\nContext path: ${i.contextPath}" else ""
-        }${
-          if i.sourceFolder.nonEmpty then s"\nSource folder: ${i.sourceFolder}" else ""
-        }
+            if i.description.nonEmpty then s"\nDescription:\n${i.description}" else ""
+          }${
+            if i.contextPath.nonEmpty then s"\nContext path: ${i.contextPath}" else ""
+          }${
+            if i.sourceFolder.nonEmpty then s"\nSource folder: ${i.sourceFolder}" else ""
+          }
         Repository: $repoPath
         Working directory: $worktreePath"""
 

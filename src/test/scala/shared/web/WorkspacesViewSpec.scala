@@ -27,6 +27,8 @@ object WorkspacesViewSpec extends ZIOSpecDefault:
     defaultAgent = Some("code-agent"),
     description = Some("main API repo"),
     enabled = true,
+    runMode = RunMode.Host,
+    cliTool = "claude",
     createdAt = Instant.parse("2026-02-24T10:00:00Z"),
     updatedAt = Instant.parse("2026-02-24T10:00:00Z"),
   )
