@@ -57,3 +57,25 @@ object CliAgentRunner:
       val exitCode = process.waitFor()
       (lines, exitCode)
     }
+
+  /** Run argv as a subprocess, calling `onLine` for each line of output as it is produced. stderr is merged into stdout
+    * via redirectErrorStream. Returns the exit code. Runs on ZIO's blocking thread pool. The process is forcibly
+    * destroyed if the effect is interrupted or an error occurs.
+    */
+  def runProcessStreaming(argv: List[String], cwd: String, onLine: String => Task[Unit]): Task[Int] =
+    ZIO.acquireReleaseWith(
+      ZIO.attemptBlockingIO {
+        val pb = new ProcessBuilder(argv*)
+        pb.directory(Paths.get(cwd).toFile)
+        pb.redirectErrorStream(true)
+        pb.start()
+      }
+    )(process => ZIO.succeedBlocking(process.destroyForcibly()).ignore) { process =>
+      val reader           = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream))
+      def loop: Task[Unit] =
+        ZIO.attemptBlockingIO(Option(reader.readLine())).flatMap {
+          case None       => ZIO.unit
+          case Some(line) => onLine(line) *> loop
+        }
+      loop *> ZIO.attemptBlockingIO(process.waitFor())
+    }

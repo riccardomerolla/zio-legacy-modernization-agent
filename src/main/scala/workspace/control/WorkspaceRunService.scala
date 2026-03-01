@@ -202,40 +202,49 @@ final case class WorkspaceRunServiceLive(
     val argv    = CliAgentRunner.buildArgv(cliTool, run.prompt, run.worktreePath, runMode, repoPath)
     val argvStr = argv.map(a => if a.contains(" ") then s"'$a'" else a).mkString(" ")
     for
-      _                <- updateRunStatus(run.id, RunStatus.Running)
-      _                <- ZIO.logInfo(s"[run:${run.id}] launching: $argvStr  (cwd=${run.worktreePath})")
-      resultOrTimeout  <- CliAgentRunner
-                            .runProcess(argv, run.worktreePath)
-                            .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
-                            .mapError(e => WorkspaceError.WorktreeError(e.getMessage))
-                            .tapError(e => ZIO.logError(s"[run:${run.id}] process error: $e"))
-      (lines, exitCode) = resultOrTimeout.getOrElse((List("Run timed out"), 1))
-      _                <- ZIO.logWarning(s"[run:${run.id}] timed out after ${timeoutSeconds}s")
-                            .when(resultOrTimeout.isEmpty)
-      _                <- ZIO.logInfo(s"[run:${run.id}] finished exit=$exitCode lines=${lines.size}")
-                            .when(resultOrTimeout.isDefined)
-      _                <- streamLinesToConversation(run.conversationId, lines)
-      status            = if resultOrTimeout.isDefined && exitCode == 0 then RunStatus.Completed else RunStatus.Failed
-      _                <- updateRunStatus(run.id, status)
-      _                <- ZIO.logInfo(s"[run:${run.id}] status=$status")
-      _                <- worktreeRemove(run.worktreePath).ignore
+      _        <- updateRunStatus(run.id, RunStatus.Running)
+      _        <- ZIO.logInfo(s"[run:${run.id}] launching: $argvStr  (cwd=${run.worktreePath})")
+      linesRef <- Ref.make(0)
+      exitOpt  <- CliAgentRunner
+                    .runProcessStreaming(
+                      argv,
+                      run.worktreePath,
+                      line =>
+                        linesRef.update(_ + 1) *>
+                          appendToConversation(run.conversationId, line)
+                            .tapError(e => ZIO.logWarning(s"[run:${run.id}] failed to persist line to chat: $e"))
+                            .ignore,
+                    )
+                    .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
+                    .mapError(e => WorkspaceError.WorktreeError(e.getMessage))
+                    .tapError(e => ZIO.logError(s"[run:${run.id}] process error: $e"))
+      _        <- appendToConversation(run.conversationId, s"Run timed out after ${timeoutSeconds}s")
+                    .when(exitOpt.isEmpty)
+      _        <- ZIO.logWarning(s"[run:${run.id}] timed out after ${timeoutSeconds}s")
+                    .when(exitOpt.isEmpty)
+      count    <- linesRef.get
+      exitCode  = exitOpt.getOrElse(1)
+      _        <- ZIO.logInfo(s"[run:${run.id}] finished exit=$exitCode lines=$count")
+                    .when(exitOpt.isDefined)
+      status    = if exitOpt.isDefined && exitCode == 0 then RunStatus.Completed else RunStatus.Failed
+      _        <- updateRunStatus(run.id, status)
+      _        <- ZIO.logInfo(s"[run:${run.id}] status=$status")
+      _        <- worktreeRemove(run.worktreePath).ignore
     yield ()
 
-  private def streamLinesToConversation(conversationId: String, lines: List[String]): IO[WorkspaceError, Unit] =
-    ZIO.foreachDiscard(lines) { line =>
-      for
-        now  <- Clock.instant
-        entry = ConversationEntry(
-                  conversationId = conversationId,
-                  sender = "agent",
-                  senderType = SenderType.Assistant,
-                  content = line,
-                  messageType = MessageType.Status,
-                  createdAt = now,
-                  updatedAt = now,
-                )
-        _    <- chatRepo
-                  .addMessage(entry)
-                  .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-      yield ()
-    }
+  private def appendToConversation(conversationId: String, line: String): IO[WorkspaceError, Unit] =
+    for
+      now  <- Clock.instant
+      entry = ConversationEntry(
+                conversationId = conversationId,
+                sender = "agent",
+                senderType = SenderType.Assistant,
+                content = line,
+                messageType = MessageType.Status,
+                createdAt = now,
+                updatedAt = now,
+              )
+      _    <- chatRepo
+                .addMessage(entry)
+                .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+    yield ()

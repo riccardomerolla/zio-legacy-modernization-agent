@@ -100,4 +100,24 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
         (_, exitCode) = result
       yield assertTrue(exitCode != 0)
     },
+    test("runProcessStreaming invokes callback per line and returns exit 0") {
+      for
+        received <- zio.Ref.make(List.empty[String])
+        exitCode <- CliAgentRunner.runProcessStreaming(
+                      List("sh", "-c", "echo first; echo second"),
+                      cwd = "/tmp",
+                      line => received.update(_ :+ line),
+                    )
+        lines    <- received.get
+      yield assertTrue(exitCode == 0 && lines.contains("first") && lines.contains("second"))
+    },
+    test("runProcessStreaming returns non-zero exit code on failure") {
+      for
+        exitCode <- CliAgentRunner.runProcessStreaming(
+                      List("sh", "-c", "exit 2"),
+                      cwd = "/tmp",
+                      _ => ZIO.unit,
+                    )
+      yield assertTrue(exitCode == 2)
+    },
   )
