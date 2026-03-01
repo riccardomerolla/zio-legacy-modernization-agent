@@ -221,7 +221,27 @@ final case class IssueControllerLive(
       runId = runId.map(TaskRunId.apply),
       states = statusFilter.flatMap(parseIssueStateTag).map(Set(_)).getOrElse(Set.empty),
     )
-    issueRepository.list(filter).mapError(mapIssueRepoError).map(_.map(domainToView))
+    issueRepository
+      .list(filter)
+      .mapError(mapIssueRepoError)
+      .flatMap { issues =>
+        ZIO.foreach(issues) { i =>
+          ZIO
+            .attempt(domainToView(i))
+            .tapError(err =>
+              ZIO.logError(
+                s"domainToView failed for issue[${i.id.value}]" +
+                  s" state=${i.state.getClass.getSimpleName}" +
+                  s" runId=${i.runId} conversationId=${i.conversationId}" +
+                  s" priority=${Option(i.priority).getOrElse("<null>")}" +
+                  s" tags=${i.tags} contextPath=${Option(i.contextPath).getOrElse("<null>")}" +
+                  s" sourceFolder=${Option(i.sourceFolder).getOrElse("<null>")}" +
+                  s" cause: $err"
+              )
+            )
+            .mapError(err => PersistenceError.QueryFailed("domainToView", err.getMessage))
+        }
+      }
 
   private def parseIssueStateTag(raw: String): Option[IssueStateTag] =
     raw.trim.toLowerCase match

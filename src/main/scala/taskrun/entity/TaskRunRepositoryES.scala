@@ -22,10 +22,12 @@ final case class TaskRunRepositoryES(
   private def rebuildSnapshot(id: TaskRunId): IO[PersistenceError, TaskRun] =
     for
       events <- eventStore.events(id)
+      _      <- ZIO.logDebug(s"Rebuilding taskrun snapshot for ${id.value} from ${events.size} events")
       run    <- ZIO
                   .fromEither(TaskRun.fromEvents(events))
                   .mapError(msg => PersistenceError.SerializationFailed(s"taskrun:${id.value}", msg))
       _      <- dataStore.store(snapshotKey(id), run).mapError(storeErr("storeTaskRunSnapshot"))
+      _      <- ZIO.logDebug(s"Stored taskrun snapshot: ${snapshotKey(id)} [state=${run.state.getClass.getSimpleName}]")
     yield run
 
   override def append(event: TaskRunEvent): IO[PersistenceError, Unit] =
@@ -39,12 +41,17 @@ final case class TaskRunRepositoryES(
       .fetch[String, TaskRun](snapshotKey(id))
       .mapError(storeErr("getTaskRunSnapshot"))
       .flatMap {
-        case Some(run) => ZIO.succeed(run)
+        case Some(run) =>
+          ZIO.logDebug(
+            s"Fetched taskrun snapshot from store: ${snapshotKey(id)} [state=${run.state.getClass.getSimpleName}]"
+          ) *>
+            ZIO.succeed(run)
         case None      =>
-          eventStore.events(id).flatMap {
-            case Nil => ZIO.fail(PersistenceError.NotFound("taskrun", id.value))
-            case _   => rebuildSnapshot(id)
-          }
+          ZIO.logDebug(s"No snapshot found for taskrun:${id.value} — rebuilding from events") *>
+            eventStore.events(id).flatMap {
+              case Nil => ZIO.fail(PersistenceError.NotFound("taskrun", id.value))
+              case _   => rebuildSnapshot(id)
+            }
       }
 
   override def list(filter: TaskRunFilter): IO[PersistenceError, List[TaskRun]] =
@@ -53,11 +60,13 @@ final case class TaskRunRepositoryES(
       .filter(_.startsWith(snapshotPrefix))
       .runCollect
       .mapError(storeErr("listTaskRuns"))
-      .flatMap(keys =>
-        ZIO.foreach(
-          keys.toList
-        )(key => dataStore.fetch[String, TaskRun](key).mapError(storeErr("listTaskRuns"))).map(_.flatten)
-      )
+      .flatMap { keys =>
+        ZIO.logDebug(s"Scanning ${keys.size} taskrun snapshot key(s) from store") *>
+          ZIO
+            .foreach(keys.toList)(key => dataStore.fetch[String, TaskRun](key).mapError(storeErr("listTaskRuns")))
+            .map(_.flatten)
+      }
+      .tap(all => ZIO.logDebug(s"Recovered ${all.size} taskrun object(s) from store"))
       .map { runs =>
         runs
           .filter { run =>

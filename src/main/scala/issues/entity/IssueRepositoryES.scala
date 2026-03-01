@@ -1,6 +1,7 @@
 package issues.entity
 
 import zio.*
+import zio.json.*
 
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import shared.errors.PersistenceError
@@ -22,10 +23,15 @@ final case class IssueRepositoryES(
   private def rebuildSnapshot(id: IssueId): IO[PersistenceError, AgentIssue] =
     for
       events <- eventStore.events(id)
+      _      <- ZIO.logDebug(s"Rebuilding issue snapshot for ${id.value} from ${events.size} events")
       issue  <- ZIO
                   .fromEither(AgentIssue.fromEvents(events))
                   .mapError(msg => PersistenceError.SerializationFailed(s"issue:${id.value}", msg))
-      _      <- dataStore.store(snapshotKey(id), issue).mapError(storeErr("storeIssueSnapshot"))
+      _      <- dataStore
+                  .store(snapshotKey(id), issue.toJson)
+                  .mapError(storeErr("storeIssueSnapshot"))
+      _      <-
+        ZIO.logDebug(s"Stored issue snapshot (JSON): ${snapshotKey(id)} [state=${issue.state.getClass.getSimpleName}]")
     yield issue
 
   override def append(event: IssueEvent): IO[PersistenceError, Unit] =
@@ -34,14 +40,34 @@ final case class IssueRepositoryES(
       _ <- rebuildSnapshot(event.issueId)
     yield ()
 
+  private def fetchSnapshot(id: IssueId): IO[PersistenceError, Option[AgentIssue]] =
+    dataStore
+      .fetch[String, String](snapshotKey(id))
+      .mapError(storeErr("fetchIssueSnapshot"))
+      .flatMap {
+        case None       => ZIO.succeed(None)
+        case Some(json) =>
+          ZIO
+            .fromEither(json.fromJson[AgentIssue])
+            .mapBoth(
+              err => PersistenceError.SerializationFailed(s"issue:${id.value}", err),
+              Some(_),
+            )
+      }
+
   override def get(id: IssueId): IO[PersistenceError, AgentIssue] =
-    dataStore.fetch[String, AgentIssue](snapshotKey(id)).mapError(storeErr("getIssueSnapshot")).flatMap {
-      case Some(issue) => ZIO.succeed(issue)
+    fetchSnapshot(id).flatMap {
+      case Some(issue) =>
+        ZIO.logDebug(
+          s"Fetched issue snapshot (JSON) from store: ${snapshotKey(id)} [state=${issue.state.getClass.getSimpleName}]"
+        ) *>
+          ZIO.succeed(issue)
       case None        =>
-        eventStore.events(id).flatMap {
-          case Nil => ZIO.fail(PersistenceError.NotFound("issue", id.value))
-          case _   => rebuildSnapshot(id)
-        }
+        ZIO.logDebug(s"No snapshot found for issue:${id.value} — rebuilding from events") *>
+          eventStore.events(id).flatMap {
+            case Nil => ZIO.fail(PersistenceError.NotFound("issue", id.value))
+            case _   => rebuildSnapshot(id)
+          }
     }
 
   override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] =
@@ -50,10 +76,34 @@ final case class IssueRepositoryES(
       .filter(_.startsWith(snapshotPrefix))
       .runCollect
       .mapError(storeErr("listIssues"))
-      .flatMap(keys =>
-        ZIO.foreach(keys.toList)(key => dataStore.fetch[String, AgentIssue](key).mapError(storeErr("listIssues")))
-      )
+      .flatMap { keys =>
+        ZIO.logDebug(s"Scanning ${keys.size} issue snapshot key(s) from store") *>
+          ZIO.foreach(keys.toList) { key =>
+            dataStore
+              .fetch[String, String](key)
+              .mapError(storeErr("listIssues"))
+              .flatMap {
+                case None       => ZIO.succeed(None)
+                case Some(json) =>
+                  ZIO
+                    .fromEither(json.fromJson[AgentIssue])
+                    .mapBoth(err => PersistenceError.SerializationFailed(key, err), Some(_))
+              }
+          }
+      }
       .map(_.flatten)
+      .tap { all =>
+        ZIO.logDebug(s"Recovered ${all.size} issue object(s) from store") *>
+          ZIO.foreachDiscard(all) { i =>
+            ZIO.logDebug(
+              s"  issue[${i.id.value}] state=${i.state.getClass.getSimpleName}" +
+                s" runId=${i.runId} (${i.runId.getClass.getSimpleName})" +
+                s" conversationId=${i.conversationId} (${i.conversationId.getClass.getSimpleName})" +
+                s" priority=${i.priority} tags=${i.tags}" +
+                s" contextPath='${i.contextPath}' sourceFolder='${i.sourceFolder}'"
+            )
+          }
+      }
       .map(_.filter(issueMatches(filter, _)).slice(filter.offset.max(0), filter.offset.max(0) + filter.limit.max(0)))
 
   private def issueMatches(filter: IssueFilter, issue: AgentIssue): Boolean =
