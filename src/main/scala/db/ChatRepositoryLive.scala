@@ -15,8 +15,6 @@ final case class ChatRepositoryLive(
   dataStore: DataStoreModule.DataStoreService
 ) extends ChatRepository:
 
-  private val kv = dataStore.store
-
   // Key helpers — prefix-based KV namespace per entity type
   private def convKey(id: String): String        = s"conv:$id"
   private def msgKey(id: String): String         = s"msg:$id"
@@ -26,13 +24,13 @@ final case class ChatRepositoryLive(
     for
       id <- nextId
       key = convKey(id.toString)
-      _  <- kv.store(key, toConversationRow(id.toString, conversation)).mapError(storeErr("createConversation"))
+      _  <- dataStore.store(key, toConversationRow(id.toString, conversation)).mapError(storeErr("createConversation"))
       _  <- checkpoint("createConversation")
     yield id
 
   override def getConversation(id: Long): IO[PersistenceError, Option[ChatConversation]] =
     for
-      row      <- kv.fetch[String, ConversationRow](convKey(id.toString)).mapError(storeErr("getConversation"))
+      row      <- dataStore.fetch[String, ConversationRow](convKey(id.toString)).mapError(storeErr("getConversation"))
       hydrated <- ZIO.foreach(row)(r => getMessages(id).map(msgs => fromConversationRow(r).copy(messages = msgs)))
     yield hydrated
 
@@ -73,7 +71,7 @@ final case class ChatRepositoryLive(
       id <- idFromModel(conversation.id, "updateConversation")
       key = convKey(id)
       _  <- requireExists[ConversationRow](key, "chat_conversations", "updateConversation")
-      _  <- kv.store(key, toConversationRow(id, conversation)).mapError(storeErr("updateConversation"))
+      _  <- dataStore.store(key, toConversationRow(id, conversation)).mapError(storeErr("updateConversation"))
       _  <- checkpoint("updateConversation")
     yield ()
 
@@ -83,9 +81,9 @@ final case class ChatRepositoryLive(
       msgs <- fetchAllByPrefix[ChatMessageRow]("msg:", "deleteConversation")
                 .map(_.filter(_.conversationId == id.toString))
       _    <- ZIO.foreachDiscard(msgs) { row =>
-                kv.remove[String](msgKey(row.id)).mapError(storeErr("deleteConversation"))
+                dataStore.remove[String](msgKey(row.id)).mapError(storeErr("deleteConversation"))
               }
-      _    <- kv.remove[String](convKey(id.toString)).mapError(storeErr("deleteConversation"))
+      _    <- dataStore.remove[String](convKey(id.toString)).mapError(storeErr("deleteConversation"))
       _    <- checkpoint("deleteConversation")
     yield ()
 
@@ -93,7 +91,7 @@ final case class ChatRepositoryLive(
     for
       id <- nextId
       key = msgKey(id.toString)
-      _  <- kv.store(key, toMessageRow(id.toString, message)).mapError(storeErr("addMessage"))
+      _  <- dataStore.store(key, toMessageRow(id.toString, message)).mapError(storeErr("addMessage"))
       _  <- checkpoint("addMessage")
     yield id
 
@@ -112,14 +110,14 @@ final case class ChatRepositoryLive(
   ): IO[PersistenceError, Unit] =
     val key = this.sessionKey(channelName, sessionKey)
     for
-      _ <- kv
+      _ <- dataStore
              .store(key, SessionContextRow(channelName, sessionKey, contextJson, updatedAt))
              .mapError(storeErr("upsertSessionContext"))
       _ <- checkpoint("upsertSessionContext")
     yield ()
 
   override def getSessionContext(channelName: String, sessionKey: String): IO[PersistenceError, Option[String]] =
-    kv.fetch[String, SessionContextRow](this.sessionKey(channelName, sessionKey))
+    dataStore.fetch[String, SessionContextRow](this.sessionKey(channelName, sessionKey))
       .map(_.map(_.contextJson))
       .mapError(storeErr("getSessionContext"))
 
@@ -136,7 +134,7 @@ final case class ChatRepositoryLive(
 
   override def deleteSessionContext(channelName: String, sessionKey: String): IO[PersistenceError, Unit] =
     val key = this.sessionKey(channelName, sessionKey)
-    kv.remove[String](key).mapError(storeErr("deleteSessionContext")) *>
+    dataStore.remove[String](key).mapError(storeErr("deleteSessionContext")) *>
       checkpoint("deleteSessionContext")
 
   // ---------------------------------------------------------------------------
@@ -160,7 +158,7 @@ final case class ChatRepositoryLive(
                 .map(_.toList)
                 .mapError(storeErr(op))
       vals <- ZIO.foreach(keys) { key =>
-                kv.fetch[String, V](key)
+                dataStore.fetch[String, V](key)
                   .mapError(storeErr(op))
                   .catchAllCause { cause =>
                     val reason = cause.prettyPrint
@@ -174,7 +172,7 @@ final case class ChatRepositoryLive(
     yield vals.flatten
 
   private def requireExists[V](key: String, table: String, op: String)(using Schema[V]): IO[PersistenceError, Unit] =
-    kv.fetch[String, V](key).mapError(storeErr(op)).flatMap {
+    dataStore.fetch[String, V](key).mapError(storeErr(op)).flatMap {
       case None    =>
         ZIO
           .fromOption(key.drop(key.indexOf(':') + 1).toLongOption)

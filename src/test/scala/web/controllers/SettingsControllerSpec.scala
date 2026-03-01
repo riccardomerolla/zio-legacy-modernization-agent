@@ -184,7 +184,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
                         controller  <- ZIO.service[SettingsController].provideEnvironment(env)
                         activity    <- ZIO.service[ActivityRepository].provideEnvironment(env)
                         configStore <- ZIO.service[ConfigStoreModule.ConfigStoreService].provideEnvironment(env)
-                        _           <- configStore.store.store("setting:warmup", "1")
+                        _           <- configStore.store("setting:warmup", "1")
                         response    <- controller.routes.runZIO(Request.post(
                                          "/settings",
                                          Body.fromString("gateway.name=SpecGateway"),
@@ -207,7 +207,7 @@ object SettingsControllerSpec extends ZIOSpecDefault:
                         env        <- layer.build
                         controller <- ZIO.service[SettingsController].provideEnvironment(env)
                         dataStore  <- ZIO.service[DataStoreModule.DataStoreService].provideEnvironment(env)
-                        _          <- dataStore.store.store(
+                        _          <- dataStore.store(
                                         "conv:9001",
                                         ConversationRow(
                                           id = "9001",

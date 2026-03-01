@@ -10,8 +10,6 @@ import shared.store.{ DataStoreModule, EventStore }
 final case class TaskRunEventStoreES(dataStore: DataStoreModule.DataStoreService)
   extends EventStore[TaskRunId, TaskRunEvent]:
 
-  private val typedStore = dataStore.store
-
   private def eventKey(id: TaskRunId, sequence: Long): String =
     s"events:taskrun:${id.value}:$sequence"
 
@@ -41,14 +39,14 @@ final case class TaskRunEventStoreES(dataStore: DataStoreModule.DataStoreService
     for
       existing <- listEventKeys(id, "appendTaskRunEvent")
       nextSeq   = existing.lastOption.map(_._1 + 1L).getOrElse(1L)
-      _        <- typedStore.store(eventKey(id, nextSeq), event).mapError(storeErr("appendTaskRunEvent"))
+      _        <- dataStore.store(eventKey(id, nextSeq), event).mapError(storeErr("appendTaskRunEvent"))
     yield ()
 
   override def events(id: TaskRunId): IO[PersistenceError, List[TaskRunEvent]] =
     listEventKeys(id, "taskRunEvents")
       .map(_.map(_._2))
       .flatMap(keys =>
-        ZIO.foreach(keys)(key => typedStore.fetch[String, TaskRunEvent](key).mapError(storeErr("taskRunEvents")))
+        ZIO.foreach(keys)(key => dataStore.fetch[String, TaskRunEvent](key).mapError(storeErr("taskRunEvents")))
       )
       .map(_.flatten)
 
@@ -57,7 +55,7 @@ final case class TaskRunEventStoreES(dataStore: DataStoreModule.DataStoreService
       .map(_.filter(_._1 > sequence))
       .map(_.map(_._2))
       .flatMap(keys =>
-        ZIO.foreach(keys)(key => typedStore.fetch[String, TaskRunEvent](key).mapError(storeErr("taskRunEventsSince")))
+        ZIO.foreach(keys)(key => dataStore.fetch[String, TaskRunEvent](key).mapError(storeErr("taskRunEventsSince")))
       )
       .map(_.flatten)
 

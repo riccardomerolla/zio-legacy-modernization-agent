@@ -42,8 +42,8 @@ object ConfigStoreModuleSpec extends ZIOSpecDefault:
         withTempDir { dir =>
           (for
             config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            _      <- config.store.store("setting:timezone", "UTC")
-            loaded <- config.store.fetch[String, String]("setting:timezone")
+            _      <- config.store("setting:timezone", "UTC")
+            loaded <- config.fetch[String, String]("setting:timezone")
           yield assertTrue(loaded.contains("UTC"))).provideLayer(layerFor(dir))
         }
       },
@@ -51,9 +51,9 @@ object ConfigStoreModuleSpec extends ZIOSpecDefault:
         withTempDir { dir =>
           (for
             config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            _      <- config.store.store("setting:restart-check", "ok")
+            _      <- config.store("setting:restart-check", "ok")
             keys   <- config.rawStore.streamKeys[String].filter(_.startsWith("setting:")).runCollect
-            loaded <- config.store.fetch[String, String]("setting:restart-check")
+            loaded <- config.fetch[String, String]("setting:restart-check")
           yield assertTrue(
             keys.contains("setting:restart-check"),
             loaded.contains("ok"),
@@ -75,8 +75,8 @@ object ConfigStoreModuleSpec extends ZIOSpecDefault:
           )
           (for
             config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
-            _      <- config.store.store("agent:agent-1", row)
-            loaded <- config.store.fetch[String, CustomAgentRow]("agent:agent-1")
+            _      <- config.store("agent:agent-1", row)
+            loaded <- config.fetch[String, CustomAgentRow]("agent:agent-1")
           yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
         }
       },

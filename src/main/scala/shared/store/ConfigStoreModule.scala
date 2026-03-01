@@ -19,11 +19,10 @@ private val configStoreHandlers =
 
 object ConfigStoreModule:
 
-  /** Config-store service exposes a TypedStore for schema-validated CRUD and the raw EclipseStoreService for key-prefix
-    * scanning (streamKeys). Used for settings, workflows, and custom agents.
+  /** Config-store service IS-A TypedStore for schema-validated CRUD and additionally exposes the raw
+    * EclipseStoreService for key-prefix scanning (streamKeys). Used for settings, workflows, and custom agents.
     */
-  trait ConfigStoreService:
-    def store: TypedStore
+  trait ConfigStoreService extends TypedStore:
     def rawStore: EclipseStoreService
 
   private val withShutdownCheckpoint: ZLayer[ConfigStoreRef, EclipseStoreError, ConfigStoreRef] =
@@ -57,12 +56,13 @@ object ConfigStoreModule:
     ) >>> EclipseStoreService.live.fresh >>> toConfigStoreRef >>> withShutdownCheckpoint
 
   val configStore: ZLayer[ConfigStoreRef, Nothing, ConfigStoreService] =
-    ZLayer.fromFunction((ref: ConfigStoreRef) =>
+    ZLayer.fromFunction { (ref: ConfigStoreRef) =>
       val esc = ref.raw
+      val ts  = TypedStoreLive(esc)
       new ConfigStoreService:
-        override val store: TypedStore             = TypedStoreLive(esc)
+        export ts.{ store, fetch, remove, fetchAll, streamAll, typedRoot, storePersist }
         override val rawStore: EclipseStoreService = esc
-    )
+    }
 
   val live: ZLayer[StoreConfig, EclipseStoreError, ConfigStoreService] =
     baseStore >>> configStore

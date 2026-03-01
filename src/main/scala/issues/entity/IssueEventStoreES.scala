@@ -9,8 +9,6 @@ import shared.store.{ DataStoreModule, EventStore }
 
 final case class IssueEventStoreES(dataStore: DataStoreModule.DataStoreService) extends EventStore[IssueId, IssueEvent]:
 
-  private val typedStore = dataStore.store
-
   private def eventKey(id: IssueId, sequence: Long): String = s"events:issue:${id.value}:$sequence"
 
   private def eventPrefix(id: IssueId): String = s"events:issue:${id.value}:"
@@ -34,14 +32,14 @@ final case class IssueEventStoreES(dataStore: DataStoreModule.DataStoreService) 
     for
       existing <- listEventKeys(id, "appendIssueEvent")
       nextSeq   = existing.lastOption.map(_._1 + 1L).getOrElse(1L)
-      _        <- typedStore.store(eventKey(id, nextSeq), event).mapError(storeErr("appendIssueEvent"))
+      _        <- dataStore.store(eventKey(id, nextSeq), event).mapError(storeErr("appendIssueEvent"))
     yield ()
 
   override def events(id: IssueId): IO[PersistenceError, List[IssueEvent]] =
     listEventKeys(id, "issueEvents")
       .map(_.map(_._2))
       .flatMap(keys =>
-        ZIO.foreach(keys)(key => typedStore.fetch[String, IssueEvent](key).mapError(storeErr("issueEvents")))
+        ZIO.foreach(keys)(key => dataStore.fetch[String, IssueEvent](key).mapError(storeErr("issueEvents")))
       )
       .map(_.flatten)
 
@@ -49,7 +47,7 @@ final case class IssueEventStoreES(dataStore: DataStoreModule.DataStoreService) 
     listEventKeys(id, "issueEventsSince")
       .map(_.filter(_._1 > sequence).map(_._2))
       .flatMap(keys =>
-        ZIO.foreach(keys)(key => typedStore.fetch[String, IssueEvent](key).mapError(storeErr("issueEventsSince")))
+        ZIO.foreach(keys)(key => dataStore.fetch[String, IssueEvent](key).mapError(storeErr("issueEventsSince")))
       )
       .map(_.flatten)
 

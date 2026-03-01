@@ -12,8 +12,6 @@ final case class IssueRepositoryES(
   dataStore: DataStoreModule.DataStoreService,
 ) extends IssueRepository:
 
-  private val typedStore = dataStore.store
-
   private def snapshotKey(id: IssueId): String = s"snapshot:issue:${id.value}"
 
   private def snapshotPrefix: String = "snapshot:issue:"
@@ -27,7 +25,7 @@ final case class IssueRepositoryES(
       issue  <- ZIO
                   .fromEither(AgentIssue.fromEvents(events))
                   .mapError(msg => PersistenceError.SerializationFailed(s"issue:${id.value}", msg))
-      _      <- typedStore.store(snapshotKey(id), issue).mapError(storeErr("storeIssueSnapshot"))
+      _      <- dataStore.store(snapshotKey(id), issue).mapError(storeErr("storeIssueSnapshot"))
     yield issue
 
   override def append(event: IssueEvent): IO[PersistenceError, Unit] =
@@ -37,7 +35,7 @@ final case class IssueRepositoryES(
     yield ()
 
   override def get(id: IssueId): IO[PersistenceError, AgentIssue] =
-    typedStore.fetch[String, AgentIssue](snapshotKey(id)).mapError(storeErr("getIssueSnapshot")).flatMap {
+    dataStore.fetch[String, AgentIssue](snapshotKey(id)).mapError(storeErr("getIssueSnapshot")).flatMap {
       case Some(issue) => ZIO.succeed(issue)
       case None        =>
         eventStore.events(id).flatMap {
@@ -53,7 +51,7 @@ final case class IssueRepositoryES(
       .runCollect
       .mapError(storeErr("listIssues"))
       .flatMap(keys =>
-        ZIO.foreach(keys.toList)(key => typedStore.fetch[String, AgentIssue](key).mapError(storeErr("listIssues")))
+        ZIO.foreach(keys.toList)(key => dataStore.fetch[String, AgentIssue](key).mapError(storeErr("listIssues")))
       )
       .map(_.flatten)
       .map(_.filter(issueMatches(filter, _)).slice(filter.offset.max(0), filter.offset.max(0) + filter.limit.max(0)))

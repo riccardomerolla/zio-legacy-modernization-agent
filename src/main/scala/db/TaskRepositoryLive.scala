@@ -14,9 +14,6 @@ final case class TaskRepositoryLive(
   configStore: ConfigStoreModule.ConfigStoreService,
 ) extends TaskRepository:
 
-  private val dkv = dataStore.store
-  private val ckv = configStore.store
-
   private val builtInAgentNamesLower: Set[String] = Set(
     "chat-agent",
     "code-agent",
@@ -40,22 +37,22 @@ final case class TaskRepositoryLive(
   override def createRun(run: db.TaskRunRow): IO[PersistenceError, Long] =
     for
       id <- nextId("createRun")
-      _  <- dkv
+      _  <- dataStore
               .store(runKey(id), toStoreRunRow(run.copy(id = id)))
               .mapError(storeErr("createRun"))
     yield id
 
   override def updateRun(run: db.TaskRunRow): IO[PersistenceError, Unit] =
     for
-      existing <- dkv.fetch[String, shared.store.TaskRunRow](runKey(run.id)).mapError(storeErr("updateRun"))
+      existing <- dataStore.fetch[String, shared.store.TaskRunRow](runKey(run.id)).mapError(storeErr("updateRun"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("task_runs", run.id))
                     .when(existing.isEmpty)
-      _        <- dkv.store(runKey(run.id), toStoreRunRow(run)).mapError(storeErr("updateRun"))
+      _        <- dataStore.store(runKey(run.id), toStoreRunRow(run)).mapError(storeErr("updateRun"))
     yield ()
 
   override def getRun(id: Long): IO[PersistenceError, Option[db.TaskRunRow]] =
-    dkv
+    dataStore
       .fetch[String, shared.store.TaskRunRow](runKey(id))
       .map(_.flatMap(fromStoreRunRow))
       .mapError(storeErr("getRun"))
@@ -66,23 +63,23 @@ final case class TaskRepositoryLive(
 
   override def deleteRun(id: Long): IO[PersistenceError, Unit] =
     for
-      existing <- dkv.fetch[String, shared.store.TaskRunRow](runKey(id)).mapError(storeErr("deleteRun"))
+      existing <- dataStore.fetch[String, shared.store.TaskRunRow](runKey(id)).mapError(storeErr("deleteRun"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("task_runs", id))
                     .when(existing.isEmpty)
-      _        <- dkv.remove[String](runKey(id)).mapError(storeErr("deleteRun"))
+      _        <- dataStore.remove[String](runKey(id)).mapError(storeErr("deleteRun"))
     yield ()
 
   override def saveReport(report: db.TaskReportRow): IO[PersistenceError, Long] =
     for
       id <- nextId("saveReport")
-      _  <- dkv
+      _  <- dataStore
               .store(reportKey(id), toStoreReportRow(report.copy(id = id)))
               .mapError(storeErr("saveReport"))
     yield id
 
   override def getReport(reportId: Long): IO[PersistenceError, Option[db.TaskReportRow]] =
-    dkv
+    dataStore
       .fetch[String, shared.store.TaskReportRow](reportKey(reportId))
       .map(_.flatMap(fromStoreReportRow))
       .mapError(storeErr("getReport"))
@@ -94,7 +91,7 @@ final case class TaskRepositoryLive(
   override def saveArtifact(artifact: db.TaskArtifactRow): IO[PersistenceError, Long] =
     for
       id <- nextId("saveArtifact")
-      _  <- dkv
+      _  <- dataStore
               .store(artifactKey(id), toStoreArtifactRow(artifact.copy(id = id)))
               .mapError(storeErr("saveArtifact"))
     yield id
@@ -111,7 +108,7 @@ final case class TaskRepositoryLive(
                 .runCollect
                 .mapError(storeErr("getAllSettings"))
       rows <- ZIO.foreach(keys.toList) { k =>
-                ckv
+                configStore
                   .fetch[String, String](k)
                   .mapError(storeErr("getAllSettings"))
                   .map(_.map(raw => decodeSetting(k.stripPrefix("setting:"), raw)).toList)
@@ -119,12 +116,15 @@ final case class TaskRepositoryLive(
     yield rows.flatten.sortBy(_.key)
 
   override def getSetting(key: String): IO[PersistenceError, Option[db.SettingRow]] =
-    ckv.fetch[String, String](settingKey(key)).mapError(storeErr("getSetting")).map(_.map(value =>
+    configStore.fetch[String, String](settingKey(key)).mapError(storeErr("getSetting")).map(_.map(value =>
       decodeSetting(key, value)
     ))
 
   override def upsertSetting(key: String, value: String): IO[PersistenceError, Unit] =
-    ckv.store(settingKey(key), value).mapError(storeErr("upsertSetting")) *> checkpointConfigStore("upsertSetting")
+    configStore.store(
+      settingKey(key),
+      value,
+    ).mapError(storeErr("upsertSetting")) *> checkpointConfigStore("upsertSetting")
 
   override def getSettingsByPrefix(prefix: String): IO[PersistenceError, List[db.SettingRow]] =
     getAllSettings.map(_.filter(_.key.startsWith(prefix)))
@@ -137,7 +137,7 @@ final case class TaskRepositoryLive(
                 .runCollect
                 .mapError(storeErr("deleteSettingsByPrefix"))
       _    <- ZIO.foreachDiscard(keys.toList) { k =>
-                ckv.remove[String](k).mapError(storeErr("deleteSettingsByPrefix"))
+                configStore.remove[String](k).mapError(storeErr("deleteSettingsByPrefix"))
               }
       _    <- checkpointConfigStore("deleteSettingsByPrefix")
     yield ()
@@ -145,13 +145,13 @@ final case class TaskRepositoryLive(
   override def createWorkflow(workflow: db.WorkflowRow): IO[PersistenceError, Long] =
     for
       id <- nextId("createWorkflow")
-      _  <- ckv
+      _  <- configStore
               .store(workflowKey(id), toStoreWorkflowRow(workflow, id))
               .mapError(storeErr("createWorkflow"))
     yield id
 
   override def getWorkflow(id: Long): IO[PersistenceError, Option[db.WorkflowRow]] =
-    ckv
+    configStore
       .fetch[String, shared.store.WorkflowRow](workflowKey(id))
       .map(_.flatMap(fromStoreWorkflowRow))
       .mapError(storeErr("getWorkflow"))
@@ -169,35 +169,37 @@ final case class TaskRepositoryLive(
       id       <- ZIO
                     .fromOption(workflow.id)
                     .orElseFail(PersistenceError.QueryFailed("updateWorkflow", "Missing id for workflow update"))
-      existing <- ckv.fetch[String, shared.store.WorkflowRow](workflowKey(id)).mapError(storeErr("updateWorkflow"))
+      existing <-
+        configStore.fetch[String, shared.store.WorkflowRow](workflowKey(id)).mapError(storeErr("updateWorkflow"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("workflows", id))
                     .when(existing.isEmpty)
-      _        <- ckv
+      _        <- configStore
                     .store(workflowKey(id), toStoreWorkflowRow(workflow, id))
                     .mapError(storeErr("updateWorkflow"))
     yield ()
 
   override def deleteWorkflow(id: Long): IO[PersistenceError, Unit] =
     for
-      existing <- ckv.fetch[String, shared.store.WorkflowRow](workflowKey(id)).mapError(storeErr("deleteWorkflow"))
+      existing <-
+        configStore.fetch[String, shared.store.WorkflowRow](workflowKey(id)).mapError(storeErr("deleteWorkflow"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("workflows", id))
                     .when(existing.isEmpty)
-      _        <- ckv.remove[String](workflowKey(id)).mapError(storeErr("deleteWorkflow"))
+      _        <- configStore.remove[String](workflowKey(id)).mapError(storeErr("deleteWorkflow"))
     yield ()
 
   override def createCustomAgent(agent: db.CustomAgentRow): IO[PersistenceError, Long] =
     for
       _  <- validateCustomAgentName(agent.name, "createCustomAgent")
       id <- nextId("createCustomAgent")
-      _  <- ckv
+      _  <- configStore
               .store(agentKey(id), toStoreAgentRow(agent, id))
               .mapError(storeErr("createCustomAgent"))
     yield id
 
   override def getCustomAgent(id: Long): IO[PersistenceError, Option[db.CustomAgentRow]] =
-    ckv
+    configStore
       .fetch[String, shared.store.CustomAgentRow](agentKey(id))
       .map(_.flatMap(fromStoreAgentRow))
       .mapError(storeErr("getCustomAgent"))
@@ -216,22 +218,24 @@ final case class TaskRepositoryLive(
                     .fromOption(agent.id)
                     .orElseFail(PersistenceError.QueryFailed("updateCustomAgent", "Missing id for custom agent update"))
       _        <- validateCustomAgentName(agent.name, "updateCustomAgent")
-      existing <- ckv.fetch[String, shared.store.CustomAgentRow](agentKey(id)).mapError(storeErr("updateCustomAgent"))
+      existing <-
+        configStore.fetch[String, shared.store.CustomAgentRow](agentKey(id)).mapError(storeErr("updateCustomAgent"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("custom_agents", id))
                     .when(existing.isEmpty)
-      _        <- ckv
+      _        <- configStore
                     .store(agentKey(id), toStoreAgentRow(agent, id))
                     .mapError(storeErr("updateCustomAgent"))
     yield ()
 
   override def deleteCustomAgent(id: Long): IO[PersistenceError, Unit] =
     for
-      existing <- ckv.fetch[String, shared.store.CustomAgentRow](agentKey(id)).mapError(storeErr("deleteCustomAgent"))
+      existing <-
+        configStore.fetch[String, shared.store.CustomAgentRow](agentKey(id)).mapError(storeErr("deleteCustomAgent"))
       _        <- ZIO
                     .fail(PersistenceError.NotFound("custom_agents", id))
                     .when(existing.isEmpty)
-      _        <- ckv.remove[String](agentKey(id)).mapError(storeErr("deleteCustomAgent"))
+      _        <- configStore.remove[String](agentKey(id)).mapError(storeErr("deleteCustomAgent"))
     yield ()
 
   // ---------------------------------------------------------------------------
@@ -244,7 +248,9 @@ final case class TaskRepositoryLive(
       .filter(_.startsWith(prefix))
       .runCollect
       .mapError(storeErr(op))
-      .flatMap(keys => ZIO.foreach(keys.toList)(k => dkv.fetch[String, V](k).mapError(storeErr(op))).map(_.flatten))
+      .flatMap(keys =>
+        ZIO.foreach(keys.toList)(k => dataStore.fetch[String, V](k).mapError(storeErr(op))).map(_.flatten)
+      )
 
   private def fetchAllConfigByPrefix[V](prefix: String, op: String)(using Schema[V]): IO[PersistenceError, List[V]] =
     configStore.rawStore
@@ -252,7 +258,9 @@ final case class TaskRepositoryLive(
       .filter(_.startsWith(prefix))
       .runCollect
       .mapError(storeErr(op))
-      .flatMap(keys => ZIO.foreach(keys.toList)(k => ckv.fetch[String, V](k).mapError(storeErr(op))).map(_.flatten))
+      .flatMap(keys =>
+        ZIO.foreach(keys.toList)(k => configStore.fetch[String, V](k).mapError(storeErr(op))).map(_.flatten)
+      )
 
   private def validateCustomAgentName(name: String, context: String): IO[PersistenceError, Unit] =
     val normalized = name.trim.toLowerCase

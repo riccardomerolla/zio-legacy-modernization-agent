@@ -12,8 +12,6 @@ final case class TaskRunRepositoryES(
   dataStore: DataStoreModule.DataStoreService,
 ) extends TaskRunRepository:
 
-  private val typedStore = dataStore.store
-
   private def snapshotKey(id: TaskRunId): String = s"snapshot:taskrun:${id.value}"
 
   private def snapshotPrefix: String = "snapshot:taskrun:"
@@ -27,7 +25,7 @@ final case class TaskRunRepositoryES(
       run    <- ZIO
                   .fromEither(TaskRun.fromEvents(events))
                   .mapError(msg => PersistenceError.SerializationFailed(s"taskrun:${id.value}", msg))
-      _      <- typedStore.store(snapshotKey(id), run).mapError(storeErr("storeTaskRunSnapshot"))
+      _      <- dataStore.store(snapshotKey(id), run).mapError(storeErr("storeTaskRunSnapshot"))
     yield run
 
   override def append(event: TaskRunEvent): IO[PersistenceError, Unit] =
@@ -37,7 +35,7 @@ final case class TaskRunRepositoryES(
     yield ()
 
   override def get(id: TaskRunId): IO[PersistenceError, TaskRun] =
-    typedStore
+    dataStore
       .fetch[String, TaskRun](snapshotKey(id))
       .mapError(storeErr("getTaskRunSnapshot"))
       .flatMap {
@@ -58,7 +56,7 @@ final case class TaskRunRepositoryES(
       .flatMap(keys =>
         ZIO.foreach(
           keys.toList
-        )(key => typedStore.fetch[String, TaskRun](key).mapError(storeErr("listTaskRuns"))).map(_.flatten)
+        )(key => dataStore.fetch[String, TaskRun](key).mapError(storeErr("listTaskRuns"))).map(_.flatten)
       )
       .map { runs =>
         runs

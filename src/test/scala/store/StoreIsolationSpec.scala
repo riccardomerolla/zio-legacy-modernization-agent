@@ -52,8 +52,8 @@ object StoreIsolationSpec extends ZIOSpecDefault:
           (for
             config <- ZIO.service[ConfigStoreModule.ConfigStoreService]
             data   <- ZIO.service[DataStoreModule.DataStoreService]
-            _      <- config.store.store("setting:isolation", "ok")
-            _      <- data.store.store(
+            _      <- config.store("setting:isolation", "ok")
+            _      <- data.store(
                         "issue:1",
                         AgentIssueRow(
                           id = "1",

@@ -7,8 +7,8 @@ import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
 import conversation.entity.api.{ ChatConversation, ConversationEntry, MessageType, SenderType }
 import db.{ ChatRepository, PersistenceError, TaskRepository }
+import issues.entity.api.{ AgentIssueView, IssuePriority, IssueStatus }
 import issues.entity.{ IssueEvent, IssueRepository }
-import issues.entity.api.{ AgentIssueView, IssueStatus, IssuePriority }
 import llm4zio.core.{ LlmError, LlmService }
 import shared.ids.Ids.{ AgentId, EventId, IssueId, TaskRunId }
 

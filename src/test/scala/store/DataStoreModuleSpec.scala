@@ -62,8 +62,8 @@ object DataStoreModuleSpec extends ZIOSpecDefault:
           )
           (for
             data   <- ZIO.service[DataStoreModule.DataStoreService]
-            _      <- data.store.store("run:run-1", row)
-            loaded <- data.store.fetch[String, TaskRunRow]("run:run-1")
+            _      <- data.store("run:run-1", row)
+            loaded <- data.fetch[String, TaskRunRow]("run:run-1")
           yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
         }
       },
@@ -82,8 +82,8 @@ object DataStoreModuleSpec extends ZIOSpecDefault:
           )
           (for
             data   <- ZIO.service[DataStoreModule.DataStoreService]
-            _      <- data.store.store("conv:1", row)
-            loaded <- data.store.fetch[String, ConversationRow]("conv:1")
+            _      <- data.store("conv:1", row)
+            loaded <- data.fetch[String, ConversationRow]("conv:1")
           yield assertTrue(loaded.contains(row))).provideLayer(layerFor(dir))
         }
       },

@@ -76,10 +76,10 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
 
           (for
             data        <- ZIO.service[DataStoreModule.DataStoreService]
-            _           <- data.store.store("foundation:taskrun", run)
-            loadedRun   <- data.store.fetch[String, TaskRun]("foundation:taskrun")
-            _           <- data.store.store("foundation:taskrun:event", event)
-            loadedEvent <- data.store.fetch[String, TaskRunEvent]("foundation:taskrun:event")
+            _           <- data.store("foundation:taskrun", run)
+            loadedRun   <- data.fetch[String, TaskRun]("foundation:taskrun")
+            _           <- data.store("foundation:taskrun:event", event)
+            loadedEvent <- data.fetch[String, TaskRunEvent]("foundation:taskrun:event")
           yield assertTrue(loadedRun.contains(run), loadedEvent.contains(event))).provideLayer(layerFor(dir))
         }
       },
@@ -108,10 +108,10 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
 
           (for
             data        <- ZIO.service[DataStoreModule.DataStoreService]
-            _           <- data.store.store("foundation:issue", issue)
-            loadedIssue <- data.store.fetch[String, AgentIssue]("foundation:issue")
-            _           <- data.store.store("foundation:issue:event", event)
-            loadedEvent <- data.store.fetch[String, IssueEvent]("foundation:issue:event")
+            _           <- data.store("foundation:issue", issue)
+            loadedIssue <- data.fetch[String, AgentIssue]("foundation:issue")
+            _           <- data.store("foundation:issue:event", event)
+            loadedEvent <- data.fetch[String, IssueEvent]("foundation:issue:event")
           yield assertTrue(loadedIssue.contains(issue), loadedEvent.contains(event))).provideLayer(layerFor(dir))
         }
       },
@@ -145,10 +145,10 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
 
           (for
             data        <- ZIO.service[DataStoreModule.DataStoreService]
-            _           <- data.store.store("foundation:conversation", conversation)
-            loaded      <- data.store.fetch[String, Conversation]("foundation:conversation")
-            _           <- data.store.store("foundation:conversation:event", event)
-            loadedEvent <- data.store.fetch[String, ConversationEvent]("foundation:conversation:event")
+            _           <- data.store("foundation:conversation", conversation)
+            loaded      <- data.fetch[String, Conversation]("foundation:conversation")
+            _           <- data.store("foundation:conversation:event", event)
+            loadedEvent <- data.fetch[String, ConversationEvent]("foundation:conversation:event")
           yield assertTrue(loaded.contains(conversation), loadedEvent.contains(event))).provideLayer(layerFor(dir))
         }
       },

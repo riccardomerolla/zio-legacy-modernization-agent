@@ -12,9 +12,8 @@ import zio.http.*
 import zio.json.*
 
 import db.{ ChatRepository, PersistenceError, TaskRepository }
-import issues.entity.{ IssueEvent, IssueFilter, IssueRepository, IssueState, IssueStateTag }
-import issues.entity.AgentIssue as DomainIssue
 import issues.entity.api.{ AgentIssueCreateRequest, AgentIssueView, AssignIssueRequest, IssuePriority, IssueStatus }
+import issues.entity.{ AgentIssue as DomainIssue, * }
 import orchestration.control.{ AgentRegistry, IssueAssignmentOrchestrator }
 import shared.ids.Ids.{ IssueId, TaskRunId }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }

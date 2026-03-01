@@ -27,11 +27,10 @@ private val dataStoreHandlers =
 
 object DataStoreModule:
 
-  /** DataStoreService exposes a TypedStore for schema-validated CRUD and the raw EclipseStoreService for key-prefix
-    * scanning (streamKeys). Mirrors ConfigStoreModule.ConfigStoreService for consistency.
+  /** DataStoreService IS-A TypedStore for schema-validated CRUD and additionally exposes the raw EclipseStoreService
+    * for key-prefix scanning (streamKeys). Mirrors ConfigStoreModule.ConfigStoreService for consistency.
     */
-  trait DataStoreService:
-    def store: TypedStore
+  trait DataStoreService extends TypedStore:
     def rawStore: EclipseStoreService
 
   /** Shutdown-checkpoint finalizer layered on top of the data-store service. */
@@ -66,12 +65,13 @@ object DataStoreModule:
     ) >>> EclipseStoreService.live.fresh >>> toDataStoreRef >>> withShutdownCheckpoint
 
   val dataStore: ZLayer[DataStoreRef, Nothing, DataStoreService] =
-    ZLayer.fromFunction((ref: DataStoreRef) =>
+    ZLayer.fromFunction { (ref: DataStoreRef) =>
       val esc = ref.raw
+      val ts  = TypedStoreLive(esc)
       new DataStoreService:
-        override val store: TypedStore             = TypedStoreLive(esc)
+        export ts.{ store, fetch, remove, fetchAll, streamAll, typedRoot, storePersist }
         override val rawStore: EclipseStoreService = esc
-    )
+    }
 
   /** Simplified live layer — produces only DataStoreService (no memory/vector infrastructure). Memory/vector
     * infrastructure is now provided separately by MemoryStoreModule.

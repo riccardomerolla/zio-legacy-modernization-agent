@@ -167,7 +167,7 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
             for
               dataStore <- ZIO.service[DataStoreModule.DataStoreService]
               repo      <- ZIO.service[ChatRepository]
-              _         <- dataStore.store.store(
+              _         <- dataStore.store(
                              "conv:101",
                              ConversationRow(
                                id = "101",
@@ -201,7 +201,7 @@ object ChatRepositoryESSpec extends ZIOSpecDefault:
             for
               dataStore <- ZIO.service[DataStoreModule.DataStoreService]
               repo      <- ZIO.service[ChatRepository]
-              _         <- dataStore.store.store(
+              _         <- dataStore.store(
                              "conv:102",
                              ConversationRow(
                                id = "102",

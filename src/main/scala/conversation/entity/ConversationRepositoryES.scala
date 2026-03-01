@@ -12,8 +12,6 @@ final case class ConversationRepositoryES(
   dataStore: DataStoreModule.DataStoreService,
 ) extends ConversationRepository:
 
-  private val typedStore = dataStore.store
-
   private def snapshotKey(id: ConversationId): String = s"snapshot:conversation:${id.value}"
 
   private def snapshotPrefix: String = "snapshot:conversation:"
@@ -27,7 +25,7 @@ final case class ConversationRepositoryES(
       conversation <- ZIO
                         .fromEither(Conversation.fromEvents(events))
                         .mapError(msg => PersistenceError.SerializationFailed(s"conversation:${id.value}", msg))
-      _            <- typedStore.store(snapshotKey(id), conversation).mapError(storeErr("storeConversationSnapshot"))
+      _            <- dataStore.store(snapshotKey(id), conversation).mapError(storeErr("storeConversationSnapshot"))
     yield conversation
 
   override def append(event: ConversationEvent): IO[PersistenceError, Unit] =
@@ -37,7 +35,7 @@ final case class ConversationRepositoryES(
     yield ()
 
   override def get(id: ConversationId): IO[PersistenceError, Conversation] =
-    typedStore.fetch[String, Conversation](snapshotKey(id)).mapError(storeErr("getConversationSnapshot")).flatMap {
+    dataStore.fetch[String, Conversation](snapshotKey(id)).mapError(storeErr("getConversationSnapshot")).flatMap {
       case Some(conversation) => ZIO.succeed(conversation)
       case None               =>
         eventStore.events(id).flatMap {
@@ -54,7 +52,7 @@ final case class ConversationRepositoryES(
       .mapError(storeErr("listConversations"))
       .flatMap(keys =>
         ZIO.foreach(keys.toList)(key =>
-          typedStore.fetch[String, Conversation](key).mapError(storeErr("listConversations"))
+          dataStore.fetch[String, Conversation](key).mapError(storeErr("listConversations"))
         )
       )
       .map(_.flatten)

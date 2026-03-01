@@ -331,10 +331,10 @@ final case class SettingsControllerLive(
     )
 
   private def debugDataEntryForKey(key: String): UIO[StoreDebugEntry] =
-    debugRawEntry(key = key, typedStore = dataStoreService.store, decoder = decodeDataRaw)
+    debugRawEntry(key = key, typedStore = dataStoreService, decoder = decodeDataRaw)
 
   private def debugConfigEntryForKey(key: String): UIO[StoreDebugEntry] =
-    debugRawEntry(key = key, typedStore = configStoreService.store, decoder = decodeConfigRaw)
+    debugRawEntry(key = key, typedStore = configStoreService, decoder = decodeConfigRaw)
 
   private def debugRawEntry(
     key: String,

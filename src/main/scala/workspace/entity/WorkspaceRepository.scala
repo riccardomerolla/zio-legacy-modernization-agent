@@ -35,8 +35,6 @@ final case class WorkspaceRepositoryES(
   dataStore: DataStoreModule.DataStoreService
 ) extends WorkspaceRepository:
 
-  private val ts = dataStore.store
-
   // ── key conventions ──────────────────────────────────────────────────────
 
   private def wsEventKey(id: String, seq: Long): String = s"events:workspace:$id:$seq"
@@ -56,7 +54,7 @@ final case class WorkspaceRepositoryES(
     for
       seq <- nextSeq(wsEventPrefix(event.workspaceId), "appendWorkspaceEvent")
       json = event.toJson
-      _   <- ts.store(wsEventKey(event.workspaceId, seq), json).mapError(storeErr("appendWorkspaceEvent"))
+      _   <- dataStore.store(wsEventKey(event.workspaceId, seq), json).mapError(storeErr("appendWorkspaceEvent"))
     yield ()
 
   // Read-side: always rebuilt from the event log — no snapshot stored.
@@ -85,7 +83,7 @@ final case class WorkspaceRepositoryES(
     for
       seq <- nextSeq(runEventPrefix(event.runId), "appendRunEvent")
       json = event.toJson
-      _   <- ts.store(runEventKey(event.runId, seq), json).mapError(storeErr("appendRunEvent"))
+      _   <- dataStore.store(runEventKey(event.runId, seq), json).mapError(storeErr("appendRunEvent"))
     yield ()
 
   override def listRuns(workspaceId: String): IO[PersistenceError, List[WorkspaceRun]] =
@@ -177,7 +175,7 @@ final case class WorkspaceRepositoryES(
       )
       .flatMap(keys =>
         ZIO.foreach(keys)(key =>
-          ts.fetch[String, String](key)
+          dataStore.fetch[String, String](key)
             .mapError(storeErr(op))
             .flatMap {
               case None       => ZIO.succeed(None)
@@ -220,7 +218,7 @@ final case class WorkspaceRepositoryES(
       _       <- ZIO.when(toRemove.nonEmpty)(
                    ZIO.logWarning(s"Purging ${toRemove.size} legacy/snapshot workspace keys from store") *>
                      ZIO.foreachDiscard(toRemove)(key =>
-                       ts.remove[String](key).mapError(storeErr("purgeSnapshotsAndLegacyKeys"))
+                       dataStore.remove[String](key).mapError(storeErr("purgeSnapshotsAndLegacyKeys"))
                      )
                  )
     yield ()
@@ -232,5 +230,5 @@ final case class WorkspaceRepositoryES(
       .runCollect
       .mapError(storeErr(op))
       .flatMap(keys =>
-        ZIO.foreachDiscard(keys)(key => ts.remove[String](key).mapError(storeErr(op)))
+        ZIO.foreachDiscard(keys)(key => dataStore.remove[String](key).mapError(storeErr(op)))
       )

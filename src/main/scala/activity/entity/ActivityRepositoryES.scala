@@ -11,13 +11,11 @@ final case class ActivityRepositoryES(
   dataStore: DataStoreModule.DataStoreService
 ) extends ActivityRepository:
 
-  private val kv = dataStore.store
-
   private def eventKey(id: EventId): String = s"event:${id.value}"
 
   override def createEvent(event: ActivityEvent): IO[PersistenceError, EventId] =
     for
-      _ <- kv
+      _ <- dataStore
              .store(eventKey(event.id), event)
              .mapError(storeErr("createEvent"))
     yield event.id
@@ -44,7 +42,7 @@ final case class ActivityRepositoryES(
       .flatMap { keys =>
         ZIO
           .foreach(keys.toList) { key =>
-            kv.fetch[String, ActivityEvent](key)
+            dataStore.fetch[String, ActivityEvent](key)
               .mapError(storeErr(op))
               .catchAllCause { cause =>
                 ZIO.logWarning(s"$op skipped unreadable activity row '$key': ${cause.prettyPrint}").as(None)
