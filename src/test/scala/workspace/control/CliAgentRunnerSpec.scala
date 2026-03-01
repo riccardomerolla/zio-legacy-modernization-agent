@@ -12,9 +12,13 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
       val argv = CliAgentRunner.buildArgv("echo", "hello world", "/tmp/wt")
       assertTrue(argv == List("echo", "hello world"))
     },
-    test("buildArgv for gemini returns correct args") {
+    test("buildArgv for gemini returns correct args (includes --include-directories)") {
       val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt")
-      assertTrue(argv == List("gemini", "-p", "fix the bug"))
+      assertTrue(argv == List("gemini", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
+    },
+    test("buildArgv for gemini passes explicit repoPath to --include-directories") {
+      val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt", RunMode.Host, "/repo/src")
+      assertTrue(argv == List("gemini", "--include-directories", "/repo/src", "-p", "fix the bug"))
     },
     test("buildArgv for opencode returns correct args") {
       val argv = CliAgentRunner.buildArgv("opencode", "fix the bug", "/tmp/wt")
@@ -59,6 +63,8 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
           "/workspace",
           "gemini:latest",
           "gemini",
+          "--include-directories",
+          "/tmp/wt",
           "-p",
           "fix it",
         )

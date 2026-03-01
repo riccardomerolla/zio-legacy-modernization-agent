@@ -144,7 +144,7 @@ final case class WorkspaceRunServiceLive(
                     )
                   )
                   .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-      _      <- executeInFiber(run, ws.runMode, ws.cliTool).forkDaemon
+      _      <- executeInFiber(run, ws.runMode, ws.cliTool, ws.localPath).forkDaemon
     yield run
 
   override def continueRun(runId: String, followUpPrompt: String): IO[WorkspaceError, Unit] =
@@ -161,7 +161,7 @@ final case class WorkspaceRunServiceLive(
                .flatMap(
                  _.fold[IO[WorkspaceError, Workspace]](ZIO.fail(WorkspaceError.NotFound(run.workspaceId)))(ZIO.succeed)
                )
-      _   <- executeInFiber(run.copy(prompt = followUpPrompt), ws.runMode, ws.cliTool).forkDaemon
+      _   <- executeInFiber(run.copy(prompt = followUpPrompt), ws.runMode, ws.cliTool, ws.localPath).forkDaemon
     yield ()
 
   private def buildPrompt(
@@ -197,8 +197,9 @@ final case class WorkspaceRunServiceLive(
                .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
     yield ()
 
-  private def executeInFiber(run: WorkspaceRun, runMode: RunMode, cliTool: String): IO[WorkspaceError, Unit] =
-    val argv    = CliAgentRunner.buildArgv(cliTool, run.prompt, run.worktreePath, runMode)
+  private def executeInFiber(run: WorkspaceRun, runMode: RunMode, cliTool: String, repoPath: String = "")
+    : IO[WorkspaceError, Unit] =
+    val argv    = CliAgentRunner.buildArgv(cliTool, run.prompt, run.worktreePath, runMode, repoPath)
     val argvStr = argv.map(a => if a.contains(" ") then s"'$a'" else a).mkString(" ")
     for
       _                <- updateRunStatus(run.id, RunStatus.Running)
