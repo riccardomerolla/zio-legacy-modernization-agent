@@ -1,5 +1,8 @@
 package shared.web
 
+import zio.json.*
+
+import issues.entity.api.IssueTemplate
 import llm4zio.tools.{ Tool, ToolSandbox }
 import scalatags.Text.all.*
 import scalatags.Text.tags2.nav
@@ -20,6 +23,7 @@ object SettingsView:
     ("ai", "AI Models"),
     ("channels", "Channels"),
     ("gateway", "Gateway"),
+    ("issues-templates", "Issue Templates"),
     ("system", "System"),
     ("advanced", "Advanced Config"),
   )
@@ -249,6 +253,128 @@ object SettingsView:
           |  }
           |});
         """.stripMargin)
+      ),
+    )
+
+  def issueTemplatesTab(
+    templates: List[IssueTemplate],
+    flash: Option[String] = None,
+  ): String =
+    val builtin = templates.filter(_.isBuiltin).sortBy(_.name.toLowerCase)
+    val custom  = templates.filterNot(_.isBuiltin).sortBy(_.name.toLowerCase)
+    settingsShell("issues-templates", "Settings — Issue Templates")(
+      flash.map { msg =>
+        div(cls := "mb-6 rounded-md bg-green-500/10 border border-green-500/30 p-4")(
+          p(cls := "text-sm text-green-400")(msg)
+        )
+      },
+      div(cls := "mb-6 rounded-lg border border-white/10 bg-slate-900/70 p-5")(
+        h2(cls := "text-lg font-semibold text-white")("Issue Templates"),
+        p(cls := "mt-2 text-sm text-slate-300")(
+          "Create reusable issue scaffolds with variables. Built-in templates are read-only; custom templates are editable."
+        ),
+      ),
+      div(cls := "grid grid-cols-1 gap-4 lg:grid-cols-2")(
+        div(cls := "rounded-lg border border-white/10 bg-slate-900/60 p-4")(
+          h3(cls := "text-sm font-semibold uppercase tracking-wide text-slate-200")("Built-in Templates"),
+          ul(cls := "mt-3 space-y-2 text-sm text-slate-300")(
+            if builtin.isEmpty then li("No built-in templates available.")
+            else
+              builtin.map(t =>
+                li(cls := "rounded border border-white/10 bg-slate-800/70 p-2")(
+                  p(cls := "font-medium text-slate-100")(t.name),
+                  p(cls := "mt-1 text-xs text-slate-400")(t.description),
+                )
+              )
+          ),
+        ),
+        div(cls := "rounded-lg border border-white/10 bg-slate-900/60 p-4")(
+          h3(cls := "text-sm font-semibold uppercase tracking-wide text-slate-200")("Custom Templates"),
+          p(
+            cls := "mt-2 text-xs text-slate-400"
+          )("Use the editor below to create, update, or delete custom templates."),
+          div(id := "issue-template-manager", cls := "mt-3", attr("data-api-base") := "/api/issue-templates")(
+            div(id := "issue-template-manager-list", cls     := "space-y-2"),
+            div(id := "issue-template-manager-feedback", cls := "mt-3 text-sm text-slate-300"),
+          ),
+        ),
+      ),
+      div(cls := "mt-4 rounded-lg border border-white/10 bg-slate-900/60 p-4")(
+        h3(cls := "text-sm font-semibold uppercase tracking-wide text-slate-200")("Template Editor"),
+        form(id := "issue-template-manager-form", cls := "mt-3 space-y-3")(
+          input(`type` := "hidden", id := "issue-template-id", name       := "id"),
+          input(`type` := "hidden", id := "issue-template-is-edit", value := "false"),
+          div(cls := "grid grid-cols-1 gap-3 md:grid-cols-2")(
+            textInput("issue-template-name", "Name", "Bug Fix (Custom)"),
+            textInput("issue-template-issue-type", "Issue Type", "task"),
+            textInput("issue-template-tags", "Tags (comma separated)", "bug,triage"),
+            selectInput(
+              inputId = "issue-template-priority",
+              labelText = "Priority",
+              values = List("Low", "Medium", "High", "Critical"),
+            ),
+          ),
+          textInput("issue-template-description", "Description", "Template description"),
+          textAreaInput("issue-template-title-template", "Title Template", "Fix {{component}} bug in {{area}}", 3),
+          textAreaInput(
+            "issue-template-description-template",
+            "Description Template",
+            "# Goal\nFix {{component}} in {{area}}.\n\n## Acceptance Criteria\n- [ ] Add regression tests",
+            8,
+          ),
+          textAreaInput(
+            "issue-template-variables",
+            "Variables JSON",
+            """[
+              |  {"name":"component","label":"Component","required":true},
+              |  {"name":"area","label":"Area","required":true}
+              |]""".stripMargin,
+            8,
+          ),
+          div(cls := "flex items-center gap-3 pt-2")(
+            button(
+              `type` := "submit",
+              cls    := "rounded-md bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400",
+            )("Save Template"),
+            button(
+              `type` := "button",
+              id     := "issue-template-reset",
+              cls    := "rounded-md border border-white/20 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-white/10",
+            )("Reset"),
+          ),
+        ),
+      ),
+      script(id := "issue-template-manager-data", `type` := "application/json")(raw(custom.toJson)),
+      JsResources.inlineModuleScript("/static/client/components/issue-templates-manager.js"),
+    )
+
+  private def textInput(inputId: String, labelText: String, placeholderText: String): Frag =
+    div(
+      label(cls := labelCls, `for` := inputId)(labelText),
+      input(
+        id                  := inputId,
+        `type`              := "text",
+        cls                 := inputCls,
+        attr("placeholder") := placeholderText,
+      ),
+    )
+
+  private def textAreaInput(inputId: String, labelText: String, placeholderText: String, rowsCount: Int): Frag =
+    div(
+      label(cls := labelCls, `for` := inputId)(labelText),
+      textarea(
+        id                  := inputId,
+        rows                := rowsCount,
+        cls                 := "block w-full rounded-md bg-white/5 border-0 py-2 text-white shadow-sm ring-1 ring-inset ring-white/10 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm/6 px-3",
+        attr("placeholder") := placeholderText,
+      ),
+    )
+
+  private def selectInput(inputId: String, labelText: String, values: List[String]): Frag =
+    div(
+      label(cls := labelCls, `for` := inputId)(labelText),
+      select(id := inputId, cls := selectCls)(
+        values.map(v => option(value := v)(v))
       ),
     )
 

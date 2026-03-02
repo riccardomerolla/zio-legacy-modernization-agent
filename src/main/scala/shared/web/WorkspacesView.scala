@@ -480,3 +480,253 @@ object WorkspacesView:
 
   private def escapeJs(s: String): String =
     s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+
+  def runsDashboardPage(
+    runs: List[WorkspaceRun],
+    workspaceNameById: Map[String, String],
+    workspaceFilter: Option[String],
+    agentFilter: Option[String],
+    statusFilter: Option[String],
+    scopeFilter: String,
+    sortBy: String,
+    dateFrom: Option[String],
+    dateTo: Option[String],
+    limit: Int,
+  ): String =
+    val qs          = List(
+      workspaceFilter.filter(_.nonEmpty).map(v => s"workspace=$v"),
+      agentFilter.filter(_.nonEmpty).map(v => s"agent=$v"),
+      statusFilter.filter(_.nonEmpty).map(v => s"status=$v"),
+      Option(scopeFilter).filter(_.nonEmpty).map(v => s"scope=$v"),
+      Option(sortBy).filter(_.nonEmpty).map(v => s"sort=$v"),
+      dateFrom.filter(_.nonEmpty).map(v => s"from=$v"),
+      dateTo.filter(_.nonEmpty).map(v => s"to=$v"),
+      Some(s"limit=$limit"),
+    ).flatten.mkString("&")
+    val fragmentUrl = s"/runs/fragment?$qs"
+    Layout.page("Runs Dashboard", "/runs")(
+      div(cls := "space-y-4")(
+        div(cls := "rounded-xl border border-white/10 bg-slate-900/80 px-5 py-4")(
+          div(cls := "flex items-center justify-between gap-3")(
+            div(
+              h1(cls := "text-2xl font-bold text-white")("Run Status Dashboard"),
+              p(cls := "mt-1 text-sm text-slate-300")("Unified view of runs across all workspaces"),
+            ),
+            div(cls := "text-xs text-slate-400")(s"${runs.size} runs"),
+          )
+        ),
+        runsDashboardFilterBar(
+          workspaceNameById,
+          workspaceFilter,
+          agentFilter,
+          statusFilter,
+          scopeFilter,
+          sortBy,
+          dateFrom,
+          dateTo,
+          limit,
+        ),
+        div(
+          id                        := "runs-dashboard-root",
+          attr("data-fragment-url") := fragmentUrl,
+          attr("hx-get")            := fragmentUrl,
+          attr("hx-trigger")        := "load, every 10s",
+          attr("hx-swap")           := "innerHTML",
+        )(
+          raw(runsDashboardRowsFragment(runs, workspaceNameById))
+        ),
+      ),
+      JsResources.inlineModuleScript("/static/client/components/run-dashboard.js"),
+    )
+
+  def runsDashboardRowsFragment(runs: List[WorkspaceRun], workspaceNameById: Map[String, String]): String =
+    if runs.isEmpty then
+      div(cls := "rounded-xl border border-white/10 bg-slate-900/60 p-10 text-center text-slate-400")("No runs found.")
+        .render
+    else
+      div(cls := "overflow-hidden rounded-xl border border-white/10 bg-slate-900/60")(
+        table(cls := "min-w-full divide-y divide-white/10")(
+          thead(cls := "bg-white/5")(
+            tr(
+              th(
+                cls := "py-2 pl-4 pr-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400"
+              )("Workspace"),
+              th(cls := "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-400")("Issue"),
+              th(cls := "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-400")("Agent"),
+              th(cls := "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-400")("Status"),
+              th(cls := "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-400")("Duration"),
+              th(
+                cls := "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-400"
+              )("Last Activity"),
+              th(cls := "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-400")("Actions"),
+            )
+          ),
+          tbody(cls := "divide-y divide-white/5")(runs.map(run => runsDashboardRow(run, workspaceNameById))*),
+        )
+      ).render
+
+  private def runsDashboardRow(run: WorkspaceRun, workspaceNameById: Map[String, String]): Frag =
+    val workspaceName = workspaceNameById.getOrElse(run.workspaceId, run.workspaceId)
+    val running       = run.status match
+      case RunStatus.Pending | RunStatus.Running(_) => true
+      case _                                        => false
+    val lastActivity  = run.updatedAt.toString.take(19).replace("T", " ")
+    tr(
+      id  := s"dashboard-run-${run.id}",
+      cls := "hover:bg-white/5",
+    )(
+      td(cls := "py-2 pl-4 pr-3 text-sm text-slate-200")(workspaceName),
+      td(cls := "px-3 py-2 text-sm text-white")(run.issueRef),
+      td(cls := "px-3 py-2 text-sm text-slate-300")(run.agentName),
+      td(cls := "px-3 py-2 text-sm")(statusBadge(run.status)),
+      td(
+        cls                           := "px-3 py-2 text-sm text-slate-300 font-mono",
+        attr("data-role")             := "run-duration",
+        attr("data-started-at")       := run.createdAt.toString,
+        attr("data-finished-at")      := run.updatedAt.toString,
+        attr("data-is-running")       := running.toString,
+        attr("data-initial-duration") := formatDuration(
+          run.createdAt,
+          if running then java.time.Clock.systemUTC().instant() else run.updatedAt,
+        ),
+      )(
+        formatDuration(run.createdAt, if running then java.time.Clock.systemUTC().instant() else run.updatedAt)
+      ),
+      td(cls := "px-3 py-2 text-sm text-slate-300")(lastActivity),
+      td(cls := "px-3 py-2 text-sm")(
+        a(
+          href  := s"/chat/${run.conversationId}?attach=1&runId=${run.id}",
+          cls   := "mr-2 inline-flex rounded border border-cyan-400/40 px-2 py-0.5 text-xs text-cyan-200 hover:bg-cyan-500/20",
+          title := "Attach",
+        )("↗"),
+        button(
+          cls                := "mr-2 inline-flex rounded border border-rose-400/40 px-2 py-0.5 text-xs text-rose-200 hover:bg-rose-500/20",
+          attr("hx-delete")  := s"/api/workspaces/${run.workspaceId}/runs/${run.id}",
+          attr("hx-confirm") := "Cancel this run?",
+          attr("hx-target")  := "#runs-dashboard-root",
+          attr("hx-swap")    := "innerHTML",
+          title              := "Cancel",
+        )("✕"),
+        a(
+          href  := s"/chat/${run.conversationId}",
+          cls   := "mr-2 inline-flex rounded border border-indigo-400/40 px-2 py-0.5 text-xs text-indigo-200 hover:bg-indigo-500/20",
+          title := "View Conversation",
+        )("💬"),
+        a(
+          href  := s"/chat/${run.conversationId}#git-panel-${run.conversationId}",
+          cls   := "inline-flex rounded border border-emerald-400/40 px-2 py-0.5 text-xs text-emerald-200 hover:bg-emerald-500/20",
+          title := "View Changes",
+        )("Δ"),
+      ),
+    )
+
+  private def runsDashboardFilterBar(
+    workspaceNameById: Map[String, String],
+    workspaceFilter: Option[String],
+    agentFilter: Option[String],
+    statusFilter: Option[String],
+    scopeFilter: String,
+    sortBy: String,
+    dateFrom: Option[String],
+    dateTo: Option[String],
+    limit: Int,
+  ): Frag =
+    form(method := "get", action := "/runs", cls := "rounded-xl border border-white/10 bg-slate-900/60 p-4")(
+      div(cls := "grid grid-cols-1 gap-3 md:grid-cols-9")(
+        select(
+          name := "workspace",
+          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        )(
+          option(value := "")("Any workspace"),
+          workspaceNameById.toList.sortBy(_._2.toLowerCase).map { (id, name) =>
+            option(value := id, if workspaceFilter.contains(id) then selected := "selected" else ())(name)
+          },
+        ),
+        input(
+          `type`      := "text",
+          name        := "agent",
+          value       := agentFilter.getOrElse(""),
+          placeholder := "Agent",
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        ),
+        select(
+          name := "status",
+          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        )(
+          option(value := "")("Any status"),
+          option(
+            value := "pending",
+            if statusFilter.contains("pending") then selected := "selected" else (),
+          )("Pending"),
+          option(
+            value := "running",
+            if statusFilter.contains("running") then selected := "selected" else (),
+          )("Running"),
+          option(
+            value := "completed",
+            if statusFilter.contains("completed") then selected := "selected" else (),
+          )("Completed"),
+          option(value := "failed", if statusFilter.contains("failed") then selected := "selected" else ())("Failed"),
+          option(
+            value := "cancelled",
+            if statusFilter.contains("cancelled") then selected := "selected" else (),
+          )("Cancelled"),
+        ),
+        select(
+          name := "scope",
+          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        )(
+          option(value := "active", if scopeFilter == "active" then selected := "selected" else ())("Active"),
+          option(value := "recent", if scopeFilter == "recent" then selected := "selected" else ())("Recent"),
+          option(value := "all", if scopeFilter == "all" then selected := "selected" else ())("All"),
+        ),
+        select(
+          name := "sort",
+          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        )(
+          option(value := "created", if sortBy == "created" then selected := "selected" else ())("Created"),
+          option(
+            value := "last_activity",
+            if sortBy == "last_activity" then selected := "selected" else (),
+          )("Last activity"),
+          option(value := "duration", if sortBy == "duration" then selected := "selected" else ())("Duration"),
+        ),
+        input(
+          `type`      := "date",
+          name        := "from",
+          value       := dateFrom.getOrElse(""),
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        ),
+        input(
+          `type`      := "date",
+          name        := "to",
+          value       := dateTo.getOrElse(""),
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        ),
+        input(
+          `type`      := "number",
+          min         := "1",
+          max         := "500",
+          name        := "limit",
+          value       := limit.toString,
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        ),
+        div(cls := "flex gap-2")(
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-400",
+          )("Apply"),
+          a(
+            href := "/runs",
+            cls  := "rounded-md border border-white/20 px-3 py-2 text-sm text-slate-200 hover:bg-white/5",
+          )("Reset"),
+        ),
+      )
+    )
+
+  private def formatDuration(from: java.time.Instant, to: java.time.Instant): String =
+    val totalSec = math.max(0L, java.time.Duration.between(from, to).getSeconds)
+    val h        = totalSec / 3600
+    val m        = (totalSec % 3600) / 60
+    val s        = totalSec  % 60
+    if h > 0 then f"$h%02d:$m%02d:$s%02d" else f"$m%02d:$s%02d"

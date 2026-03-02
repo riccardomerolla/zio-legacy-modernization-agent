@@ -54,5 +54,57 @@ object IssueRepositoryESSpec extends ZIOSpecDefault:
           yield assertTrue(got.state == IssueState.Completed(Ids.AgentId("agent-1"), now.plusSeconds(10), "done")))
             .provideLayer(layerFor(path))
         }
-      }
+      },
+      test("workspace link and unlink events update projection") {
+        withTempDir { path =>
+          val id  = Ids.IssueId("issue-2")
+          val now = Instant.parse("2026-03-02T09:00:00Z")
+          (for
+            repo <- ZIO.service[IssueRepository]
+            _    <- repo.append(IssueEvent.Created(id, "Task", "Do work", "task", "medium", now))
+            _    <- repo.append(IssueEvent.WorkspaceLinked(id, "ws-1", now.plusSeconds(1)))
+            mid  <- repo.get(id)
+            _    <- repo.append(IssueEvent.WorkspaceUnlinked(id, now.plusSeconds(2)))
+            end  <- repo.get(id)
+          yield assertTrue(
+            mid.workspaceId.contains("ws-1"),
+            end.workspaceId.isEmpty,
+          )).provideLayer(layerFor(path))
+        }
+      },
+      test("reopened event moves issue back to Open") {
+        withTempDir { path =>
+          val id  = Ids.IssueId("issue-3")
+          val now = Instant.parse("2026-03-02T09:10:00Z")
+          (for
+            repo <- ZIO.service[IssueRepository]
+            _    <- repo.append(IssueEvent.Created(id, "Task", "Do work", "task", "medium", now))
+            _    <- repo.append(IssueEvent.Completed(
+                      id,
+                      Ids.AgentId("agent-1"),
+                      now.plusSeconds(5),
+                      "done",
+                      now.plusSeconds(5),
+                    ))
+            _    <- repo.append(IssueEvent.Reopened(id, now.plusSeconds(8), now.plusSeconds(8)))
+            got  <- repo.get(id)
+          yield assertTrue(
+            got.state == IssueState.Open(now.plusSeconds(8))
+          )).provideLayer(layerFor(path))
+        }
+      },
+      test("tags updated event updates projection tags") {
+        withTempDir { path =>
+          val id  = Ids.IssueId("issue-4")
+          val now = Instant.parse("2026-03-02T09:20:00Z")
+          (for
+            repo <- ZIO.service[IssueRepository]
+            _    <- repo.append(IssueEvent.Created(id, "Task", "Do work", "task", "medium", now))
+            _    <- repo.append(IssueEvent.TagsUpdated(id, List("bug", "backend"), now.plusSeconds(1)))
+            got  <- repo.get(id)
+          yield assertTrue(
+            got.tags == List("bug", "backend")
+          )).provideLayer(layerFor(path))
+        }
+      },
     ) @@ TestAspect.sequential

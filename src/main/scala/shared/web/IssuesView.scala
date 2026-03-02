@@ -2,11 +2,20 @@ package shared.web
 
 import java.time.Instant
 
+import zio.json.*
+
 import config.entity.AgentInfo
-import issues.entity.api.{ AgentAssignmentView, AgentIssueView, IssueStatus }
+import issues.entity.api.{ AgentAssignmentView, AgentIssueView, IssueStatus, IssueTemplate }
 import scalatags.Text.all.*
 
 object IssuesView:
+  private val boardStatuses: List[(IssueStatus, String)] = List(
+    IssueStatus.Open       -> "Open",
+    IssueStatus.Assigned   -> "Assigned",
+    IssueStatus.InProgress -> "In Progress",
+    IssueStatus.Completed  -> "Completed",
+    IssueStatus.Failed     -> "Failed",
+  )
 
   def list(
     runId: Option[String],
@@ -49,6 +58,8 @@ object IssuesView:
             span(cls := "text-slate-400")(s"${issues.size} total"),
           ),
         ),
+        bulkToolbar("list"),
+        importPanel("list"),
         filterBar(runId, statusFilter, query, tagFilter),
         if issues.isEmpty then
           div(cls := "rounded-xl border border-white/10 bg-slate-900/60 px-6 py-16 text-center")(
@@ -56,15 +67,127 @@ object IssuesView:
           )
         else
           div(cls := "overflow-hidden rounded-xl border border-white/10 bg-slate-900/60")(
+            div(
+              cls := "flex items-center gap-2 border-b border-white/10 bg-slate-950/40 px-4 py-2 text-xs text-slate-300"
+            )(
+              input(
+                `type`                       := "checkbox",
+                id                           := "issues-select-all-list",
+                attr("data-bulk-select-all") := "list",
+                cls                          := "h-4 w-4 rounded border-white/30 bg-slate-800 text-indigo-500 focus:ring-indigo-400",
+              ),
+              label(`for` := "issues-select-all-list", cls := "cursor-pointer")("Select all visible"),
+            ),
             issues.sortBy(i =>
               try i.updatedAt
               catch case _: Throwable => Instant.EPOCH
-            ).reverse.map(issueRow)
+            ).reverse.map(issueRow),
           ),
-      )
+      ),
+      JsResources.inlineModuleScript("/static/client/components/issues-bulk-actions.js"),
     )
 
-  def newForm(defaultRunId: Option[String]): String =
+  def board(
+    issues: List[AgentIssueView],
+    workspaces: List[(String, String)],
+    workspaceFilter: Option[String],
+    agentFilter: Option[String],
+    priorityFilter: Option[String],
+    tagFilter: Option[String],
+    query: Option[String],
+  ): String =
+    val queryParts  = List(
+      workspaceFilter.filter(_.nonEmpty).map(v => s"workspace=${urlEncode(v)}"),
+      agentFilter.filter(_.nonEmpty).map(v => s"agent=${urlEncode(v)}"),
+      priorityFilter.filter(_.nonEmpty).map(v => s"priority=${urlEncode(v)}"),
+      tagFilter.filter(_.nonEmpty).map(v => s"tag=${urlEncode(v)}"),
+      query.filter(_.nonEmpty).map(v => s"q=${urlEncode(v)}"),
+    ).flatten
+    val fragmentUrl =
+      if queryParts.isEmpty then "/issues/board/fragment"
+      else s"/issues/board/fragment?${queryParts.mkString("&")}"
+
+    Layout.page("Issue Board", "/issues/board")(
+      div(cls := "space-y-4")(
+        div(cls := "rounded-xl border border-white/10 bg-slate-900/80 px-5 py-4")(
+          div(cls := "flex flex-wrap items-center justify-between gap-3")(
+            div(
+              h1(cls := "text-2xl font-bold text-white")("Issue Board"),
+              p(cls := "mt-1 text-sm text-slate-300")("Kanban view for issue workflow"),
+            ),
+            div(cls := "flex items-center gap-3")(
+              label(cls := "flex items-center gap-2 text-xs text-slate-300")(
+                input(
+                  `type`                       := "checkbox",
+                  id                           := "issues-select-all-board",
+                  attr("data-bulk-select-all") := "board",
+                  cls                          := "h-4 w-4 rounded border-white/30 bg-slate-800 text-indigo-500 focus:ring-indigo-400",
+                ),
+                span("Select all visible"),
+              ),
+              a(
+                href := "/issues",
+                cls  := "rounded-md border border-indigo-400/30 bg-indigo-500/20 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/30",
+              )("Back to list"),
+            ),
+          )
+        ),
+        bulkToolbar("board"),
+        boardFilterBar(workspaces, workspaceFilter, agentFilter, priorityFilter, tagFilter, query),
+        div(
+          id                           := "issues-board-root",
+          attr("data-fragment-url")    := fragmentUrl,
+          attr("data-status-endpoint") := "/api/issues",
+          attr("data-ws-topic")        := "activity:feed",
+          attr("hx-get")               := fragmentUrl,
+          attr("hx-trigger")           := "load, every 10s",
+          attr("hx-swap")              := "innerHTML",
+          cls                          := "min-h-[32rem]",
+          attr("data-bulk-scope")      := "board",
+        )(
+          raw(boardColumnsFragment(issues, workspaces))
+        ),
+      ),
+      JsResources.inlineModuleScript("/static/client/components/issues-board.js"),
+      JsResources.inlineModuleScript("/static/client/components/issues-bulk-actions.js"),
+    )
+
+  def boardColumnsFragment(issues: List[AgentIssueView], workspaces: List[(String, String)]): String =
+    div(
+      cls := "grid grid-cols-1 gap-3 lg:grid-cols-5"
+    )(
+      boardStatuses.map { (status, label) =>
+        val columnIssues = issues
+          .filter(_.status == status)
+          .sortBy(i =>
+            try i.updatedAt
+            catch case _: Throwable => Instant.EPOCH
+          )
+          .reverse
+        div(
+          cls                         := "rounded-xl border border-white/10 bg-slate-900/70 p-3",
+          attr("data-drop-status")    := issueStatusToken(status),
+          attr("data-column-status")  := issueStatusToken(status),
+          attr("data-column-label")   := label,
+          attr("data-drop-highlight") := "false",
+        )(
+          div(cls := "mb-2 flex items-center justify-between")(
+            h3(cls := "text-sm font-semibold text-slate-100")(label),
+            span(cls := "rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300")(columnIssues.size.toString),
+          ),
+          div(cls := "space-y-2 max-h-[65vh] overflow-y-auto", attr("data-role") := "column-cards")(
+            if columnIssues.isEmpty then
+              p(cls := "rounded border border-dashed border-white/10 px-2 py-3 text-xs text-slate-500")("No issues")
+            else
+              columnIssues.map(issue => boardCard(issue, workspaces))
+          ),
+        )
+      }
+    ).render
+
+  def newForm(defaultRunId: Option[String], workspaces: List[(String, String)], templates: List[IssueTemplate])
+    : String =
+    val orderedTemplates = templates.sortBy(t => (!t.isBuiltin, t.name.toLowerCase))
     Layout.page("New Issue", "/issues")(
       div(cls := "-mt-6 mx-auto max-w-4xl")(
         div(cls := "mb-5")(
@@ -73,6 +196,23 @@ object IssuesView:
         ),
         form(method := "post", action := "/issues", cls := "space-y-5")(
           div(cls := "rounded-xl border border-white/10 bg-slate-900/70 p-5")(
+            div(cls := "mb-4 rounded-lg border border-indigo-400/20 bg-indigo-500/10 p-4")(
+              label(cls := "mb-2 block text-sm font-semibold text-indigo-100", `for` := "issueTemplateId")("Template"),
+              select(
+                id   := "issueTemplateId",
+                name := "issueTemplateId",
+                cls  := "w-full rounded-lg border border-indigo-300/30 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:border-indigo-300 focus:outline-none",
+              )(
+                option(value := "")("No template"),
+                orderedTemplates.map { t =>
+                  option(value := t.id)(if t.isBuiltin then s"${t.name} (built-in)" else t.name)
+                },
+              ),
+              p(
+                cls := "mt-2 text-xs text-slate-300"
+              )("Selecting a template auto-fills title, description, type, priority, and tags."),
+              div(id := "issue-template-variables", cls := "mt-3 grid grid-cols-1 gap-3 md:grid-cols-2"),
+            ),
             div(cls := "grid grid-cols-1 gap-4 md:grid-cols-2")(
               textField("title", "Title", "Describe the task", required = true),
               textField("issueType", "Type", "task", required = true),
@@ -80,6 +220,7 @@ object IssuesView:
               textField("priority", "Priority", "medium"),
               textField("tags", "Tags (comma separated)", "bug,build,analysis"),
               textField("preferredAgent", "Preferred AI Agent", "gemini-cli"),
+              workspaceSelect("workspaceId", "Linked Workspace", workspaces, None),
               textField("contextPath", "Context Path", "/path/to/context"),
               textField("sourceFolder", "Source Folder", "/path/to/source"),
             ),
@@ -103,6 +244,8 @@ object IssuesView:
             a(href := "/issues", cls := "text-sm font-medium text-slate-300 hover:text-white")("Cancel"),
           ),
         ),
+        script(id := "issue-create-template-data", `type` := "application/json")(raw(orderedTemplates.toJson)),
+        JsResources.inlineModuleScript("/static/client/components/issue-template-form.js"),
       )
     )
 
@@ -135,12 +278,19 @@ object IssuesView:
       Option(thunk).getOrElse(fallback)
     catch case _: Throwable => fallback
 
-  def detail(issue: AgentIssueView, assignments: List[AgentAssignmentView], availableAgents: List[AgentInfo]): String =
+  def detail(
+    issue: AgentIssueView,
+    assignments: List[AgentAssignmentView],
+    availableAgents: List[AgentInfo],
+    workspaces: List[(String, String)],
+  ): String =
     val issueIdStr    = safe(issue.id, "-")
     val selectedAgent = safe(issue.preferredAgent).match
       case "" => safe(issue.assignedAgent)
       case v  => v
     val convId        = safe(issue.conversationId)
+    val workspaceId   = safe(issue.workspaceId)
+    val workspaceName = workspaceNameOf(workspaces, workspaceId).getOrElse(workspaceId)
 
     Layout.page(s"Issue #$issueIdStr", "/issues")(
       div(cls := "-mt-6 mx-auto max-w-5xl space-y-4")(
@@ -152,6 +302,7 @@ object IssuesView:
               div(cls := "mt-2 flex flex-wrap items-center gap-2")(
                 statusBadge(safeStr(issue.status.toString, "open")),
                 priorityBadge(safeStr(issue.priority.toString, "medium")),
+                if workspaceId.nonEmpty then workspaceBadge(workspaceName) else (),
                 safeTags(issue.tags).map(tagBadge),
               ),
             ),
@@ -168,6 +319,23 @@ object IssuesView:
                 cls      := "flex items-center gap-2",
                 onsubmit := "const b=this.querySelector('button[type=submit]'); if(b){b.disabled=true;b.classList.add('opacity-60','cursor-not-allowed'); b.dataset.originalText=b.textContent; b.textContent='Assigning...';}",
               )(
+                if workspaceId.nonEmpty then
+                  frag(
+                    input(`type` := "hidden", name := "workspaceId", value := workspaceId),
+                    span(
+                      cls := "rounded-md border border-cyan-400/30 bg-cyan-500/20 px-2 py-1.5 text-xs text-cyan-200"
+                    )(s"Workspace: $workspaceName"),
+                  )
+                else
+                  workspaceSelect(
+                    fieldName = "workspaceId",
+                    labelText = "",
+                    workspaces = workspaces,
+                    selectedWorkspaceId = None,
+                    includeLabel = false,
+                    compact = true,
+                  )
+                ,
                 agentSelect("agentName", selectedAgent, availableAgents),
                 button(
                   `type` := "submit",
@@ -182,6 +350,7 @@ object IssuesView:
             metaItem("Run", safeMap(issue.runId, identity, "Not linked")),
             metaItem("Preferred Agent", safe(issue.preferredAgent, "Not specified")),
             metaItem("Assigned Agent", safe(issue.assignedAgent, "Unassigned")),
+            metaItem("Workspace", if workspaceName.nonEmpty then workspaceName else "Not linked"),
             metaItem("Context Path", safe(issue.contextPath, "Not specified")),
             metaItem("Source Folder", safe(issue.sourceFolder, "Not specified")),
             metaItem("Updated", safeStr(issue.updatedAt.toString.take(19).replace('T', ' '), "unknown")),
@@ -280,11 +449,86 @@ object IssuesView:
       ),
     )
 
+  private def boardFilterBar(
+    workspaces: List[(String, String)],
+    workspaceFilter: Option[String],
+    agentFilter: Option[String],
+    priorityFilter: Option[String],
+    tagFilter: Option[String],
+    query: Option[String],
+  ): Frag =
+    form(method := "get", action := "/issues/board", cls := "rounded-xl border border-white/10 bg-slate-900/60 p-4")(
+      div(cls := "grid grid-cols-1 gap-3 md:grid-cols-6")(
+        input(
+          `type`      := "text",
+          name        := "q",
+          value       := query.getOrElse(""),
+          placeholder := "Search issue",
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500",
+        ),
+        select(
+          name := "workspace",
+          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        )(
+          option(value := "")("Any workspace"),
+          workspaces.sortBy(_._2.toLowerCase).map { (id, name) =>
+            option(value := id, if workspaceFilter.contains(id) then selected := "selected" else ())(
+              s"$name ($id)"
+            )
+          },
+        ),
+        input(
+          `type`      := "text",
+          name        := "agent",
+          value       := agentFilter.getOrElse(""),
+          placeholder := "Assigned agent",
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500",
+        ),
+        select(
+          name := "priority",
+          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+        )(
+          option(value := "")("Any priority"),
+          option(value := "critical", if priorityFilter.contains("critical") then selected := "selected" else ())(
+            "Critical"
+          ),
+          option(value := "high", if priorityFilter.contains("high") then selected := "selected" else ())("High"),
+          option(value := "medium", if priorityFilter.contains("medium") then selected := "selected" else ())("Medium"),
+          option(value := "low", if priorityFilter.contains("low") then selected := "selected" else ())("Low"),
+        ),
+        input(
+          `type`      := "text",
+          name        := "tag",
+          value       := tagFilter.getOrElse(""),
+          placeholder := "Tag",
+          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500",
+        ),
+        div(cls := "flex gap-2")(
+          button(
+            `type` := "submit",
+            cls    := "rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-400",
+          )("Apply"),
+          a(
+            href := "/issues/board",
+            cls  := "rounded-md border border-white/20 px-3 py-2 text-sm text-slate-200 hover:bg-white/5",
+          )("Reset"),
+        ),
+      )
+    )
+
   private def issueRow(issue: AgentIssueView): Frag =
     val issueIdStr = safe(issue.id, "-")
+    val workspace  = safe(issue.workspaceId)
     div(id := s"issue-row-$issueIdStr", cls := "border-b border-white/10 px-4 py-4 last:border-b-0 group")(
       div(cls := "flex items-start gap-3")(
-        span(cls := "mt-1 inline-block h-3 w-3 rounded-full bg-emerald-400 flex-shrink-0"),
+        input(
+          `type`                   := "checkbox",
+          cls                      := "mt-1 h-4 w-4 rounded border-white/30 bg-slate-800 text-indigo-500 focus:ring-indigo-400",
+          attr("data-bulk-select") := "list",
+          attr("data-issue-id")    := issueIdStr,
+          attr("aria-label")       := s"Select issue $issueIdStr",
+        ),
+        span(cls                   := "mt-1 inline-block h-3 w-3 rounded-full bg-emerald-400 flex-shrink-0"),
         div(cls := "min-w-0 flex-1")(
           div(cls := "flex flex-wrap items-center gap-2")(
             a(
@@ -293,6 +537,7 @@ object IssuesView:
             )(safeStr(issue.title, "Untitled")),
             statusBadge(safeStr(issue.status.toString, "open")),
             priorityBadge(safeStr(issue.priority.toString, "medium")),
+            if workspace.nonEmpty then workspaceBadge(workspace) else (),
             safeTags(issue.tags).map(tagBadge),
           ),
           p(cls := "mt-1 line-clamp-2 text-sm text-slate-300")(safeStr(issue.description)),
@@ -305,6 +550,10 @@ object IssuesView:
             ,
             safe(issue.preferredAgent).match
               case v if v.nonEmpty => span(s"agent:$v")
+              case _               => ()
+            ,
+            workspace.match
+              case v if v.nonEmpty => span(s"workspace:$v")
               case _               => ()
             ,
             safe(issue.sourceFolder).match
@@ -326,6 +575,173 @@ object IssuesView:
       )
     )
 
+  private def boardCard(issue: AgentIssueView, workspaces: List[(String, String)]): Frag =
+    val issueId       = safe(issue.id, "-")
+    val workspaceId   = safe(issue.workspaceId)
+    val workspaceName = workspaceNameOf(workspaces, workspaceId).getOrElse(workspaceId)
+    val titleText     = safeStr(issue.title, "Untitled")
+    val descText      = safeStr(issue.description)
+    val updatedLabel  = prettyRelativeTime(issue.updatedAt)
+    val runState      =
+      if issue.status == IssueStatus.InProgress && safe(issue.runId).nonEmpty then Some("Run active")
+      else None
+    a(
+      href                        := s"/issues/$issueId",
+      cls                         := "block rounded-lg border border-white/10 bg-slate-800/80 p-3 hover:border-indigo-400/40 hover:bg-slate-800",
+      attr("draggable")           := "true",
+      attr("data-issue-id")       := issueId,
+      attr("data-bulk-card")      := "true",
+      attr("data-issue-status")   := issueStatusToken(issue.status),
+      attr("data-assigned-agent") := safe(issue.assignedAgent),
+      attr("data-priority")       := safeStr(issue.priority.toString).toLowerCase,
+      attr("data-tags")           := safe(issue.tags),
+      attr("data-workspace-id")   := workspaceId,
+    )(
+      div(cls := "mb-2 flex items-center justify-between")(
+        input(
+          `type`                   := "checkbox",
+          cls                      := "h-4 w-4 rounded border-white/30 bg-slate-800 text-indigo-500 focus:ring-indigo-400",
+          attr("data-bulk-select") := "board",
+          attr("data-issue-id")    := issueId,
+          attr("aria-label")       := s"Select issue $issueId",
+        ),
+        span(cls := "text-[10px] uppercase tracking-wide text-slate-500")("Select"),
+      ),
+      p(cls := "text-sm font-semibold text-slate-100 line-clamp-2")(titleText),
+      p(cls := "mt-1 text-xs text-slate-400 line-clamp-2")(descText),
+      div(cls := "mt-2 flex flex-wrap items-center gap-1.5")(
+        priorityBadge(safeStr(issue.priority.toString, "medium")),
+        safe(issue.assignedAgent).match
+          case v if v.nonEmpty =>
+            span(cls := "rounded-full bg-indigo-500/20 px-2 py-0.5 text-[11px] text-indigo-200")(v)
+          case _               => (),
+        if workspaceName.nonEmpty then workspaceBadge(workspaceName) else (),
+        runState.map(v =>
+          span(cls := "rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-200")(v)
+        ),
+      ),
+      p(cls := "mt-2 text-[11px] text-slate-500")(s"Updated $updatedLabel"),
+    )
+
+  private def bulkToolbar(scope: String): Frag =
+    div(
+      cls                              := "hidden rounded-xl border border-indigo-300/25 bg-indigo-500/10 p-4",
+      id                               := s"issues-bulk-toolbar-$scope",
+      attr("data-bulk-toolbar")        := scope,
+      attr("data-bulk-selected-count") := "0",
+      attr("data-bulk-scope")          := scope,
+    )(
+      div(cls := "flex flex-wrap items-center gap-3")(
+        p(cls := "text-sm font-semibold text-indigo-100")(
+          span(attr("data-bulk-count-label") := scope)("0"),
+          " selected",
+        ),
+        select(
+          cls                     := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-bulk-agent") := scope,
+        )(
+          option(value := "gemini-cli")("gemini-cli"),
+          option(value := "code-agent")("code-agent"),
+          option(value := "chat-agent")("chat-agent"),
+        ),
+        input(
+          `type`                        := "text",
+          attr("placeholder")           := "workspace id",
+          cls                           := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-bulk-workspace")   := scope,
+        ),
+        button(
+          `type`                   := "button",
+          cls                      := "rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500",
+          attr("data-bulk-action") := "assign",
+          attr("data-bulk-scope")  := scope,
+        )("Bulk Assign"),
+        select(
+          cls                      := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-bulk-status") := scope,
+        )(
+          option(value := "Open")("Open"),
+          option(value := "Assigned")("Assigned"),
+          option(value := "InProgress")("In Progress"),
+          option(value := "Completed")("Completed"),
+          option(value := "Failed")("Failed"),
+          option(value := "Skipped")("Skipped"),
+        ),
+        button(
+          `type`                   := "button",
+          cls                      := "rounded-md border border-emerald-300/40 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20",
+          attr("data-bulk-action") := "status",
+          attr("data-bulk-scope")  := scope,
+        )("Bulk Status"),
+        input(
+          `type`                        := "text",
+          attr("placeholder")           := "add tags: tag1,tag2",
+          cls                           := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-bulk-add-tags")    := scope,
+        ),
+        input(
+          `type`                        := "text",
+          attr("placeholder")           := "remove tags: tag3",
+          cls                           := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-bulk-remove-tags") := scope,
+        ),
+        button(
+          `type`                   := "button",
+          cls                      := "rounded-md border border-cyan-300/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20",
+          attr("data-bulk-action") := "tags",
+          attr("data-bulk-scope")  := scope,
+        )("Bulk Tags"),
+        button(
+          `type`                   := "button",
+          cls                      := "rounded-md border border-red-400/40 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20",
+          attr("data-bulk-action") := "delete",
+          attr("data-bulk-scope")  := scope,
+        )("Bulk Delete"),
+      ),
+      p(cls := "mt-2 text-xs text-indigo-100/80", attr("data-bulk-progress") := scope)(""),
+    )
+
+  private def importPanel(scope: String): Frag =
+    div(cls := "mt-3 rounded border border-white/10 bg-slate-900/60 p-3")(
+      p(cls := "text-xs font-semibold text-slate-200")("Import Preview"),
+      div(cls := "mt-2 flex flex-wrap items-center gap-2")(
+        button(
+          `type`                     := "button",
+          cls                        := "rounded-md border border-indigo-300/40 px-2 py-1 text-xs text-indigo-200 hover:bg-indigo-500/20",
+          attr("data-import-action") := "folder-preview",
+          attr("data-bulk-scope")    := scope,
+        )("Preview Folder"),
+        button(
+          `type`                     := "button",
+          cls                        := "rounded-md border border-emerald-300/40 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-500/20",
+          attr("data-import-action") := "folder-import",
+          attr("data-bulk-scope")    := scope,
+        )("Import Folder"),
+        input(
+          `type`                   := "text",
+          cls                      := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-import-repo") := scope,
+          attr("placeholder")      := "owner/repo",
+        ),
+        button(
+          `type`                     := "button",
+          cls                        := "rounded-md border border-cyan-300/40 px-2 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20",
+          attr("data-import-action") := "github-preview",
+          attr("data-bulk-scope")    := scope,
+        )("Preview GitHub"),
+        button(
+          `type`                     := "button",
+          cls                        := "rounded-md border border-cyan-300/40 px-2 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20",
+          attr("data-import-action") := "github-import",
+          attr("data-bulk-scope")    := scope,
+        )("Import GitHub"),
+      ),
+      pre(
+        cls                         := "mt-2 max-h-48 overflow-auto rounded border border-white/10 bg-black/30 p-2 text-[11px] text-slate-300",
+        attr("data-import-preview") := scope,
+      )(""),
+    )
+
   private def textField(fieldName: String, labelText: String, fieldValue: String, required: Boolean = false): Frag =
     div(
       label(cls := "mb-2 block text-sm font-semibold text-slate-200", `for` := fieldName)(labelText),
@@ -336,6 +752,35 @@ object IssuesView:
         value  := fieldValue,
         cls    := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none",
         if required then scalatags.Text.all.required else (),
+      ),
+    )
+
+  private def workspaceSelect(
+    fieldName: String,
+    labelText: String,
+    workspaces: List[(String, String)],
+    selectedWorkspaceId: Option[String],
+    includeLabel: Boolean = true,
+    compact: Boolean = false,
+  ): Frag =
+    val ordered = workspaces.sortBy(_._2.toLowerCase)
+    val clsBase =
+      if compact then
+        "w-64 rounded-md border border-white/15 bg-slate-800/80 px-2 py-1.5 text-sm text-slate-100 focus:border-indigo-400/40 focus:outline-none"
+      else
+        "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none"
+    div(
+      if includeLabel then
+        label(cls := "mb-2 block text-sm font-semibold text-slate-200", `for` := fieldName)(labelText)
+      else (),
+      select(id := fieldName, name := fieldName, cls := clsBase)(
+        option(value := "")("No workspace linked"),
+        ordered.map { (id, name) =>
+          option(
+            value := id,
+            if selectedWorkspaceId.contains(id) then selected := "selected" else (),
+          )(s"$name ($id)")
+        },
       ),
     )
 
@@ -383,6 +828,13 @@ object IssuesView:
   private def priorityBadge(priority: String): Frag =
     span(cls := s"rounded-full px-2 py-0.5 text-xs font-semibold ${priorityBadgeClass(priority)}")(priority)
 
+  private def workspaceBadge(workspace: String): Frag =
+    span(
+      cls := "rounded-full border border-cyan-400/30 bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200"
+    )(
+      s"workspace:$workspace"
+    )
+
   private def tagBadge(tag: String): Frag =
     span(cls := s"rounded-full border px-2 py-0.5 text-xs font-semibold ${tagBadgeClass(tag)}")(tag)
 
@@ -409,6 +861,32 @@ object IssuesView:
       case "completed"  => "bg-emerald-500/20 text-emerald-200"
       case "failed"     => "bg-red-500/20 text-red-200"
       case _            => "bg-slate-500/20 text-slate-200"
+
+  private def issueStatusToken(status: IssueStatus): String =
+    status match
+      case IssueStatus.Open       => "open"
+      case IssueStatus.Assigned   => "assigned"
+      case IssueStatus.InProgress => "in_progress"
+      case IssueStatus.Completed  => "completed"
+      case IssueStatus.Failed     => "failed"
+      case IssueStatus.Skipped    => "skipped"
+
+  private def prettyRelativeTime(ts: Instant): String =
+    val now         = java.time.Clock.systemUTC().instant()
+    val deltaSecs   = math.max(0L, java.time.Duration.between(ts, now).getSeconds)
+    val deltaMinute = deltaSecs / 60
+    val deltaHour   = deltaMinute / 60
+    val deltaDay    = deltaHour / 24
+    if deltaSecs < 60 then s"${deltaSecs}s ago"
+    else if deltaMinute < 60 then s"${deltaMinute}m ago"
+    else if deltaHour < 24 then s"${deltaHour}h ago"
+    else s"${deltaDay}d ago"
+
+  private def urlEncode(raw: String): String =
+    java.net.URLEncoder.encode(raw, java.nio.charset.StandardCharsets.UTF_8)
+
+  private def workspaceNameOf(workspaces: List[(String, String)], workspaceId: String): Option[String] =
+    workspaces.collectFirst { case (id, name) if id == workspaceId => name }
 
   private def tagBadgeClass(tag: String): String =
     val palette = Vector(

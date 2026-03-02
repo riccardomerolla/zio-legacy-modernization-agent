@@ -27,6 +27,7 @@ final case class AgentIssue(
   tags: List[String],
   contextPath: String,
   sourceFolder: String,
+  workspaceId: Option[String] = None,
 ) derives JsonCodec, Schema
 
 object AgentIssue:
@@ -61,6 +62,7 @@ object AgentIssue:
                   tags = Nil,
                   contextPath = "",
                   sourceFolder = "",
+                  workspaceId = None,
                 )
               )
             )
@@ -91,3 +93,23 @@ object AgentIssue:
         current
           .toRight(s"Issue ${skipped.issueId.value} not initialized before Skipped event")
           .map(issue => Some(issue.copy(state = IssueState.Skipped(skipped.skippedAt, skipped.reason))))
+
+      case linked: IssueEvent.WorkspaceLinked =>
+        current
+          .toRight(s"Issue ${linked.issueId.value} not initialized before WorkspaceLinked event")
+          .map(issue => Some(issue.copy(workspaceId = Some(linked.workspaceId))))
+
+      case unlinked: IssueEvent.WorkspaceUnlinked =>
+        current
+          .toRight(s"Issue ${unlinked.issueId.value} not initialized before WorkspaceUnlinked event")
+          .map(issue => Some(issue.copy(workspaceId = None)))
+
+      case tagsUpdated: IssueEvent.TagsUpdated =>
+        current
+          .toRight(s"Issue ${tagsUpdated.issueId.value} not initialized before TagsUpdated event")
+          .map(issue => Some(issue.copy(tags = tagsUpdated.tags)))
+
+      case reopened: IssueEvent.Reopened =>
+        current
+          .toRight(s"Issue ${reopened.issueId.value} not initialized before Reopened event")
+          .map(issue => Some(issue.copy(state = IssueState.Open(reopened.reopenedAt))))

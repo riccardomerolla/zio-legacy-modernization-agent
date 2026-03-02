@@ -5,7 +5,7 @@ import config.entity.{ AgentChannelBinding, AgentInfo, WorkflowDefinition }
 import conversation.entity.api.{ ChatConversation, ConversationEntry, ConversationSessionMeta }
 import db.{ TaskReportRow, TaskRunRow }
 import gateway.entity.ChatSession
-import issues.entity.api.{ AgentAssignmentView, AgentIssueView }
+import issues.entity.api.{ AgentAssignmentView, AgentIssueView, IssueTemplate }
 
 object HtmlViews:
 
@@ -72,6 +72,12 @@ object HtmlViews:
   def settingsSystemTab: String = SettingsView.systemTab
 
   def settingsAdvancedTab: String = SettingsView.advancedTab
+
+  def settingsIssueTemplatesTab(
+    templates: List[IssueTemplate],
+    flash: Option[String] = None,
+  ): String =
+    SettingsView.issueTemplatesTab(templates, flash)
 
   def modelsPage(registry: ModelRegistryResponse, statuses: List[ProviderProbeStatus]): String =
     ModelsView.page(registry, statuses)
@@ -149,12 +155,34 @@ object HtmlViews:
   ): String =
     IssuesView.list(runId, issues, statusFilter, query, tagFilter)
 
-  def issueCreateForm(runId: Option[String]): String =
-    IssuesView.newForm(runId)
+  def issuesBoard(
+    issues: List[AgentIssueView],
+    workspaces: List[(String, String)],
+    workspaceFilter: Option[String],
+    agentFilter: Option[String],
+    priorityFilter: Option[String],
+    tagFilter: Option[String],
+    query: Option[String],
+  ): String =
+    IssuesView.board(issues, workspaces, workspaceFilter, agentFilter, priorityFilter, tagFilter, query)
+
+  def issuesBoardColumns(
+    issues: List[AgentIssueView],
+    workspaces: List[(String, String)],
+  ): String =
+    IssuesView.boardColumnsFragment(issues, workspaces)
+
+  def issueCreateForm(
+    runId: Option[String],
+    workspaces: List[(String, String)],
+    templates: List[IssueTemplate],
+  ): String =
+    IssuesView.newForm(runId, workspaces, templates)
 
   def issueDetail(
     issue: AgentIssueView,
     assignments: List[AgentAssignmentView],
     availableAgents: List[AgentInfo],
+    workspaces: List[(String, String)],
   ): String =
-    IssuesView.detail(issue, assignments, availableAgents)
+    IssuesView.detail(issue, assignments, availableAgents, workspaces)

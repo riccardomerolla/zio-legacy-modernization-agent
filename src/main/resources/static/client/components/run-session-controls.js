@@ -8,6 +8,7 @@ class RunSessionControls {
     this.isAttached = (root?.dataset?.isAttached || 'false') === 'true';
     this.attachedCount = Number(root?.dataset?.attachedCount || '0');
     this.ws = null;
+    this.autoAttachRequested = this.isAutoAttachRequested();
 
     this.attachBtn = root.querySelector('[data-role="attach"]');
     this.detachBtn = root.querySelector('[data-role="detach"]');
@@ -69,7 +70,19 @@ class RunSessionControls {
   connectWs() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${protocol}//${location.host}/ws/console`);
+    this.ws.onopen = () => {
+      if (this.autoAttachRequested && !this.isAttached) {
+        this.send({ AttachToRun: { runId: this.runId } });
+      }
+    };
     this.ws.onmessage = (event) => this.onMessage(event.data);
+  }
+
+  isAutoAttachRequested() {
+    const params = new URLSearchParams(window.location.search || '');
+    const attachFlag = (params.get('attach') || '').trim();
+    const requestedRunId = (params.get('runId') || '').trim();
+    return attachFlag === '1' && requestedRunId === this.runId;
   }
 
   send(payload) {

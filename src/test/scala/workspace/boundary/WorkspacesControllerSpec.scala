@@ -186,6 +186,27 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
         resp   <- routes.runZIO(req)
       yield assertTrue(resp.status == Status.Ok)
     },
+    test("GET /runs returns dashboard html") {
+      for
+        wsRef  <- Ref.make(Map("ws-1" -> sampleWs))
+        runRef <- Ref.make(Map("run-1" -> sampleRun))
+        routes  = makeRoutes(wsRef, runRef)
+        req     = Request.get(URL(Path.decode("/runs")))
+        resp   <- routes.runZIO(req)
+        body   <- resp.body.asString
+      yield assertTrue(resp.status == Status.Ok && body.contains("Run Status Dashboard") && body.contains("#1"))
+    },
+    test("GET /api/runs filters by status") {
+      val completedRun = sampleRun.copy(id = "run-2", status = RunStatus.Completed)
+      for
+        wsRef  <- Ref.make(Map("ws-1" -> sampleWs))
+        runRef <- Ref.make(Map("run-1" -> sampleRun, "run-2" -> completedRun))
+        routes  = makeRoutes(wsRef, runRef)
+        req     = Request.get(URL.decode("/api/runs?status=completed").getOrElse(URL.root))
+        resp   <- routes.runZIO(req)
+        body   <- resp.body.asString
+      yield assertTrue(resp.status == Status.Ok && body.contains("run-2") && !body.contains("run-1"))
+    },
     test("WorkspaceCreateRequest with default RunMode.Host round-trips through JSON") {
       val req     = WorkspaceCreateRequest(
         name = "my-api",

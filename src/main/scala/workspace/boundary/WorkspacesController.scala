@@ -1,6 +1,7 @@
 package workspace.boundary
 
 import java.nio.file.{ Files, Paths }
+import java.time.{ Instant, LocalDate, ZoneOffset }
 
 import zio.*
 import zio.http.*
@@ -30,6 +31,86 @@ object WorkspacesController:
             headers = Headers(Header.Location(URL.decode("/settings/workspaces").getOrElse(URL.root))),
           )
         )
+      },
+
+      // Runs dashboard page (across all workspaces)
+      Method.GET / "runs" -> handler { (req: Request) =>
+        val query = parseRunsDashboardQuery(req)
+        (for
+          workspaces <- repo.list.mapError(persistErr)
+          allRuns    <- listAllRuns(repo, workspaces).mapError(persistErr)
+          filtered    = filterRuns(allRuns, query)
+          sorted      = sortRuns(filtered, query.sortBy)
+          scoped      = applyScope(sorted, query.scope)
+          limited     = scoped.take(query.limit)
+          byId        = workspaces.map(ws => ws.id -> ws.name).toMap
+        yield html(
+          WorkspacesView.runsDashboardPage(
+            runs = limited,
+            workspaceNameById = byId,
+            workspaceFilter = query.workspace,
+            agentFilter = query.agent,
+            statusFilter = query.status,
+            scopeFilter = query.scope,
+            sortBy = query.sortBy,
+            dateFrom = query.dateFrom,
+            dateTo = query.dateTo,
+            limit = query.limit,
+          )
+        )).catchAll(ZIO.succeed)
+      },
+
+      // Runs dashboard HTMX fragment
+      Method.GET / "runs" / "fragment" -> handler { (req: Request) =>
+        val query = parseRunsDashboardQuery(req)
+        (for
+          workspaces <- repo.list.mapError(persistErr)
+          allRuns    <- listAllRuns(repo, workspaces).mapError(persistErr)
+          filtered    = filterRuns(allRuns, query)
+          sorted      = sortRuns(filtered, query.sortBy)
+          scoped      = applyScope(sorted, query.scope)
+          limited     = scoped.take(query.limit)
+          byId        = workspaces.map(ws => ws.id -> ws.name).toMap
+        yield html(WorkspacesView.runsDashboardRowsFragment(limited, byId))).catchAll(ZIO.succeed)
+      },
+
+      // Runs JSON API (across all workspaces)
+      Method.GET / "api" / "runs" -> handler { (req: Request) =>
+        val query = parseRunsDashboardQuery(req)
+        val scope = if query.status.nonEmpty then "all" else query.scope
+        (for
+          workspaces <- repo.list.mapError(persistErr)
+          allRuns    <- listAllRuns(repo, workspaces).mapError(persistErr)
+          filtered    = filterRuns(allRuns, query)
+          sorted      = sortRuns(filtered, query.sortBy)
+          scoped      = applyScope(sorted, scope)
+          limited     = scoped.take(query.limit)
+          byId        = workspaces.map(ws => ws.id -> ws.name).toMap
+          payload     = limited.map(run =>
+                          RunDashboardRow(
+                            runId = run.id,
+                            workspaceId = run.workspaceId,
+                            workspaceName = byId.getOrElse(run.workspaceId, run.workspaceId),
+                            issueRef = run.issueRef,
+                            agentName = run.agentName,
+                            status = run.status.toString,
+                            conversationId = run.conversationId,
+                            createdAt = run.createdAt,
+                            updatedAt = run.updatedAt,
+                            durationSeconds = math.max(
+                              0L,
+                              java.time.Duration
+                                .between(
+                                  run.createdAt,
+                                  run.status match
+                                    case RunStatus.Pending | RunStatus.Running(_) => run.updatedAt
+                                    case _                                        => run.updatedAt,
+                                )
+                                .getSeconds,
+                            ),
+                          )
+                        )
+        yield Response.json(payload.toJson)).catchAll(ZIO.succeed)
       },
 
       // Full page
@@ -459,6 +540,69 @@ object WorkspacesController:
   private def html(bodyContent: String): Response =
     Response.text(bodyContent).contentType(MediaType.text.html)
 
+  private def listAllRuns(
+    repo: WorkspaceRepository,
+    workspaces: List[Workspace],
+  ): IO[PersistenceError, List[WorkspaceRun]] =
+    ZIO.foreach(workspaces)(ws => repo.listRuns(ws.id)).map(_.flatten)
+
+  private def parseRunsDashboardQuery(req: Request): RunsDashboardQuery =
+    RunsDashboardQuery(
+      workspace = req.queryParam("workspace").map(_.trim).filter(_.nonEmpty),
+      agent = req.queryParam("agent").map(_.trim).filter(_.nonEmpty),
+      status = req.queryParam("status").map(_.trim.toLowerCase).filter(_.nonEmpty),
+      scope = req.queryParam("scope").map(_.trim.toLowerCase).filter(_.nonEmpty).getOrElse("active"),
+      sortBy = req.queryParam("sort").map(_.trim.toLowerCase).filter(_.nonEmpty).getOrElse("created"),
+      dateFrom = req.queryParam("from").map(_.trim).filter(_.nonEmpty),
+      dateTo = req.queryParam("to").map(_.trim).filter(_.nonEmpty),
+      limit = req.queryParam("limit").flatMap(_.toIntOption).map(v => math.max(1, math.min(500, v))).getOrElse(50),
+    )
+
+  private def statusToken(status: RunStatus): String = status match
+    case RunStatus.Pending    => "pending"
+    case RunStatus.Running(_) => "running"
+    case RunStatus.Completed  => "completed"
+    case RunStatus.Failed     => "failed"
+    case RunStatus.Cancelled  => "cancelled"
+
+  private def filterRuns(runs: List[WorkspaceRun], q: RunsDashboardQuery): List[WorkspaceRun] =
+    val fromInstant = q.dateFrom.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption).map(
+      _.atStartOfDay().toInstant(ZoneOffset.UTC)
+    )
+    val toInstant   = q.dateTo
+      .flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
+      .map(_.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).minusMillis(1))
+    runs.filter { run =>
+      q.workspace.forall(_.equalsIgnoreCase(run.workspaceId)) &&
+      q.agent.forall(_.equalsIgnoreCase(run.agentName)) &&
+      q.status.forall(_ == statusToken(run.status)) &&
+      fromInstant.forall(from => !run.createdAt.isBefore(from)) &&
+      toInstant.forall(to => !run.createdAt.isAfter(to))
+    }
+
+  private def applyScope(runs: List[WorkspaceRun], scope: String): List[WorkspaceRun] =
+    scope match
+      case "recent" =>
+        runs.filter(run =>
+          run.status == RunStatus.Completed || run.status == RunStatus.Failed || run.status == RunStatus.Cancelled
+        )
+      case "all"    => runs
+      case _        =>
+        runs.filter(run => run.status == RunStatus.Pending || run.status.isInstanceOf[RunStatus.Running])
+
+  private def sortRuns(runs: List[WorkspaceRun], sortBy: String): List[WorkspaceRun] =
+    sortBy match
+      case "last_activity" =>
+        runs.sortBy(_.updatedAt)(Ordering[Instant].reverse)
+      case "duration"      =>
+        runs.sortBy { run =>
+          java.time.Duration.between(run.createdAt, run.updatedAt).getSeconds
+        }(Ordering[Long].reverse)
+      case _               =>
+        val active = runs.filter(run => run.status == RunStatus.Pending || run.status.isInstanceOf[RunStatus.Running])
+        val rest   = runs.filterNot(run => run.status == RunStatus.Pending || run.status.isInstanceOf[RunStatus.Running])
+        active.sortBy(_.createdAt)(Ordering[Instant].reverse) ++ rest.sortBy(_.createdAt)(Ordering[Instant].reverse)
+
 case class WorkspaceCreateRequest(
   name: String,
   localPath: String,
@@ -475,3 +619,27 @@ case class GitBranchView(
   aheadBehind: AheadBehind,
   baseBranch: String,
 ) derives JsonCodec
+
+case class RunDashboardRow(
+  runId: String,
+  workspaceId: String,
+  workspaceName: String,
+  issueRef: String,
+  agentName: String,
+  status: String,
+  conversationId: String,
+  createdAt: Instant,
+  updatedAt: Instant,
+  durationSeconds: Long,
+) derives JsonCodec
+
+final case class RunsDashboardQuery(
+  workspace: Option[String],
+  agent: Option[String],
+  status: Option[String],
+  scope: String,
+  sortBy: String,
+  dateFrom: Option[String],
+  dateTo: Option[String],
+  limit: Int,
+)

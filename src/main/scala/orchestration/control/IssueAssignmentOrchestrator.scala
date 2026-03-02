@@ -251,6 +251,7 @@ final private case class IssueAssignmentOrchestratorLive(
       tags = if i.tags.isEmpty then None else Some(i.tags.mkString(",")),
       contextPath = Option(i.contextPath).filter(_.nonEmpty),
       sourceFolder = Option(i.sourceFolder).filter(_.nonEmpty),
+      workspaceId = i.workspaceId,
       priority = priority,
       status = status,
       assignedAgent = assignedAgent,
