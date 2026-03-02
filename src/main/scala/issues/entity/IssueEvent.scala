@@ -57,3 +57,26 @@ object IssueEvent:
     reason: String,
     occurredAt: Instant,
   ) extends IssueEvent
+
+  final case class WorkspaceLinked(
+    issueId: IssueId,
+    workspaceId: String,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class WorkspaceUnlinked(
+    issueId: IssueId,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class TagsUpdated(
+    issueId: IssueId,
+    tags: List[String],
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class Reopened(
+    issueId: IssueId,
+    reopenedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent

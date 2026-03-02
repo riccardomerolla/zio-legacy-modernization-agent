@@ -1,6 +1,11 @@
 package shared.web
 
+import java.time.Instant
+
 import zio.test.*
+
+import config.entity.{ AgentInfo, AgentType }
+import issues.entity.api.{ AgentIssueView, IssuePriority, IssueStatus, IssueTemplate, TemplateVariable }
 
 object IssuesViewSpec extends ZIOSpecDefault:
 
@@ -34,6 +39,105 @@ object IssuesViewSpec extends ZIOSpecDefault:
         rendered.contains("Line one"),
         rendered.contains("Line <strong>two</strong>"),
         rendered.contains("<br"),
+      )
+    },
+    test("new form renders workspace selector") {
+      val html = IssuesView.newForm(
+        defaultRunId = None,
+        workspaces = List("ws-1" -> "Main Workspace", "ws-2" -> "Legacy Workspace"),
+        templates = List(
+          IssueTemplate(
+            id = "bug-fix",
+            name = "Bug Fix",
+            description = "Fix bugs",
+            issueType = "bug",
+            priority = IssuePriority.High,
+            tags = List("bug"),
+            titleTemplate = "Fix {{component}}",
+            descriptionTemplate = "Fix details",
+            variables = List(TemplateVariable("component", "Component")),
+            isBuiltin = true,
+          )
+        ),
+      )
+      assertTrue(
+        html.contains("Linked Workspace"),
+        html.contains("No workspace linked"),
+        html.contains("Main Workspace (ws-1)"),
+        html.contains("Template"),
+        html.contains("Bug Fix (built-in)"),
+        html.contains("issue-create-template-data"),
+      )
+    },
+    test("detail renders workspace badge and simplified assign when workspace linked") {
+      val now   = Instant.parse("2026-03-02T10:00:00Z")
+      val issue = AgentIssueView(
+        id = Some("123"),
+        title = "Linked issue",
+        description = "Task",
+        issueType = "task",
+        priority = IssuePriority.Medium,
+        status = IssueStatus.Open,
+        workspaceId = Some("ws-1"),
+        createdAt = now,
+        updatedAt = now,
+      )
+      val html  = IssuesView.detail(
+        issue = issue,
+        assignments = Nil,
+        availableAgents = List(
+          AgentInfo(
+            name = "agent-1",
+            handle = "agent-1",
+            displayName = "Agent One",
+            description = "desc",
+            agentType = AgentType.BuiltIn,
+            usesAI = true,
+            tags = List("code"),
+          )
+        ),
+        workspaces = List("ws-1" -> "Main Workspace"),
+      )
+      assertTrue(
+        html.contains("workspace:Main Workspace"),
+        html.contains("name=\"workspaceId\" value=\"ws-1\""),
+        !html.contains("No workspace linked"),
+      )
+    },
+    test("board renders kanban columns and board root metadata") {
+      val now   = Instant.parse("2026-03-02T10:00:00Z")
+      val issue = AgentIssueView(
+        id = Some("10"),
+        title = "Board issue",
+        description = "Task",
+        issueType = "task",
+        priority = IssuePriority.High,
+        status = IssueStatus.InProgress,
+        assignedAgent = Some("agent-1"),
+        workspaceId = Some("ws-1"),
+        createdAt = now,
+        updatedAt = now,
+      )
+      val html  = IssuesView.board(
+        issues = List(issue),
+        workspaces = List("ws-1" -> "Main Workspace"),
+        workspaceFilter = None,
+        agentFilter = None,
+        priorityFilter = None,
+        tagFilter = None,
+        query = None,
+      )
+      assertTrue(
+        html.contains("Issue Board"),
+        html.contains("issues-select-all-board"),
+        html.contains("Open"),
+        html.contains("Assigned"),
+        html.contains("In Progress"),
+        html.contains("Completed"),
+        html.contains("Failed"),
+        html.contains("issues-board-root"),
+        html.contains("data-drop-status=\"in_progress\""),
+        html.contains("issues-bulk-toolbar-board"),
       )
     },
   )

@@ -16,6 +16,7 @@ import orchestration.control.OrchestratorControlPlane
 import shared.web.StreamAbortRegistry
 import shared.web.ws.{ ClientMessage, ServerMessage, SubscriptionTopic }
 import workspace.control.{ GitWatcher, GitWatcherEvent, RunSessionManager }
+import workspace.entity.WorkspaceRepository
 
 trait WebSocketController:
   def routes: Routes[Any, Response]
@@ -27,7 +28,7 @@ object WebSocketController:
 
   val live
     : ZLayer[
-      ChannelRegistry & StreamAbortRegistry & HealthMonitor & OrchestratorControlPlane & ActivityHub & RunSessionManager & GitWatcher,
+      ChannelRegistry & StreamAbortRegistry & HealthMonitor & OrchestratorControlPlane & ActivityHub & RunSessionManager & GitWatcher & WorkspaceRepository,
       Nothing,
       WebSocketController,
     ] =
@@ -41,6 +42,7 @@ final case class WebSocketControllerLive(
   activityHub: ActivityHub,
   runSessionManager: RunSessionManager,
   gitWatcher: GitWatcher,
+  workspaceRepository: WorkspaceRepository,
 ) extends WebSocketController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -366,10 +368,18 @@ final case class WebSocketControllerLive(
           }
           .forkDaemon
       case SubscriptionTopic.DashboardRecentRuns          =>
-        withNow(ts =>
-          sendServerMessage(socket, ServerMessage.Error("unsupported_topic", s"Topic not wired yet: $topic", ts))
-        ) *>
-          ZIO.never.forkDaemon
+        ZStream
+          .repeatZIOWithSchedule(
+            fetchRecentRunsPayload,
+            Schedule.spaced(3.seconds),
+          )
+          .mapZIO(payload =>
+            withNow(ts =>
+              sendServerMessage(socket, ServerMessage.Event(topic, "dashboard-recent-runs", payload, ts))
+            )
+          )
+          .runDrain
+          .forkDaemon
 
   private def startChatSubscription(
     socket: zio.http.WebSocketChannel,
@@ -439,6 +449,13 @@ final case class WebSocketControllerLive(
 
   private def withNow(effect: Long => UIO[Unit]): UIO[Unit] =
     nowMillis.flatMap(effect)
+
+  private def fetchRecentRunsPayload: UIO[String] =
+    (for
+      workspaces <- workspaceRepository.list.mapError(_.toString)
+      runs       <- ZIO.foreach(workspaces)(ws => workspaceRepository.listRuns(ws.id).mapError(_.toString)).map(_.flatten)
+      sorted      = runs.sortBy(_.updatedAt)(Ordering[java.time.Instant].reverse).take(100)
+    yield sorted.toJson).catchAll(_ => ZIO.succeed("[]"))
 
   private def workspaceError(err: workspace.entity.WorkspaceError): String =
     err match

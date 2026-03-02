@@ -88,4 +88,26 @@ object WorkspacesViewSpec extends ZIOSpecDefault:
       val html = WorkspacesView.page(List(dockerWs), sampleAgents)
       assertTrue(html.contains("Docker") && html.contains("gemini:latest"))
     },
+    test("runsDashboardPage renders dashboard table and quick actions") {
+      val runningRun = sampleRun.copy(status = RunStatus.Running(workspace.entity.RunSessionMode.Autonomous))
+      val html       = WorkspacesView.runsDashboardPage(
+        runs = List(runningRun),
+        workspaceNameById = Map("ws-1" -> "my-api"),
+        workspaceFilter = None,
+        agentFilter = None,
+        statusFilter = None,
+        scopeFilter = "all",
+        sortBy = "created",
+        dateFrom = None,
+        dateTo = None,
+        limit = 50,
+      )
+      assertTrue(
+        html.contains("Run Status Dashboard"),
+        html.contains("Workspace"),
+        html.contains("Duration"),
+        html.contains("Last Activity"),
+        html.contains("View Changes"),
+      )
+    },
   )
