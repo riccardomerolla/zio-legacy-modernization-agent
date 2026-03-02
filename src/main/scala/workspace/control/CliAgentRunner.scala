@@ -61,6 +61,9 @@ object CliAgentRunner:
   /** Run argv as a subprocess, calling `onLine` for each line of output as it is produced. stderr is merged into stdout
     * via redirectErrorStream. Returns the exit code. Runs on ZIO's blocking thread pool. The process is forcibly
     * destroyed if the effect is interrupted or an error occurs.
+    *
+    * Uses `ZIO.attemptBlockingCancelable` for `readLine` so that fiber interruption immediately kills the process (via
+    * `destroyForcibly`) which unblocks the blocking read instead of waiting for the process to finish naturally.
     */
   def runProcessStreaming(argv: List[String], cwd: String, onLine: String => Task[Unit]): Task[Int] =
     ZIO.acquireReleaseWith(
@@ -73,9 +76,11 @@ object CliAgentRunner:
     )(process => ZIO.succeedBlocking(process.destroyForcibly()).ignore) { process =>
       val reader           = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream))
       def loop: Task[Unit] =
-        ZIO.attemptBlockingIO(Option(reader.readLine())).flatMap {
-          case None       => ZIO.unit
-          case Some(line) => onLine(line) *> loop
-        }
+        ZIO
+          .attemptBlockingCancelable(Option(reader.readLine()))(ZIO.succeedBlocking(process.destroyForcibly()).ignore)
+          .flatMap {
+            case None       => ZIO.unit
+            case Some(line) => onLine(line) *> loop
+          }
       loop *> ZIO.attemptBlockingIO(process.waitFor())
     }

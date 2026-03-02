@@ -59,6 +59,7 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
     def assign(wid: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
       ZIO.fail(WorkspaceError.NotFound(wid))
     def continueRun(runId: String, followUp: String): IO[WorkspaceError, Unit]       = ZIO.unit
+    def cancelRun(runId: String): IO[WorkspaceError, Unit]                           = ZIO.unit
 
   private object StubAgentRegistry extends AgentRegistry:
     def registerAgent(r: RegisterAgentRequest): UIO[AgentInfo]                  =

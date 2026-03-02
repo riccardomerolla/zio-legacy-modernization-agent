@@ -183,6 +183,17 @@ object WorkspacesController:
             .catchAll(ZIO.succeed)
         },
 
+      // Cancel run
+      Method.DELETE / "api" / "workspaces" / string("wsId") / "runs" / string("runId") ->
+        handler { (wsId: String, runId: String, _: Request) =>
+          runSvc.cancelRun(runId)
+            .as(Response(status = Status.NoContent))
+            .catchAll {
+              case WorkspaceError.NotFound(_) => ZIO.succeed(Response(status = Status.NotFound))
+              case other                      => ZIO.succeed(Response.internalServerError(other.toString))
+            }
+        },
+
       // Issue search — returns open/unassigned issues matching ?q= for the assign-run search dropdown
       Method.GET / "api" / "workspaces" / "issues" / "search" -> handler { (req: Request) =>
         val q = req.queryParam("q").map(_.trim.toLowerCase).filter(_.nonEmpty)

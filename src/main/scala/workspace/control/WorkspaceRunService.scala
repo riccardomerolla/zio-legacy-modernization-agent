@@ -16,12 +16,21 @@ case class AssignRunRequest(issueRef: String, prompt: String, agentName: String)
 trait WorkspaceRunService:
   def assign(workspaceId: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun]
   def continueRun(runId: String, followUpPrompt: String): IO[WorkspaceError, Unit]
+  def cancelRun(runId: String): IO[WorkspaceError, Unit]
 
 object WorkspaceRunService:
   val live: ZLayer[WorkspaceRepository & ChatRepository & IssueRepository, Nothing, WorkspaceRunService] =
-    ZLayer.fromFunction((repo: WorkspaceRepository, chat: ChatRepository, issueRepo: IssueRepository) =>
-      WorkspaceRunServiceLive(repo, chat, issueRepo)
-    )
+    ZLayer {
+      for
+        repo      <- ZIO.service[WorkspaceRepository]
+        chat      <- ZIO.service[ChatRepository]
+        issueRepo <- ZIO.service[IssueRepository]
+        registry  <- Ref.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+      yield WorkspaceRunServiceLive(repo, chat, issueRepo, fiberRegistry = registry)
+    }
+
+  def cancelRun(runId: String): ZIO[WorkspaceRunService, WorkspaceError, Unit] =
+    ZIO.serviceWithZIO[WorkspaceRunService](_.cancelRun(runId))
 
 object WorkspaceRunServiceLive:
   val defaultWorktreeAdd: (String, String, String) => IO[WorkspaceError, Unit] =
@@ -57,6 +66,13 @@ final case class WorkspaceRunServiceLive(
   worktreeRemove: String => Task[Unit] = WorkspaceRunServiceLive.defaultWorktreeRemove,
   // Injectable for testing: checks Docker availability
   dockerCheck: IO[WorkspaceError, Unit] = DockerSupport.requireDocker,
+  // Injectable for testing: replaces CliAgentRunner.runProcessStreaming; signature (argv, cwd, onLine) => exitCode
+  runCliAgent: (List[String], String, String => Task[Unit]) => Task[Int] = CliAgentRunner.runProcessStreaming,
+  // Tracks live run fibers by runId for cancellation; defaults to an empty registry
+  fiberRegistry: Ref[Map[String, Fiber[WorkspaceError, Unit]]] =
+    zio.Unsafe.unsafe(implicit u =>
+      Ref.unsafe.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+    ),
 ) extends WorkspaceRunService:
 
   override def assign(workspaceId: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
@@ -144,24 +160,42 @@ final case class WorkspaceRunServiceLive(
                     )
                   )
                   .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-      _      <- executeInFiber(run, ws.runMode, ws.cliTool, ws.localPath).forkDaemon
+      fiber  <- executeInFiber(run, ws.runMode, ws.cliTool, ws.localPath)
+                  .onExit {
+                    case Exit.Failure(c) if c.isInterruptedOnly =>
+                      (updateRunStatus(run.id, RunStatus.Cancelled) *>
+                        appendToConversation(run.conversationId, "Run cancelled by user.").ignore).ignore
+                    case _                                      => ZIO.unit
+                  }
+                  .ensuring(worktreeRemove(run.worktreePath).ignore *> fiberRegistry.update(_ - run.id))
+                  .forkDaemon
+      _      <- fiberRegistry.update(_ + (run.id -> fiber))
     yield run
 
   override def continueRun(runId: String, followUpPrompt: String): IO[WorkspaceError, Unit] =
     for
-      run <- wsRepo
-               .getRun(runId)
-               .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-               .flatMap(
-                 _.fold[IO[WorkspaceError, WorkspaceRun]](ZIO.fail(WorkspaceError.NotFound(runId)))(ZIO.succeed)
-               )
-      ws  <- wsRepo
-               .get(run.workspaceId)
-               .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
-               .flatMap(
-                 _.fold[IO[WorkspaceError, Workspace]](ZIO.fail(WorkspaceError.NotFound(run.workspaceId)))(ZIO.succeed)
-               )
-      _   <- executeInFiber(run.copy(prompt = followUpPrompt), ws.runMode, ws.cliTool, ws.localPath).forkDaemon
+      run   <- wsRepo
+                 .getRun(runId)
+                 .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+                 .flatMap(
+                   _.fold[IO[WorkspaceError, WorkspaceRun]](ZIO.fail(WorkspaceError.NotFound(runId)))(ZIO.succeed)
+                 )
+      ws    <- wsRepo
+                 .get(run.workspaceId)
+                 .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+                 .flatMap(
+                   _.fold[IO[WorkspaceError, Workspace]](ZIO.fail(WorkspaceError.NotFound(run.workspaceId)))(ZIO.succeed)
+                 )
+      fiber <- executeInFiber(run.copy(prompt = followUpPrompt), ws.runMode, ws.cliTool, ws.localPath)
+                 .onExit {
+                   case Exit.Failure(c) if c.isInterruptedOnly =>
+                     (updateRunStatus(run.id, RunStatus.Cancelled) *>
+                       appendToConversation(run.conversationId, "Run cancelled by user.").ignore).ignore
+                   case _                                      => ZIO.unit
+                 }
+                 .ensuring(worktreeRemove(run.worktreePath).ignore *> fiberRegistry.update(_ - run.id))
+                 .forkDaemon
+      _     <- fiberRegistry.update(_ + (run.id -> fiber))
     yield ()
 
   private def buildPrompt(
@@ -189,6 +223,12 @@ final case class WorkspaceRunServiceLive(
         Repository: $repoPath
         Working directory: $worktreePath"""
 
+  override def cancelRun(runId: String): IO[WorkspaceError, Unit] =
+    fiberRegistry.get.map(_.get(runId)).flatMap {
+      case None        => ZIO.fail(WorkspaceError.NotFound(runId))
+      case Some(fiber) => fiber.interrupt.unit
+    }
+
   private def updateRunStatus(runId: String, status: RunStatus): IO[WorkspaceError, Unit] =
     for
       now <- Clock.instant
@@ -205,16 +245,15 @@ final case class WorkspaceRunServiceLive(
       _        <- updateRunStatus(run.id, RunStatus.Running)
       _        <- ZIO.logInfo(s"[run:${run.id}] launching: $argvStr  (cwd=${run.worktreePath})")
       linesRef <- Ref.make(0)
-      exitOpt  <- CliAgentRunner
-                    .runProcessStreaming(
-                      argv,
-                      run.worktreePath,
-                      line =>
-                        linesRef.update(_ + 1) *>
-                          appendToConversation(run.conversationId, line)
-                            .tapError(e => ZIO.logWarning(s"[run:${run.id}] failed to persist line to chat: $e"))
-                            .ignore,
-                    )
+      exitOpt  <- runCliAgent(
+                    argv,
+                    run.worktreePath,
+                    line =>
+                      linesRef.update(_ + 1) *>
+                        appendToConversation(run.conversationId, line)
+                          .tapError(e => ZIO.logWarning(s"[run:${run.id}] failed to persist line to chat: $e"))
+                          .ignore,
+                  )
                     .timeout(java.time.Duration.ofSeconds(timeoutSeconds))
                     .mapError(e => WorkspaceError.WorktreeError(e.getMessage))
                     .tapError(e => ZIO.logError(s"[run:${run.id}] process error: $e"))
@@ -229,7 +268,6 @@ final case class WorkspaceRunServiceLive(
       status    = if exitOpt.isDefined && exitCode == 0 then RunStatus.Completed else RunStatus.Failed
       _        <- updateRunStatus(run.id, status)
       _        <- ZIO.logInfo(s"[run:${run.id}] status=$status")
-      _        <- worktreeRemove(run.worktreePath).ignore
     yield ()
 
   private def appendToConversation(conversationId: String, line: String): IO[WorkspaceError, Unit] =

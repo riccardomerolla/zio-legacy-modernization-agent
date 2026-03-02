@@ -24,6 +24,7 @@ object RunStatus:
   case object Running   extends RunStatus
   case object Completed extends RunStatus
   case object Failed    extends RunStatus
+  case object Cancelled extends RunStatus
 
 /** Read-side projection of the Workspace aggregate. Rebuilt by folding [[WorkspaceEvent]]s. Never persisted directly as
   * a mutable record — only as a snapshot cache for fast reads.

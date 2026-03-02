@@ -140,6 +140,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
       messages <- Ref.make(List.empty[String])
       wsMap    <- Ref.make(Map(ws.id -> ws))
       runMap   <- Ref.make(Map.empty[String, WorkspaceRun])
+      registry <- Ref.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
       chatRepo  = StubChatRepo(messages)
       wsRepo    = StubWorkspaceRepo(wsMap, runMap)
       svc       =
@@ -150,6 +151,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
           worktreeAdd = noopWorktreeAdd,
           worktreeRemove = noopWorktreeRemove,
           dockerCheck = dockerCheck,
+          fiberRegistry = registry,
         )
     yield (svc, wsRepo, messages)
 
@@ -210,6 +212,9 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
                       timeoutSeconds = 0,
                       worktreeAdd = noopWorktreeAdd,
                       worktreeRemove = noopWorktreeRemove,
+                      fiberRegistry = zio.Unsafe.unsafe(implicit u =>
+                        Ref.unsafe.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+                      ),
                     )
         req       = AssignRunRequest(issueRef = "#slow", prompt = "60", agentName = "sleep")
         _        <- svc.assign("ws-1", req).ignore
@@ -233,5 +238,40 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
       yield assertTrue(result match
         case Left(WorkspaceError.DockerNotAvailable(_)) => true
         case _                                          => false)
+    },
+    test("cancelRun on a running fiber returns unit and marks run Cancelled") {
+      // Use ZIO.never as the CLI runner so the fiber is always running and can be cleanly interrupted
+      val neverCliAgent: (List[String], String, String => Task[Unit]) => Task[Int] =
+        (_, _, _) => ZIO.never.as(0)
+      for
+        messages <- Ref.make(List.empty[String])
+        wsMap    <- Ref.make(Map("ws-1" -> sampleWs))
+        runMap   <- Ref.make(Map.empty[String, WorkspaceRun])
+        registry <- Ref.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+        wsRepo    = StubWorkspaceRepo(wsMap, runMap)
+        svc       = WorkspaceRunServiceLive(
+                      wsRepo,
+                      StubChatRepo(messages),
+                      StubIssueRepo,
+                      worktreeAdd = noopWorktreeAdd,
+                      worktreeRemove = noopWorktreeRemove,
+                      runCliAgent = neverCliAgent,
+                      fiberRegistry = registry,
+                    )
+        req      <- ZIO.succeed(AssignRunRequest(issueRef = "#cancel", prompt = "noop", agentName = "test-agent"))
+        run      <- svc.assign("ws-1", req)
+        _        <- ZIO.sleep(100.millis) // let fiber reach ZIO.never (interruptible point)
+        _        <- svc.cancelRun(run.id)
+        _        <- ZIO.sleep(100.millis) // let onExit finalizer persist Cancelled status
+        saved    <- wsRepo.getRun(run.id)
+      yield assertTrue(saved.exists(_.status == RunStatus.Cancelled))
+    } @@ TestAspect.withLiveClock,
+    test("cancelRun on unknown runId fails with NotFound") {
+      for
+        (svc, _, _) <- makeService()
+        result      <- svc.cancelRun("no-such-run").either
+      yield assertTrue(result match
+        case Left(WorkspaceError.NotFound("no-such-run")) => true
+        case _                                            => false)
     },
   )

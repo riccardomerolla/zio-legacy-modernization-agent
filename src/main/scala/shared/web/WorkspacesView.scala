@@ -341,9 +341,18 @@ object WorkspacesView:
         else statusBadge(run.status)
       ),
       td(cls := "px-3 py-2 text-sm")(
-        a(href := s"/chat/${run.conversationId}", cls := "text-indigo-400 hover:text-indigo-300 hover:underline")(
+        a(href := s"/chat/${run.conversationId}", cls := "text-indigo-400 hover:text-indigo-300 hover:underline mr-3")(
           "View Chat"
-        )
+        ),
+        if run.status == RunStatus.Running then
+          button(
+            cls                := "rounded px-2 py-0.5 text-xs font-semibold border border-rose-400/40 bg-rose-500/20 text-rose-300 hover:bg-rose-500/30",
+            attr("hx-delete")  := s"/api/workspaces/${run.workspaceId}/runs/${run.id}",
+            attr("hx-confirm") := "Stop this run?",
+            attr("hx-target")  := s"#run-row-${run.id}",
+            attr("hx-swap")    := "outerHTML",
+          )("Stop")
+        else frag(),
       ),
     )
 
@@ -353,6 +362,7 @@ object WorkspacesView:
       case RunStatus.Running   => ("Running", "border-blue-400/30 bg-blue-500/20 text-blue-200")
       case RunStatus.Completed => ("Completed", "border-emerald-400/30 bg-emerald-500/20 text-emerald-200")
       case RunStatus.Failed    => ("Failed", "border-rose-400/30 bg-rose-500/20 text-rose-200")
+      case RunStatus.Cancelled => ("Cancelled", "border-orange-400/30 bg-orange-500/20 text-orange-200")
     span(cls := s"rounded-full border px-2 py-0.5 text-xs font-semibold $colour")(label)
 
   private def assignForm(workspaceId: String, defaultAgent: Option[String], agents: List[AgentInfo]): Frag =
