@@ -19,6 +19,7 @@ class RunSessionControls {
     this.input = root.querySelector('[data-role="run-input"]');
     this.sendBtn = root.querySelector('[data-role="send"]');
     this.feedback = root.querySelector('[data-role="feedback"]');
+    this.isContinuationMode = false;
 
     this.modeBadge = document.getElementById(`run-mode-badge-${this.conversationId}`);
     this.attachedCounter = document.getElementById(`run-attached-count-${this.conversationId}`)?.querySelector('[data-role="count"]');
@@ -34,9 +35,13 @@ class RunSessionControls {
     this.detachBtn?.addEventListener('click', () => this.send({ DetachFromRun: { runId: this.runId } }));
     this.interruptBtn?.addEventListener('click', () => this.send({ InterruptRun: { runId: this.runId } }));
     this.continueBtn?.addEventListener('click', () => {
-      const prompt = (window.prompt(`Continue instructions for run ${this.runId}`) || '').trim();
-      if (!prompt) return;
-      this.send({ ContinueRun: { runId: this.runId, prompt } });
+      this.isContinuationMode = true;
+      this.render();
+      this.feedbackText('Enter continuation instructions, then press Send to Run.');
+      if (this.input) {
+        this.input.focus();
+        this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+      }
     });
     this.cancelBtn?.addEventListener('click', async () => {
       if (!window.confirm(`Cancel run ${this.runId}?`)) return;
@@ -56,7 +61,13 @@ class RunSessionControls {
       event.preventDefault();
       const content = (this.input?.value || '').trim();
       if (!content) return;
-      this.send({ SendRunMessage: { runId: this.runId, content } });
+      if (this.isContinuationMode) {
+        this.send({ ContinueRun: { runId: this.runId, prompt: content } });
+        this.isContinuationMode = false;
+        if (this.input) this.input.value = '';
+      } else {
+        this.send({ SendRunMessage: { runId: this.runId, content } });
+      }
     });
 
     this.input?.addEventListener('keydown', (event) => {
@@ -113,6 +124,9 @@ class RunSessionControls {
       }
       this.feedbackText(`State changed: ${this.humanState(next)}.`);
       this.addSystemMessage(`Run state changed to ${this.humanState(next)}.`);
+      if (next === 'running:interactive' || next === 'running:autonomous' || next === 'pending') {
+        this.isContinuationMode = false;
+      }
       this.render();
       return;
     }
@@ -189,6 +203,13 @@ class RunSessionControls {
     const interactive = this.state === 'running:interactive' || this.state === 'running:paused';
     const canContinue = this.state === 'running:paused' || this.state === 'completed' || this.state === 'failed' || this.state === 'cancelled';
     const isRunning = this.state.startsWith('running:');
+    const inputEnabled = (interactive && this.isAttached) || (canContinue && this.isContinuationMode);
+    const inputPlaceholder = this.isContinuationMode
+      ? 'Enter continuation instructions...'
+      : (inputEnabled ? 'Send instructions to the active run...' : 'Attach to interact');
+    const inputTitle = this.isContinuationMode
+      ? 'Send continuation instructions to start a new continuation run'
+      : (inputEnabled ? 'Send follow-up instructions to this run' : 'Attach to interact');
 
     this.attachBtn?.classList.toggle('hidden', this.isAttached);
     this.detachBtn?.classList.toggle('hidden', !this.isAttached);
@@ -196,11 +217,11 @@ class RunSessionControls {
     this.continueBtn?.classList.toggle('hidden', !canContinue);
 
     if (this.input) {
-      this.input.disabled = !(interactive && this.isAttached);
-      this.input.placeholder = this.input.disabled ? 'Attach to interact' : 'Send instructions to the active run...';
-      this.input.title = this.input.disabled ? 'Attach to interact' : 'Send follow-up instructions to this run';
+      this.input.disabled = !inputEnabled;
+      this.input.placeholder = inputPlaceholder;
+      this.input.title = inputTitle;
     }
-    if (this.sendBtn) this.sendBtn.disabled = !(interactive && this.isAttached);
+    if (this.sendBtn) this.sendBtn.disabled = !inputEnabled;
 
     if (this.modeBadge) {
       this.modeBadge.textContent = this.humanState(this.state);

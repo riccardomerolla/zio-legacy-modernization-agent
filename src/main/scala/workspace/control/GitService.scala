@@ -167,7 +167,7 @@ final case class GitServiceLive() extends GitService:
 
   override def status(repoPath: String): IO[GitError, GitStatus] =
     ensureRepo(repoPath) *>
-      runGit(repoPath, "status", "--porcelain=v2", "--branch")
+      runGit(repoPath, "status", "--porcelain=v2", "--branch", "--untracked-files=all")
         .flatMap(raw => ZIO.fromEither(GitParsers.parseStatusPorcelain(raw)))
 
   override def diff(repoPath: String, staged: Boolean = false): IO[GitError, GitDiff] =

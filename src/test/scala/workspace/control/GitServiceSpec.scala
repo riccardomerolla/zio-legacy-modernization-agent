@@ -17,6 +17,7 @@ object GitServiceSpec extends ZIOSpecDefault:
         "1 .M N... 100644 100644 100644 abcdef abcdef src/main/scala/Bar.scala",
         "2 R. N... 100644 100644 100644 abcdef abcdef R100 src/main/scala/New.scala\tsrc/main/scala/Old.scala",
         "? README.md",
+        "? src/main.rs",
       ).mkString("\n")
 
       val parsed = GitParsers.parseStatusPorcelain(raw)
@@ -32,7 +33,7 @@ object GitServiceSpec extends ZIOSpecDefault:
         parsed.exists(_.staged.exists(fc =>
           fc.path == "src/main/scala/New.scala" && fc.status == ChangeStatus.Renamed
         )),
-        parsed.exists(_.untracked == List("README.md")),
+        parsed.exists(_.untracked == List("README.md", "src/main.rs")),
       )
     },
     test("parseDiffNumStat handles numeric and binary lines") {

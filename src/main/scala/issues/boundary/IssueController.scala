@@ -427,14 +427,26 @@ final case class IssueControllerLive(
         yield Response.json(response.toJson)
       }
     },
-    Method.GET / "api" / "issues" / "import" / "folder" / "preview"  -> handler { (_: Request) =>
+    Method.POST / "api" / "issues" / "import" / "folder" / "preview" -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
-        previewIssuesFromConfiguredFolder.map(items => Response.json(items.toJson))
+        for
+          body    <- req.body.asString.mapError(err => PersistenceError.QueryFailed("request_body", err.getMessage))
+          request <- ZIO
+                       .fromEither(body.fromJson[FolderImportRequest])
+                       .mapError(err => PersistenceError.QueryFailed("json_parse", err))
+          items   <- previewIssuesFromFolder(request)
+        yield Response.json(items.toJson)
       }
     },
-    Method.POST / "api" / "issues" / "import" / "folder"             -> handler { (_: Request) =>
+    Method.POST / "api" / "issues" / "import" / "folder"             -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
-        importIssuesFromConfiguredFolderDetailed.map(result => Response.json(result.toJson))
+        for
+          body    <- req.body.asString.mapError(err => PersistenceError.QueryFailed("request_body", err.getMessage))
+          request <- ZIO
+                       .fromEither(body.fromJson[FolderImportRequest])
+                       .mapError(err => PersistenceError.QueryFailed("json_parse", err))
+          result  <- importIssuesFromFolderDetailed(request)
+        yield Response.json(result.toJson)
       }
     },
     Method.POST / "api" / "issues" / "import" / "github" / "preview" -> handler { (req: Request) =>
@@ -1556,9 +1568,9 @@ final case class IssueControllerLive(
       )
     )
 
-  private def previewIssuesFromConfiguredFolder: IO[PersistenceError, List[FolderImportPreviewItem]] =
+  private def previewIssuesFromFolder(request: FolderImportRequest): IO[PersistenceError, List[FolderImportPreviewItem]] =
     for
-      files <- issueImportMarkdownFiles
+      files <- issueImportMarkdownFiles(request.folder)
       now   <- Clock.instant
       items <- ZIO.foreach(files) { file =>
                  for
@@ -1575,9 +1587,11 @@ final case class IssueControllerLive(
                }
     yield items
 
-  private def importIssuesFromConfiguredFolderDetailed: IO[PersistenceError, BulkIssueOperationResponse] =
+  private def importIssuesFromFolderDetailed(
+    request: FolderImportRequest
+  ): IO[PersistenceError, BulkIssueOperationResponse] =
     for
-      files   <- issueImportMarkdownFiles
+      files   <- issueImportMarkdownFiles(request.folder)
       results <- ZIO.foreach(files) { file =>
                    (for
                      now      <- Clock.instant
@@ -1590,7 +1604,13 @@ final case class IssueControllerLive(
                  }
     yield toBulkResponse(files.size, results)
 
-  private def issueImportMarkdownFiles: IO[PersistenceError, List[Path]] =
+  private def importIssuesFromConfiguredFolderDetailed: IO[PersistenceError, BulkIssueOperationResponse] =
+    for
+      configuredFolder <- issueImportFolderFromSettings
+      result           <- importIssuesFromFolderDetailed(FolderImportRequest(configuredFolder))
+    yield result
+
+  private def issueImportFolderFromSettings: IO[PersistenceError, String] =
     for
       setting <-
         taskRepository
@@ -1600,9 +1620,16 @@ final case class IssueControllerLive(
               .fromOption(opt.map(_.value.trim).filter(_.nonEmpty))
               .orElseFail(PersistenceError.QueryFailed("settings", "'issues.importFolder' is empty or missing"))
           )
-      folder  <- ZIO
-                   .attempt(Paths.get(setting))
-                   .mapError(e => PersistenceError.QueryFailed("issues.importFolder", e.getMessage))
+    yield setting
+
+  private def issueImportMarkdownFiles(folderSetting: String): IO[PersistenceError, List[Path]] =
+    for
+      folderPath <- ZIO
+                      .fromOption(Option(folderSetting).map(_.trim).filter(_.nonEmpty))
+                      .orElseFail(PersistenceError.QueryFailed("folder", "Folder path is required"))
+      folder     <- ZIO
+                      .attempt(Paths.get(folderPath))
+                      .mapError(e => PersistenceError.QueryFailed("folder", e.getMessage))
       files   <- ZIO
                    .attemptBlocking {
                      if !Files.exists(folder) then List.empty[Path]
@@ -1616,7 +1643,7 @@ final case class IssueControllerLive(
                          )
                          .toList
                    }
-                   .mapError(e => PersistenceError.QueryFailed("issues.importFolder", e.getMessage))
+                   .mapError(e => PersistenceError.QueryFailed("folder", e.getMessage))
     yield files
 
   private def previewGitHubIssues(request: GitHubImportPreviewRequest)

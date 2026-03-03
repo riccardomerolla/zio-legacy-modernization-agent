@@ -60,6 +60,8 @@ object ChatViewSpec extends ZIOSpecDefault:
         html.contains("Files Changed"),
         html.contains("Commit Log"),
         html.contains("Branch Info"),
+        html.contains("Apply to repo"),
+        html.contains("/api/workspaces/ws-1/runs/run-42/apply"),
         html.contains("runs:run-42:git"),
         html.contains("/api/workspaces/ws-1/runs/run-42/git/status"),
         html.contains("Previous run"),

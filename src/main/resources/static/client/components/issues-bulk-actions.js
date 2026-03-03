@@ -99,18 +99,27 @@ async function runImportAction(scope, action) {
   try {
     const output = previewNode(scope);
     if (!output) return;
+    const folder = document.querySelector(`[data-import-folder="${scope}"]`)?.value?.trim() || '';
 
     if (action === 'folder-preview') {
+      if (!folder) {
+        setProgress(scope, 'Folder path is required.', true);
+        return;
+      }
       setProgress(scope, 'Loading folder preview...');
-      const result = await callJson('/api/issues/import/folder/preview', 'GET');
+      const result = await callJson('/api/issues/import/folder/preview', 'POST', { folder });
       output.textContent = JSON.stringify(result, null, 2);
       setProgress(scope, `Preview loaded: ${result.length} item(s).`);
       return;
     }
 
     if (action === 'folder-import') {
+      if (!folder) {
+        setProgress(scope, 'Folder path is required.', true);
+        return;
+      }
       setProgress(scope, 'Importing folder issues...');
-      const result = await callJson('/api/issues/import/folder', 'POST');
+      const result = await callJson('/api/issues/import/folder', 'POST', { folder });
       output.textContent = JSON.stringify(result, null, 2);
       setProgress(scope, `Folder import completed: ${result.succeeded}/${result.requested}.`);
       window.location.reload();

@@ -29,7 +29,7 @@ object CliAgentRunner:
     */
   private def buildArgvForHost(cliTool: String, prompt: String, repoPath: String): List[String] =
     cliTool match
-      case "gemini"   => List("gemini", "--include-directories", repoPath, "-p", prompt)
+      case "gemini"   => List("gemini", "--yolo", "--include-directories", repoPath, "-p", prompt)
       case "opencode" => List("opencode", "run", "--prompt", prompt)
       case "claude"   => List("claude", "--print", prompt)
       case "codex"    => List("codex", prompt)
@@ -42,7 +42,7 @@ object CliAgentRunner:
     */
   private def buildInteractiveArgvForHost(cliTool: String, repoPath: String): List[String] =
     cliTool match
-      case "gemini"   => List("gemini", "--include-directories", repoPath)
+      case "gemini"   => List("gemini", "--yolo", "--include-directories", repoPath)
       case "claude"   => List("claude")
       case "codex"    => List("codex")
       case "opencode" => List("opencode", "run")
@@ -62,12 +62,15 @@ object CliAgentRunner:
     dockerMemoryLimit: Option[String] = None,
     dockerCpuLimit: Option[String] = None,
   ): List[String] =
-    val effectiveRepoPath = if repoPath.nonEmpty then repoPath else worktreePath
+    val effectiveIncludePath =
+      if cliTool == "gemini" then worktreePath
+      else if repoPath.nonEmpty then repoPath
+      else worktreePath
     runMode match
       case RunMode.Host                                             =>
-        buildArgvForHost(cliTool, prompt, effectiveRepoPath)
+        buildArgvForHost(cliTool, prompt, effectiveIncludePath)
       case RunMode.Docker(image, extraArgs, mountWorktree, network) =>
-        val innerArgv     = buildArgvForHost(cliTool, prompt, effectiveRepoPath)
+        val innerArgv     = buildArgvForHost(cliTool, prompt, effectiveIncludePath)
         val mountFlags    = if mountWorktree then List("-v", s"$worktreePath:/workspace", "--workdir", "/workspace")
         else List.empty
         val networkFlags  = network.map(n => List("--network", n)).getOrElse(List.empty)
@@ -94,12 +97,15 @@ object CliAgentRunner:
     runMode: RunMode = RunMode.Host,
     repoPath: String = "",
   ): List[String] =
-    val effectiveRepoPath = if repoPath.nonEmpty then repoPath else worktreePath
+    val effectiveIncludePath =
+      if cliTool == "gemini" then worktreePath
+      else if repoPath.nonEmpty then repoPath
+      else worktreePath
     runMode match
       case RunMode.Host                                             =>
-        buildInteractiveArgvForHost(cliTool, effectiveRepoPath)
+        buildInteractiveArgvForHost(cliTool, effectiveIncludePath)
       case RunMode.Docker(image, extraArgs, mountWorktree, network) =>
-        val innerArgv    = buildInteractiveArgvForHost(cliTool, effectiveRepoPath)
+        val innerArgv    = buildInteractiveArgvForHost(cliTool, effectiveIncludePath)
         val mountFlags   = if mountWorktree then List("-v", s"$worktreePath:/workspace", "--workdir", "/workspace")
         else List.empty
         val networkFlags = network.map(n => List("--network", n)).getOrElse(List.empty)

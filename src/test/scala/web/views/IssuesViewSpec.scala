@@ -69,6 +69,31 @@ object IssuesViewSpec extends ZIOSpecDefault:
         html.contains("issue-create-template-data"),
       )
     },
+    test("list renders folder import controls and no legacy markdown import button") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.list(
+        runId = None,
+        issues = List(
+          AgentIssueView(
+            id = Some("1"),
+            title = "Sample issue",
+            description = "Sample",
+            issueType = "task",
+            createdAt = now,
+            updatedAt = now,
+          )
+        ),
+        statusFilter = None,
+        query = None,
+        tagFilter = None,
+      )
+      assertTrue(
+        html.contains("Import Preview"),
+        html.contains("data-import-folder=\"list\""),
+        html.contains("/path/to/issues-folder"),
+        !html.contains(">Import markdown<"),
+      )
+    },
     test("detail renders workspace badge and simplified assign when workspace linked") {
       val now   = Instant.parse("2026-03-02T10:00:00Z")
       val issue = AgentIssueView(

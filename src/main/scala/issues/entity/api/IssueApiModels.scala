@@ -222,6 +222,10 @@ case class FolderImportPreviewItem(
   priority: String,
 ) derives JsonCodec
 
+case class FolderImportRequest(
+  folder: String
+) derives JsonCodec
+
 case class GitHubImportPreviewRequest(
   repo: String,
   state: String = "open",

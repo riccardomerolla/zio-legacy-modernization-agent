@@ -312,12 +312,19 @@ final case class WorkspaceRunServiceLive(
     repoPath: String,
     worktreePath: String,
   ): String =
+    val directoryGuardrail =
+      s"""Execution constraints:
+         |- You MUST create/modify/delete files ONLY under: $worktreePath
+         |- Do NOT write to: $repoPath
+         |- If an absolute path is needed, always use the working directory path above.
+         |""".stripMargin
     issue match
       case None    =>
         // No issue record found; fall back to the raw title from the UI
         s"""Issue: ${req.issueRef}
            |Task: ${req.prompt}
            |
+           |$directoryGuardrail
            |Repository: $repoPath
            |Working directory: $worktreePath""".stripMargin
       case Some(i) =>
@@ -328,6 +335,7 @@ final case class WorkspaceRunServiceLive(
           }${
             if i.sourceFolder.nonEmpty then s"\nSource folder: ${i.sourceFolder}" else ""
           }
+        $directoryGuardrail
         Repository: $repoPath
         Working directory: $worktreePath"""
 

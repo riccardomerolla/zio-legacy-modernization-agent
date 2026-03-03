@@ -12,13 +12,13 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
       val argv = CliAgentRunner.buildArgv("echo", "hello world", "/tmp/wt")
       assertTrue(argv == List("echo", "hello world"))
     },
-    test("buildArgv for gemini returns correct args (includes --include-directories)") {
+    test("buildArgv for gemini returns correct args (includes --yolo and --include-directories)") {
       val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt")
-      assertTrue(argv == List("gemini", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
+      assertTrue(argv == List("gemini", "--yolo", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
     },
-    test("buildArgv for gemini passes explicit repoPath to --include-directories") {
+    test("buildArgv for gemini ignores explicit repoPath and uses worktree for --include-directories") {
       val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt", RunMode.Host, "/repo/src")
-      assertTrue(argv == List("gemini", "--include-directories", "/repo/src", "-p", "fix the bug"))
+      assertTrue(argv == List("gemini", "--yolo", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
     },
     test("buildArgv for opencode returns correct args") {
       val argv = CliAgentRunner.buildArgv("opencode", "fix the bug", "/tmp/wt")
@@ -74,6 +74,7 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
           "/workspace",
           "gemini:latest",
           "gemini",
+          "--yolo",
           "--include-directories",
           "/tmp/wt",
           "-p",
@@ -98,6 +99,10 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
         RunMode.Docker("gemini:latest", Nil, mountWorktree = false, None),
       )
       assertTrue(!argv.contains("-v") && !argv.contains("--workdir"))
+    },
+    test("buildInteractiveArgv for gemini includes --yolo and --include-directories") {
+      val argv = CliAgentRunner.buildInteractiveArgv("gemini", "/tmp/wt")
+      assertTrue(argv == List("gemini", "--yolo", "--include-directories", "/tmp/wt"))
     },
     test("buildArgv with RunMode.Docker includes env and resource flags") {
       val argv = CliAgentRunner.buildArgv(

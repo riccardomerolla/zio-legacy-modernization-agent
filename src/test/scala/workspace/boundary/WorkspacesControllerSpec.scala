@@ -282,6 +282,16 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
         body   <- resp.body.asString
       yield assertTrue(resp.status == Status.Ok && body.contains("\"ahead\":3") && body.contains("\"behind\":1"))
     },
+    test("POST apply endpoint rejects active runs") {
+      for
+        wsRef  <- Ref.make(Map("ws-1" -> sampleWs))
+        runRef <- Ref.make(Map("run-1" -> sampleRun))
+        routes  = makeRoutes(wsRef, runRef)
+        req     = Request.post(URL(Path.decode("/api/workspaces/ws-1/runs/run-1/apply")), Body.empty)
+        resp   <- routes.runZIO(req)
+        body   <- resp.body.asString
+      yield assertTrue(resp.status == Status.Conflict && body.contains("Run is still active"))
+    },
     test("GET git file diff endpoint rejects invalid file path") {
       for
         wsRef  <- Ref.make(Map("ws-1" -> sampleWs))

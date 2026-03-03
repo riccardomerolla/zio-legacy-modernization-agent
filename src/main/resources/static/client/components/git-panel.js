@@ -8,6 +8,7 @@ class GitPanel {
     this.diffEndpoint = root?.dataset?.diffEndpoint || '';
     this.logEndpoint = root?.dataset?.logEndpoint || '';
     this.branchEndpoint = root?.dataset?.branchEndpoint || '';
+    this.applyEndpoint = root?.dataset?.applyEndpoint || '';
 
     this.summaryEl = root.querySelector('[data-role="summary"]');
     this.filesGroupsEl = root.querySelector('[data-role="files-groups"]');
@@ -16,6 +17,8 @@ class GitPanel {
     this.diffContentEl = root.querySelector('[data-role="diff-content"]');
     this.branchCurrentEl = root.querySelector('[data-role="branch-current"]');
     this.aheadBehindEl = root.querySelector('[data-role="ahead-behind"]');
+    this.applyButtonEl = root.querySelector('[data-role="apply-button"]');
+    this.applyFeedbackEl = root.querySelector('[data-role="apply-feedback"]');
     this.commitLogEl = root.querySelector('[data-role="commit-log"]');
 
     this.ws = null;
@@ -43,6 +46,7 @@ class GitPanel {
     this.diffContentEl?.addEventListener('htmx:afterSwap', () => {
       this.renderDiffText(this.diffContentEl.textContent || '');
     });
+    this.applyButtonEl?.addEventListener('click', () => this.applyToRepo());
 
     window.addEventListener('beforeunload', () => this.disconnectWs());
   }
@@ -249,23 +253,14 @@ class GitPanel {
     this.diffContentEl.textContent = 'Loading diff...';
 
     const url = `${this.diffEndpoint}/${encodeURIComponent(path)}`;
-    if (window.htmx?.ajax) {
-      Promise.resolve(window.htmx.ajax('GET', url, {
-        target: this.diffContentEl,
-        swap: 'innerHTML',
-      })).then(() => {
-        this.renderDiffText(this.diffContentEl.textContent || '');
+    fetch(url)
+      .then((response) => response.ok ? response.text() : Promise.reject(new Error('Failed to load diff')))
+      .then((text) => {
+        this.renderDiffText(text);
+      })
+      .catch(() => {
+        this.diffContentEl.textContent = 'Unable to load diff.';
       });
-    } else {
-      fetch(url)
-        .then((response) => response.ok ? response.text() : Promise.reject(new Error('Failed to load diff')))
-        .then((text) => {
-          this.renderDiffText(text);
-        })
-        .catch(() => {
-          this.diffContentEl.textContent = 'Unable to load diff.';
-        });
-    }
   }
 
   renderDiffText(rawDiff) {
@@ -282,28 +277,41 @@ class GitPanel {
             oldNo = Number(match[1]);
             newNo = Number(match[2]);
           }
-          return `<div class="git-diff-line"><span class="line-no"></span><span class="text-amber-200">${this.escapeHtml(line)}</span></div>`;
+          return `<div class="git-diff-line git-diff-hunk"><span class="line-no old"></span><span class="line-no new"></span><span class="code">${this.escapeHtml(line)}</span></div>`;
         }
 
-        let cls = 'git-diff-line';
-        let displayNo = '';
+        const isMeta =
+          line.startsWith('diff --git') ||
+          line.startsWith('index ') ||
+          line.startsWith('--- ') ||
+          line.startsWith('+++ ') ||
+          line.startsWith('new file mode ') ||
+          line.startsWith('deleted file mode ');
+        if (isMeta) {
+          return `<div class="git-diff-line git-diff-meta"><span class="line-no old"></span><span class="line-no new"></span><span class="code">${this.escapeHtml(line)}</span></div>`;
+        }
+
+        let cls = 'git-diff-line git-diff-context';
+        let oldDisplay = '';
+        let newDisplay = '';
         if (line.startsWith('+') && !line.startsWith('+++')) {
-          cls += ' added';
-          displayNo = String(newNo || '');
+          cls = 'git-diff-line git-diff-added';
+          newDisplay = String(newNo || '');
           newNo += 1;
         } else if (line.startsWith('-') && !line.startsWith('---')) {
-          cls += ' deleted';
-          displayNo = String(oldNo || '');
+          cls = 'git-diff-line git-diff-deleted';
+          oldDisplay = String(oldNo || '');
           oldNo += 1;
         } else {
-          if (!line.startsWith('diff --git') && !line.startsWith('index ') && !line.startsWith('---') && !line.startsWith('+++')) {
-            displayNo = oldNo > 0 ? String(oldNo) : '';
-            oldNo += oldNo > 0 ? 1 : 0;
-            newNo += newNo > 0 ? 1 : 0;
+          if (oldNo > 0 || newNo > 0) {
+            oldDisplay = oldNo > 0 ? String(oldNo) : '';
+            newDisplay = newNo > 0 ? String(newNo) : '';
+            if (oldNo > 0) oldNo += 1;
+            if (newNo > 0) newNo += 1;
           }
         }
 
-        return `<div class="${cls}"><span class="line-no">${displayNo}</span><span>${this.escapeHtml(line)}</span></div>`;
+        return `<div class="${cls}"><span class="line-no old">${oldDisplay}</span><span class="line-no new">${newDisplay}</span><span class="code">${this.escapeHtml(line)}</span></div>`;
       })
       .join('');
 
@@ -357,6 +365,53 @@ class GitPanel {
     } catch (_ignored) {
       return null;
     }
+  }
+
+  async applyToRepo() {
+    if (!this.applyEndpoint || !this.applyButtonEl) return;
+    if (!window.confirm('Apply this run branch to the workspace repository?')) return;
+
+    const button = this.applyButtonEl;
+    const prevText = button.textContent || 'Apply to repo';
+    button.disabled = true;
+    button.textContent = 'Applying...';
+    this.setApplyFeedback('Applying run branch to repository...', false);
+
+    try {
+      const response = await fetch(this.applyEndpoint, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      });
+      const text = await response.text();
+      let payload = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch (_ignored) {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        const message = payload?.message || text || 'Apply failed.';
+        this.setApplyFeedback(message, true);
+        return;
+      }
+
+      const message = payload?.message || 'Applied successfully.';
+      this.setApplyFeedback(message, false);
+      await this.refreshFiles(true);
+      await this.refreshBranchAndCommits();
+    } catch (_err) {
+      this.setApplyFeedback('Apply failed: network error.', true);
+    } finally {
+      button.disabled = false;
+      button.textContent = prevText;
+    }
+  }
+
+  setApplyFeedback(message, isError) {
+    if (!this.applyFeedbackEl) return;
+    this.applyFeedbackEl.textContent = message || '';
+    this.applyFeedbackEl.className = isError ? 'text-xs text-rose-300' : 'text-xs text-emerald-300';
   }
 
   truncate(text, max) {

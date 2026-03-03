@@ -464,6 +464,7 @@ object ChatView:
       attr("data-diff-endpoint")   := s"$basePath/diff",
       attr("data-log-endpoint")    := s"$basePath/log",
       attr("data-branch-endpoint") := s"$basePath/branch",
+      attr("data-apply-endpoint")  := s"/api/workspaces/${meta.workspaceId}/runs/${meta.runId}/apply",
       attr("data-topic")           := s"runs:${meta.runId}:git",
     )(
       tag("summary")(
@@ -502,6 +503,14 @@ object ChatView:
             h3(cls := "text-sm font-semibold text-gray-100")("Branch Info"),
             div(cls := "text-xs text-gray-300", attr("data-role") := "branch-current")("Loading branch..."),
             div(cls := "text-xs text-gray-400", attr("data-role") := "ahead-behind")(),
+            div(cls := "pt-1")(
+              button(
+                `type`               := "button",
+                cls                  := "rounded bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500",
+                attr("data-role")    := "apply-button",
+              )("Apply to repo")
+            ),
+            div(cls := "text-xs text-gray-400", attr("data-role") := "apply-feedback")(),
             div(
               cls               := "text-xs text-gray-400",
               attr("data-role") := "run-status",
@@ -522,25 +531,54 @@ object ChatView:
       raw("""
       .git-diff-lines {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        color: #e5e7eb;
       }
       .git-diff-line {
         display: grid;
-        grid-template-columns: 3.5rem 1fr;
-        gap: 0.75rem;
-        padding: 0.15rem 0.35rem;
+        grid-template-columns: 3.2rem 3.2rem 1fr;
+        gap: 0.65rem;
+        padding: 0.17rem 0.45rem;
         border-radius: 0.25rem;
         white-space: pre;
+        color: #e5e7eb;
       }
       .git-diff-line .line-no {
         color: #9ca3af;
         text-align: right;
         user-select: none;
       }
-      .git-diff-line.added {
-        background: rgba(16, 185, 129, 0.18);
+      .git-diff-line .line-no.new {
+        color: #93c5fd;
       }
-      .git-diff-line.deleted {
-        background: rgba(244, 63, 94, 0.2);
+      .git-diff-line .code {
+        color: #e5e7eb;
+      }
+      .git-diff-meta {
+        background: rgba(71, 85, 105, 0.25);
+      }
+      .git-diff-meta .code {
+        color: #cbd5e1;
+      }
+      .git-diff-hunk {
+        background: rgba(79, 70, 229, 0.22);
+      }
+      .git-diff-hunk .code {
+        color: #c7d2fe;
+      }
+      .git-diff-added {
+        background: rgba(16, 185, 129, 0.19);
+      }
+      .git-diff-added .code {
+        color: #bbf7d0;
+      }
+      .git-diff-deleted {
+        background: rgba(244, 63, 94, 0.22);
+      }
+      .git-diff-deleted .code {
+        color: #fecdd3;
+      }
+      .git-diff-context {
+        background: rgba(15, 23, 42, 0.45);
       }
       .git-file-row.flash {
         animation: git-flash 1.2s ease-out;
