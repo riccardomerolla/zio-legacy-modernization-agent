@@ -94,6 +94,7 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
             description = "replace row mapping with ADT",
             issueType = "refactor",
             priority = "high",
+            requiredCapabilities = List("scala", "refactoring"),
             state = IssueState.Assigned(Ids.AgentId("agent-1"), createdAt),
             tags = List("event-sourcing", "phase1"),
             contextPath = "src/main/scala/db",

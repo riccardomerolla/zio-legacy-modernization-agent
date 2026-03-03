@@ -74,11 +74,15 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
     def getRun(id: String): IO[shared.errors.PersistenceError, Option[WorkspaceRun]]  = runRef.get.map(_.get(id))
 
   private class StubRunService extends WorkspaceRunService:
-    def assign(wid: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun]   =
+    def assign(wid: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
       ZIO.fail(WorkspaceError.NotFound(wid))
-    def continueRun(runId: String, followUp: String): IO[WorkspaceError, WorkspaceRun] =
+    def continueRun(
+      runId: String,
+      followUp: String,
+      agentNameOverride: Option[String],
+    ): IO[WorkspaceError, WorkspaceRun] =
       ZIO.fail(WorkspaceError.NotFound(runId))
-    def cancelRun(runId: String): IO[WorkspaceError, Unit]                             = ZIO.unit
+    def cancelRun(runId: String): IO[WorkspaceError, Unit]                           = ZIO.unit
 
   private object StubAgentRegistry extends AgentRegistry:
     def registerAgent(r: RegisterAgentRequest): UIO[AgentInfo]                  =

@@ -206,6 +206,9 @@ final private case class IssueAssignmentOrchestratorLive(
        |Issue type: ${issue.issueType}
        |Priority: ${issue.priority}
        |Tags: ${if issue.tags.isEmpty then "none" else issue.tags.mkString(", ")}
+       |Required capabilities: ${
+        if issue.requiredCapabilities.isEmpty then "none" else issue.requiredCapabilities.mkString(", ")
+      }
        |Context path: ${if issue.contextPath.isEmpty then "none" else issue.contextPath}
        |Source folder: ${if issue.sourceFolder.isEmpty then "none" else issue.sourceFolder}
        |
@@ -249,6 +252,8 @@ final private case class IssueAssignmentOrchestratorLive(
       description = i.description,
       issueType = i.issueType,
       tags = if i.tags.isEmpty then None else Some(i.tags.mkString(",")),
+      requiredCapabilities =
+        if i.requiredCapabilities.isEmpty then None else Some(i.requiredCapabilities.mkString(",")),
       contextPath = Option(i.contextPath).filter(_.nonEmpty),
       sourceFolder = Option(i.sourceFolder).filter(_.nonEmpty),
       workspaceId = i.workspaceId,

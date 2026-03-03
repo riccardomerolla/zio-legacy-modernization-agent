@@ -70,6 +70,23 @@ object DashboardView:
           recentRunsContent(runs.take(10))
         ),
       ),
+      div(cls := "mt-6 rounded-lg bg-white/5 ring-1 ring-white/10 p-4")(
+        div(cls := "flex items-center justify-between gap-3")(
+          div(
+            h3(cls := "text-sm font-semibold text-white")("Agent Utilization"),
+            p(cls := "text-xs text-gray-400 mt-1")("Runs, success rate, average duration, and active load by agent."),
+          ),
+          a(
+            href := "/agents/registry",
+            cls  := "inline-flex items-center rounded-md bg-indigo-500/20 px-3 py-2 text-xs font-semibold text-indigo-100 ring-1 ring-indigo-300/30 hover:bg-indigo-500/30",
+          )("Open Registry"),
+        ),
+        div(
+          id                                   := "dashboard-agent-metrics",
+          cls                                  := "mt-3 rounded border border-white/10 bg-slate-900/40 p-3 text-xs text-slate-300",
+          attr("data-dashboard-agent-metrics") := "true",
+        )("Loading agent metrics..."),
+      ),
       div(cls := "mt-6 rounded-lg bg-emerald-500/10 ring-1 ring-emerald-400/20 p-4")(
         div(cls := "flex items-center justify-between gap-3")(
           div(
@@ -96,6 +113,7 @@ object DashboardView:
         ),
         div(id := "channels-summary-indicator", cls := "htmx-indicator text-xs text-gray-500 mt-2")("Refreshing..."),
       ),
+      JsResources.inlineModuleScript("/static/client/components/agent-metrics.js"),
     )
 
   def recentRunsContent(runs: List[TaskRunRow]): Frag =

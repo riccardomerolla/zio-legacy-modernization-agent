@@ -219,6 +219,7 @@ object IssuesView:
               textField("runId", "Run ID (optional)", defaultRunId.map(_.toString).getOrElse("")),
               textField("priority", "Priority", "medium"),
               textField("tags", "Tags (comma separated)", "bug,build,analysis"),
+              capabilityEditor("requiredCapabilities", "Required Capabilities", ""),
               textField("preferredAgent", "Preferred AI Agent", "gemini-cli"),
               workspaceSelect("workspaceId", "Linked Workspace", workspaces, None),
               textField("contextPath", "Context Path", "/path/to/context"),
@@ -246,6 +247,7 @@ object IssuesView:
         ),
         script(id := "issue-create-template-data", `type` := "application/json")(raw(orderedTemplates.toJson)),
         JsResources.inlineModuleScript("/static/client/components/issue-template-form.js"),
+        JsResources.inlineModuleScript("/static/client/components/capability-tag-editor.js"),
       )
     )
 
@@ -288,6 +290,7 @@ object IssuesView:
     val selectedAgent = safe(issue.preferredAgent).match
       case "" => safe(issue.assignedAgent)
       case v  => v
+    val requiredCaps  = safeTags(issue.requiredCapabilities)
     val convId        = safe(issue.conversationId)
     val workspaceId   = safe(issue.workspaceId)
     val workspaceName = workspaceNameOf(workspaces, workspaceId).getOrElse(workspaceId)
@@ -314,10 +317,12 @@ object IssuesView:
                 )("Open linked chat")
               else (),
               form(
-                method   := "post",
-                action   := s"/issues/$issueIdStr/assign",
-                cls      := "flex items-center gap-2",
-                onsubmit := "const b=this.querySelector('button[type=submit]'); if(b){b.disabled=true;b.classList.add('opacity-60','cursor-not-allowed'); b.dataset.originalText=b.textContent; b.textContent='Assigning...';}",
+                method                       := "post",
+                action                       := s"/issues/$issueIdStr/assign",
+                cls                          := "flex items-center gap-2",
+                attr("data-assignment-form") := "true",
+                attr("data-issue-id")        := issueIdStr,
+                onsubmit                     := "const b=this.querySelector('button[type=submit]'); if(b){b.disabled=true;b.classList.add('opacity-60','cursor-not-allowed'); b.dataset.originalText=b.textContent; b.textContent='Assigning...';}",
               )(
                 if workspaceId.nonEmpty then
                   frag(
@@ -343,11 +348,27 @@ object IssuesView:
                 )(
                   if convId.nonEmpty then "Re-assign & Run" else "Assign & Start Chat"
                 ),
+                button(
+                  `type`                       := "button",
+                  cls                          := "rounded-md border border-indigo-300/30 bg-indigo-500/20 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/30",
+                  attr("data-auto-assign-btn") := "true",
+                )("Auto-Assign"),
+              ),
+              div(
+                cls                                 := "mt-2 w-full max-w-xl",
+                attr("data-assignment-suggestions") := "true",
+                attr("data-required-capabilities")  := requiredCaps.mkString(","),
+              )(
+                p(cls := "text-xs text-slate-400")("Loading capability-based suggestions...")
               ),
             ),
           ),
           div(cls := "mt-5 grid grid-cols-1 gap-4 md:grid-cols-3")(
             metaItem("Run", safeMap(issue.runId, identity, "Not linked")),
+            metaItem(
+              "Required Capabilities",
+              if requiredCaps.isEmpty then "Not specified" else requiredCaps.mkString(", "),
+            ),
             metaItem("Preferred Agent", safe(issue.preferredAgent, "Not specified")),
             metaItem("Assigned Agent", safe(issue.assignedAgent, "Unassigned")),
             metaItem("Workspace", if workspaceName.nonEmpty then workspaceName else "Not linked"),
@@ -394,6 +415,83 @@ object IssuesView:
               }
             ),
         ),
+        div(
+          cls                              := "rounded-xl border border-white/10 bg-slate-900/60 p-6 space-y-3",
+          attr("data-issue-pipeline-root") := "true",
+          attr("data-issue-id")            := issueIdStr,
+          attr("data-workspace-id")        := workspaceId,
+        )(
+          h2(cls := "text-lg font-semibold text-white")("Multi-Agent Pipeline"),
+          p(cls := "text-xs text-slate-400")(
+            "Create ordered pipeline steps and run sequentially (continuation) or in parallel."
+          ),
+          div(cls := "grid grid-cols-1 gap-3 md:grid-cols-3")(
+            div(
+              label(cls := "mb-1 block text-xs font-semibold text-slate-300")("Pipeline"),
+              select(
+                cls                          := "w-full rounded border border-white/15 bg-slate-800/80 px-2 py-1.5 text-xs text-slate-100",
+                attr("data-pipeline-select") := "true",
+              )(),
+            ),
+            div(
+              label(cls := "mb-1 block text-xs font-semibold text-slate-300")("Mode"),
+              select(
+                cls                        := "w-full rounded border border-white/15 bg-slate-800/80 px-2 py-1.5 text-xs text-slate-100",
+                attr("data-pipeline-mode") := "true",
+              )(
+                option(value := "Sequential", selected := "selected")("Sequential"),
+                option(value := "Parallel")("Parallel"),
+              ),
+            ),
+            div(
+              label(cls := "mb-1 block text-xs font-semibold text-slate-300")("Workspace"),
+              input(
+                `type`                          := "text",
+                value                           := workspaceId,
+                cls                             := "w-full rounded border border-white/15 bg-slate-800/80 px-2 py-1.5 text-xs text-slate-100",
+                attr("data-pipeline-workspace") := "true",
+                attr("placeholder")             := "workspace id",
+              ),
+            ),
+          ),
+          div(cls := "flex items-center gap-2")(
+            button(
+              `type`                    := "button",
+              cls                       := "rounded border border-indigo-400/30 bg-indigo-500/20 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/30",
+              attr("data-run-pipeline") := "true",
+            )("Run Pipeline")
+          ),
+          div(cls := "rounded border border-white/10 bg-slate-950/60 p-3")(
+            h3(cls := "text-xs font-semibold text-slate-200")("Pipeline Builder"),
+            div(cls := "mt-2 grid grid-cols-1 gap-2 md:grid-cols-2")(
+              input(
+                `type`                     := "text",
+                cls                        := "rounded border border-white/15 bg-slate-800/80 px-2 py-1.5 text-xs text-slate-100",
+                attr("data-pipeline-name") := "true",
+                attr("placeholder")        := "Pipeline name",
+              ),
+              textarea(
+                rows                        := 4,
+                cls                         := "rounded border border-white/15 bg-slate-800/80 px-2 py-1.5 text-xs text-slate-100",
+                attr("data-pipeline-steps") := "true",
+                attr(
+                  "placeholder"
+                )                           := "agent-id|optional prompt override|continueOnFailure(true/false)\nreview-agent||true",
+              )(),
+            ),
+            button(
+              `type`                       := "button",
+              cls                          := "mt-2 rounded border border-emerald-400/30 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30",
+              attr("data-create-pipeline") := "true",
+            )("Create Pipeline"),
+          ),
+          pre(
+            cls                          := "max-h-56 overflow-auto rounded border border-white/10 bg-black/30 p-2 text-[11px] text-slate-300",
+            attr("data-pipeline-output") := "true",
+          )(""),
+        ),
+        JsResources.inlineModuleScript("/static/client/components/issue-pipeline.js"),
+        JsResources.inlineModuleScript("/static/client/components/issue-assignment-suggestions.js"),
       )
     )
 
@@ -752,6 +850,25 @@ object IssuesView:
         value  := fieldValue,
         cls    := "w-full rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-400/40 focus:outline-none",
         if required then scalatags.Text.all.required else (),
+      ),
+    )
+
+  private def capabilityEditor(fieldName: String, labelText: String, fieldValue: String): Frag =
+    div(
+      label(cls := "mb-2 block text-sm font-semibold text-slate-200", `for` := s"${fieldName}EditorInput")(labelText),
+      div(
+        cls                            := "rounded-lg border border-white/15 bg-slate-800/80 px-3 py-2",
+        attr("data-capability-editor") := "true",
+      )(
+        input(`type`                    := "hidden", id                                               := fieldName, name := fieldName, value := fieldValue),
+        div(cls                         := "mb-2 flex flex-wrap gap-2", attr("data-capability-chips") := "true"),
+        input(
+          `type`                        := "text",
+          id                            := s"${fieldName}EditorInput",
+          cls                           := "w-full rounded border border-white/10 bg-slate-900/80 px-2 py-1.5 text-sm text-slate-100",
+          attr("data-capability-input") := "true",
+          attr("placeholder")           := "Type capability and press Enter",
+        ),
       ),
     )
 

@@ -107,4 +107,27 @@ object IssueRepositoryESSpec extends ZIOSpecDefault:
           )).provideLayer(layerFor(path))
         }
       },
+      test("created event stores required capabilities") {
+        withTempDir { path =>
+          val id  = Ids.IssueId("issue-5")
+          val now = Instant.parse("2026-03-02T09:30:00Z")
+          (for
+            repo <- ZIO.service[IssueRepository]
+            _    <- repo.append(
+                      IssueEvent.Created(
+                        issueId = id,
+                        title = "Task",
+                        description = "Needs capability matching",
+                        issueType = "task",
+                        priority = "medium",
+                        occurredAt = now,
+                        requiredCapabilities = List("scala", "testing"),
+                      )
+                    )
+            got  <- repo.get(id)
+          yield assertTrue(
+            got.requiredCapabilities == List("scala", "testing")
+          )).provideLayer(layerFor(path))
+        }
+      },
     ) @@ TestAspect.sequential

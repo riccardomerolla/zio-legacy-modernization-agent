@@ -58,17 +58,31 @@ object CliAgentRunner:
     worktreePath: String,
     runMode: RunMode = RunMode.Host,
     repoPath: String = "",
+    envVars: Map[String, String] = Map.empty,
+    dockerMemoryLimit: Option[String] = None,
+    dockerCpuLimit: Option[String] = None,
   ): List[String] =
     val effectiveRepoPath = if repoPath.nonEmpty then repoPath else worktreePath
     runMode match
       case RunMode.Host                                             =>
         buildArgvForHost(cliTool, prompt, effectiveRepoPath)
       case RunMode.Docker(image, extraArgs, mountWorktree, network) =>
-        val innerArgv    = buildArgvForHost(cliTool, prompt, effectiveRepoPath)
-        val mountFlags   = if mountWorktree then List("-v", s"$worktreePath:/workspace", "--workdir", "/workspace")
+        val innerArgv     = buildArgvForHost(cliTool, prompt, effectiveRepoPath)
+        val mountFlags    = if mountWorktree then List("-v", s"$worktreePath:/workspace", "--workdir", "/workspace")
         else List.empty
-        val networkFlags = network.map(n => List("--network", n)).getOrElse(List.empty)
-        List("docker", "run", "--rm", "-i") ++ mountFlags ++ networkFlags ++ extraArgs ++ List(image) ++ innerArgv
+        val networkFlags  = network.map(n => List("--network", n)).getOrElse(List.empty)
+        val envFlags      = envVars.toList.sortBy(_._1).flatMap((k, v) => List("-e", s"$k=$v"))
+        val resourceFlags =
+          dockerMemoryLimit.map(v => List("--memory", v)).getOrElse(Nil) ++
+            dockerCpuLimit.map(v => List("--cpus", v)).getOrElse(Nil)
+        List(
+          "docker",
+          "run",
+          "--rm",
+          "-i",
+        ) ++ mountFlags ++ networkFlags ++ resourceFlags ++ envFlags ++ extraArgs ++ List(
+          image
+        ) ++ innerArgv
 
   /** Build argv for long-lived interactive sessions.
     *
@@ -94,10 +108,11 @@ object CliAgentRunner:
   /** Run argv as a subprocess with `cwd` as working directory. Returns (stdout+stderr lines, exit code). Merges stderr
     * into stdout via redirectErrorStream. Runs blocking IO on ZIO's blocking thread pool.
     */
-  def runProcess(argv: List[String], cwd: String): Task[(List[String], Int)] =
+  def runProcess(argv: List[String], cwd: String, envVars: Map[String, String] = Map.empty): Task[(List[String], Int)] =
     ZIO.attemptBlockingIO {
       val pb       = new ProcessBuilder(argv*)
       pb.directory(Paths.get(cwd).toFile)
+      envVars.foreach { case (k, v) => pb.environment().put(k, v) }
       pb.redirectErrorStream(true)
       val process  = pb.start()
       val lines    = scala.io.Source.fromInputStream(process.getInputStream).getLines().toList
@@ -112,11 +127,17 @@ object CliAgentRunner:
     * Uses `ZIO.attemptBlockingCancelable` for `readLine` so that fiber interruption immediately kills the process (via
     * `destroyForcibly`) which unblocks the blocking read instead of waiting for the process to finish naturally.
     */
-  def runProcessStreaming(argv: List[String], cwd: String, onLine: String => Task[Unit]): Task[Int] =
+  def runProcessStreaming(
+    argv: List[String],
+    cwd: String,
+    onLine: String => Task[Unit],
+    envVars: Map[String, String] = Map.empty,
+  ): Task[Int] =
     ZIO.acquireReleaseWith(
       ZIO.attemptBlockingIO {
         val pb = new ProcessBuilder(argv*)
         pb.directory(Paths.get(cwd).toFile)
+        envVars.foreach { case (k, v) => pb.environment().put(k, v) }
         pb.redirectErrorStream(true)
         pb.start()
       }

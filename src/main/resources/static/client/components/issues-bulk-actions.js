@@ -180,5 +180,33 @@ function bindScope(scope) {
   setToolbar(scope);
 }
 
+async function loadRegistryAgents() {
+  try {
+    const response = await fetch('/api/agents', { headers: { Accept: 'application/json' } });
+    if (!response.ok) return;
+    const agents = await response.json();
+    const options = Array.isArray(agents) ? agents : [];
+    document.querySelectorAll('[data-bulk-agent]').forEach((select) => {
+      const selected = select.value;
+      select.innerHTML = '';
+      options
+        .filter((agent) => agent && agent.name && agent.enabled !== false)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        .forEach((agent) => {
+          const option = document.createElement('option');
+          option.value = String(agent.name);
+          option.textContent = String(agent.name);
+          if (selected && selected === option.value) {
+            option.selected = true;
+          }
+          select.appendChild(option);
+        });
+    });
+  } catch (_ignored) {
+    // fallback to static options already present in markup
+  }
+}
+
 bindScope('list');
 bindScope('board');
+loadRegistryAgents();

@@ -4,6 +4,7 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.{ Files, Path, Paths }
 import java.time.Instant
+import java.util.UUID
 
 import scala.jdk.CollectionConverters.*
 import scala.util.matching.Regex
@@ -14,10 +15,13 @@ import zio.json.*
 
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
+import agent.control.AgentMatching
+import agent.entity.AgentRepository
+import agent.entity.api.AgentMatchSuggestion
 import db.{ ChatRepository, ConfigRepository, PersistenceError, TaskRepository }
 import issues.entity.api.*
 import issues.entity.{ AgentIssue as DomainIssue, * }
-import orchestration.control.{ AgentRegistry, IssueAssignmentOrchestrator }
+import orchestration.control.IssueAssignmentOrchestrator
 import shared.ids.Ids.{ AgentId, EventId, IssueId, TaskRunId }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
 import workspace.control.{ AssignRunRequest, WorkspaceRunService }
@@ -33,7 +37,7 @@ object IssueController:
 
   val live
     : ZLayer[
-      ChatRepository & TaskRepository & ConfigRepository & IssueAssignmentOrchestrator & IssueRepository & WorkspaceRepository & WorkspaceRunService & ActivityHub,
+      ChatRepository & TaskRepository & ConfigRepository & AgentRepository & IssueAssignmentOrchestrator & IssueRepository & WorkspaceRepository & WorkspaceRunService & ActivityHub,
       Nothing,
       IssueController,
     ] =
@@ -43,6 +47,7 @@ final case class IssueControllerLive(
   chatRepository: ChatRepository,
   taskRepository: TaskRepository,
   configRepository: ConfigRepository,
+  agentRepository: AgentRepository,
   issueAssignmentOrchestrator: IssueAssignmentOrchestrator,
   issueRepository: IssueRepository,
   workspaceRepository: WorkspaceRepository,
@@ -132,6 +137,7 @@ final case class IssueControllerLive(
           now     <- Clock.instant
           issueId  = IssueId.generate
           tags     = parseTagList(form.get("tags"))
+          required = parseCapabilityList(form.get("requiredCapabilities"))
           event    = IssueEvent.Created(
                        issueId = issueId,
                        title = title,
@@ -139,6 +145,7 @@ final case class IssueControllerLive(
                        issueType = form.get("issueType").map(_.trim).filter(_.nonEmpty).getOrElse("task"),
                        priority = form.get("priority").getOrElse("medium"),
                        occurredAt = now,
+                       requiredCapabilities = required,
                      )
           _       <- issueRepository.append(event).mapError(mapIssueRepoError)
           _       <- ZIO.when(tags.nonEmpty) {
@@ -177,9 +184,8 @@ final case class IssueControllerLive(
         for
           issue          <- issueRepository.get(IssueId(id)).mapError(mapIssueRepoError)
           workspaces     <- workspaceRepository.list.mapError(mapIssueRepoError)
-          customAgents   <- taskRepository.listCustomAgents
-          enabledCustom   = customAgents.filter(_.enabled)
-          availableAgents = AgentRegistry.allAgents(enabledCustom).filter(_.usesAI)
+          allAgents      <- agentRepository.list().mapError(mapIssueRepoError)
+          availableAgents = allAgents.filter(_.enabled).map(registryAgentToAgentInfo)
         yield html(
           HtmlViews.issueDetail(
             domainToView(issue),
@@ -225,6 +231,7 @@ final case class IssueControllerLive(
           now          <- Clock.instant
           issueId       = IssueId.generate
           tags          = parseTagList(issueRequest.tags)
+          required      = issueRequest.requiredCapabilities.map(_.trim).filter(_.nonEmpty).distinct
           event         = IssueEvent.Created(
                             issueId = issueId,
                             title = issueRequest.title,
@@ -232,6 +239,7 @@ final case class IssueControllerLive(
                             issueType = issueRequest.issueType,
                             priority = issueRequest.priority.toString,
                             occurredAt = now,
+                            requiredCapabilities = required,
                           )
           _            <- issueRepository.append(event).mapError(mapIssueRepoError)
           _            <- ZIO.when(tags.nonEmpty) {
@@ -291,6 +299,7 @@ final case class IssueControllerLive(
                           issueType = template.issueType,
                           priority = template.priority.toString,
                           occurredAt = now,
+                          requiredCapabilities = Nil,
                         )
           _          <- issueRepository.append(event).mapError(mapIssueRepoError)
           _          <- ZIO.when(template.tags.nonEmpty) {
@@ -356,6 +365,22 @@ final case class IssueControllerLive(
         issueRepository.list(filter).mapError(mapIssueRepoError).map(issues =>
           Response.json(issues.map(domainToView).toJson)
         )
+      }
+    },
+    Method.GET / "api" / "pipelines"                                 -> handler { (_: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        listPipelines.map(values => Response.json(values.toJson))
+      }
+    },
+    Method.POST / "api" / "pipelines"                                -> handler { (req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          body     <- req.body.asString.mapError(err => PersistenceError.QueryFailed("request_body", err.getMessage))
+          create   <- ZIO
+                        .fromEither(body.fromJson[PipelineCreateRequest])
+                        .mapError(err => PersistenceError.QueryFailed("json_parse", err))
+          pipeline <- createPipeline(create)
+        yield Response.json(pipeline.toJson).copy(status = Status.Created)
       }
     },
     Method.POST / "api" / "issues" / "bulk" / "assign"               -> handler { (req: Request) =>
@@ -465,6 +490,107 @@ final case class IssueControllerLive(
                             }
           updated        <- issueRepository.get(IssueId(id)).mapError(mapIssueRepoError)
         yield Response.json(domainToView(updated).toJson)
+      }
+    },
+    Method.POST / "api" / "issues" / string("id") / "auto-assign"    -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          body          <- req.body.asString.mapError(err => PersistenceError.QueryFailed("request_body", err.getMessage))
+          assignRequest <- ZIO
+                             .fromEither(
+                               if body.trim.isEmpty then Right(AutoAssignIssueRequest())
+                               else body.fromJson[AutoAssignIssueRequest]
+                             )
+                             .mapError(err => PersistenceError.QueryFailed("json_parse", err))
+          issue         <- issueRepository.get(IssueId(id)).mapError(mapIssueRepoError)
+          threshold      = assignRequest.thresholdPercent.getOrElse(60.0).max(0.0).min(100.0) / 100.0
+          required       = issue.requiredCapabilities.map(_.trim).filter(_.nonEmpty).distinct
+          ranked        <- rankedAgentSuggestions(required)
+          candidate      = ranked.headOption
+          response      <- candidate match
+                             case Some(best) if best.score >= threshold =>
+                               val selectedWorkspaceId = issue.workspaceId.orElse(
+                                 assignRequest.workspaceId.map(_.trim).filter(_.nonEmpty)
+                               )
+                               for
+                                 _ <- issueAssignmentOrchestrator.assignIssue(id, best.agentName)
+                                 _ <- selectedWorkspaceId.fold[IO[PersistenceError, Unit]](ZIO.unit) { workspaceId =>
+                                        workspaceRunService
+                                          .assign(
+                                            workspaceId,
+                                            AssignRunRequest(
+                                              issueRef = s"#$id",
+                                              prompt = issue.description,
+                                              agentName = best.agentName,
+                                            ),
+                                          )
+                                          .mapError(err => PersistenceError.QueryFailed("workspace_assign", err.toString))
+                                          .unit
+                                      }
+                               yield AutoAssignIssueResponse(
+                                 assigned = true,
+                                 queued = false,
+                                 agentName = Some(best.agentName),
+                                 score = Some(best.score),
+                                 reason = None,
+                               )
+                             case Some(best)                            =>
+                               ZIO.succeed(
+                                 AutoAssignIssueResponse(
+                                   assigned = false,
+                                   queued = true,
+                                   agentName = None,
+                                   score = Some(best.score),
+                                   reason =
+                                     Some(f"Best score ${best.score * 100}%.1f%% below threshold ${threshold * 100}%.1f%%"),
+                                 )
+                               )
+                             case None                                  =>
+                               ZIO.succeed(
+                                 AutoAssignIssueResponse(
+                                   assigned = false,
+                                   queued = true,
+                                   reason = Some("No available agents matched the required capabilities"),
+                                 )
+                               )
+        yield Response.json(response.toJson)
+      }
+    },
+    Method.POST / "api" / "issues" / string("id") / "run-pipeline"   -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          body        <- req.body.asString.mapError(err => PersistenceError.QueryFailed("request_body", err.getMessage))
+          runRequest  <- ZIO
+                           .fromEither(body.fromJson[RunPipelineRequest])
+                           .mapError(err => PersistenceError.QueryFailed("json_parse", err))
+          issue       <- issueRepository.get(IssueId(id)).mapError(mapIssueRepoError)
+          pipeline    <- getPipelineById(runRequest.pipelineId)
+          _           <- validatePipelineSteps(pipeline.steps)
+          workspaceId <- ZIO
+                           .fromOption(issue.workspaceId.orElse(runRequest.workspaceId.map(_.trim).filter(_.nonEmpty)))
+                           .orElseFail(PersistenceError.QueryFailed("pipeline", "workspaceId is required"))
+          _           <- ensureWorkspaceExists(workspaceId)
+          executionId  = UUID.randomUUID().toString
+          response    <- runRequest.mode match
+                           case PipelineExecutionMode.Parallel   =>
+                             executeParallelPipeline(
+                               issueId = id,
+                               issue = issue,
+                               pipeline = pipeline,
+                               workspaceId = workspaceId,
+                               runRequest = runRequest,
+                               executionId = executionId,
+                             )
+                           case PipelineExecutionMode.Sequential =>
+                             executeSequentialPipeline(
+                               issueId = id,
+                               issue = issue,
+                               pipeline = pipeline,
+                               workspaceId = workspaceId,
+                               runRequest = runRequest,
+                               executionId = executionId,
+                             )
+        yield Response.json(response.toJson)
       }
     },
     Method.PUT / "api" / "issues" / string("id") / "workspace"       -> handler { (id: String, req: Request) =>
@@ -586,6 +712,8 @@ final case class IssueControllerLive(
       description = i.description,
       issueType = i.issueType,
       tags = if i.tags.isEmpty then None else Some(i.tags.mkString(",")),
+      requiredCapabilities =
+        if i.requiredCapabilities.isEmpty then None else Some(i.requiredCapabilities.mkString(",")),
       contextPath = Option(i.contextPath).filter(_.nonEmpty),
       sourceFolder = Option(i.sourceFolder).filter(_.nonEmpty),
       workspaceId = i.workspaceId,
@@ -744,6 +872,7 @@ final case class IssueControllerLive(
       case None        => byQuery
 
   private val templateSettingPrefix  = "issue.template.custom."
+  private val pipelineSettingPrefix  = "pipeline.custom."
   private val templatePattern: Regex =
     "\\{\\{\\s*([a-zA-Z0-9_-]+)\\s*\\}\\}".r
 
@@ -901,6 +1030,71 @@ final case class IssueControllerLive(
         .fromOption(templates.find(_.id == id))
         .orElseFail(PersistenceError.QueryFailed("issue_template", s"Template not found: $id"))
     }
+
+  private def listPipelines: IO[PersistenceError, List[AgentPipeline]] =
+    for
+      rows      <- configRepository.getSettingsByPrefix(pipelineSettingPrefix)
+      pipelines <- ZIO.foreach(rows.sortBy(_.key)) { row =>
+                     ZIO
+                       .fromEither(row.value.fromJson[AgentPipeline])
+                       .map(_.copy(id = row.key.stripPrefix(pipelineSettingPrefix), updatedAt = row.updatedAt))
+                       .either
+                       .flatMap {
+                         case Right(p) => ZIO.succeed(Some(p))
+                         case Left(e)  =>
+                           ZIO.logWarning(s"Skipping invalid pipeline setting key=${row.key}: $e") *>
+                             ZIO.succeed(None)
+                       }
+                   }
+    yield pipelines.flatten
+
+  private def getPipelineById(id: String): IO[PersistenceError, AgentPipeline] =
+    listPipelines.flatMap { values =>
+      ZIO
+        .fromOption(values.find(_.id == id))
+        .orElseFail(PersistenceError.QueryFailed("pipeline", s"Pipeline not found: $id"))
+    }
+
+  private def createPipeline(request: PipelineCreateRequest): IO[PersistenceError, AgentPipeline] =
+    for
+      _        <- validatePipelineName(request.name)
+      _        <- validatePipelineSteps(request.steps)
+      now      <- Clock.instant
+      cleanName = request.name.trim
+      id        = s"${normalizeTemplateId(cleanName)}-${now.toEpochMilli}"
+      pipeline  = AgentPipeline(
+                    id = id,
+                    name = cleanName,
+                    steps = request.steps.map(step =>
+                      step.copy(
+                        agentId = step.agentId.trim,
+                        promptOverride = step.promptOverride.map(_.trim).filter(_.nonEmpty),
+                      )
+                    ),
+                    createdAt = now,
+                    updatedAt = now,
+                  )
+      _        <- configRepository.upsertSetting(pipelineSettingPrefix + id, pipeline.toJson)
+    yield pipeline
+
+  private def validatePipelineName(name: String): IO[PersistenceError, Unit] =
+    ZIO
+      .fail(PersistenceError.QueryFailed("pipeline", "Pipeline name is required"))
+      .when(name.trim.isEmpty)
+      .unit
+
+  private def validatePipelineSteps(steps: List[PipelineStep]): IO[PersistenceError, Unit] =
+    for
+      _ <- ZIO
+             .fail(PersistenceError.QueryFailed("pipeline", "Pipeline must contain at least one step"))
+             .when(steps.isEmpty)
+      _ <- ZIO.foreachDiscard(steps.zipWithIndex) {
+             case (step, idx) =>
+               ZIO
+                 .fail(PersistenceError.QueryFailed("pipeline", s"Pipeline step ${idx + 1} requires an agentId"))
+                 .when(step.agentId.trim.isEmpty)
+           }
+    yield ()
 
   private def createCustomTemplate(request: IssueTemplateUpsertRequest): IO[PersistenceError, IssueTemplate] =
     for
@@ -1151,6 +1345,217 @@ final case class IssueControllerLive(
       case IssueState.Failed(agent, _, _)    => Some(agent.value)
       case _                                 => None
 
+  private def executeParallelPipeline(
+    issueId: String,
+    issue: DomainIssue,
+    pipeline: AgentPipeline,
+    workspaceId: String,
+    runRequest: RunPipelineRequest,
+    executionId: String,
+  ): IO[PersistenceError, RunPipelineResponse] =
+    for
+      runs <- ZIO.foreach(pipeline.steps.zipWithIndex) {
+                case (step, index) =>
+                  val prompt = pipelinePrompt(issue, step, runRequest.basePromptOverride)
+                  workspaceRunService
+                    .assign(
+                      workspaceId,
+                      AssignRunRequest(
+                        issueRef = s"#$issueId",
+                        prompt = prompt,
+                        agentName = step.agentId.trim,
+                      ),
+                    )
+                    .mapError(err => PersistenceError.QueryFailed("pipeline_parallel_assign", err.toString))
+                    .map(run =>
+                      PipelineExecutionRun(
+                        stepIndex = index,
+                        agentId = step.agentId.trim,
+                        runId = run.id,
+                        status = run.status.toString,
+                      )
+                    )
+              }
+      _    <- publishPipelineActivity(
+                issueId = issueId,
+                executionId = executionId,
+                message = s"Pipeline '${pipeline.name}' started in parallel mode (${runs.size} runs).",
+              )
+    yield RunPipelineResponse(
+      executionId = executionId,
+      issueId = issueId,
+      pipelineId = pipeline.id,
+      mode = PipelineExecutionMode.Parallel,
+      status = "running",
+      runs = runs,
+      message = Some("Parallel pipeline started."),
+    )
+
+  private def executeSequentialPipeline(
+    issueId: String,
+    issue: DomainIssue,
+    pipeline: AgentPipeline,
+    workspaceId: String,
+    runRequest: RunPipelineRequest,
+    executionId: String,
+  ): IO[PersistenceError, RunPipelineResponse] =
+    pipeline.steps match
+      case Nil           =>
+        ZIO.fail(PersistenceError.QueryFailed("pipeline", "Pipeline has no steps"))
+      case first :: tail =>
+        for
+          firstRun <- workspaceRunService
+                        .assign(
+                          workspaceId,
+                          AssignRunRequest(
+                            issueRef = s"#$issueId",
+                            prompt = pipelinePrompt(issue, first, runRequest.basePromptOverride),
+                            agentName = first.agentId.trim,
+                          ),
+                        )
+                        .mapError(err => PersistenceError.QueryFailed("pipeline_sequential_assign", err.toString))
+          _        <- processSequentialPipeline(
+                        issueId = issueId,
+                        issue = issue,
+                        executionId = executionId,
+                        previousRunId = firstRun.id,
+                        previousStep = first,
+                        remaining = tail.zipWithIndex.map((step, idx) => (idx + 1, step)),
+                        basePromptOverride = runRequest.basePromptOverride,
+                      ).catchAll(err =>
+                        publishPipelineActivity(
+                          issueId = issueId,
+                          executionId = executionId,
+                          message = s"Sequential pipeline failed: ${err.toString}",
+                        )
+                      ).forkDaemon
+          _        <- publishPipelineActivity(
+                        issueId = issueId,
+                        executionId = executionId,
+                        message = s"Pipeline '${pipeline.name}' started sequentially with agent ${first.agentId}.",
+                      )
+        yield RunPipelineResponse(
+          executionId = executionId,
+          issueId = issueId,
+          pipelineId = pipeline.id,
+          mode = PipelineExecutionMode.Sequential,
+          status = "running",
+          runs =
+            PipelineExecutionRun(0, first.agentId.trim, firstRun.id, firstRun.status.toString) ::
+              tail.zipWithIndex.map {
+                case (step, idx) =>
+                  PipelineExecutionRun(stepIndex = idx + 1, agentId = step.agentId.trim, runId = "", status = "queued")
+              },
+          message = Some("Sequential pipeline started; next steps will continue automatically."),
+        )
+
+  private def processSequentialPipeline(
+    issueId: String,
+    issue: DomainIssue,
+    executionId: String,
+    previousRunId: String,
+    previousStep: PipelineStep,
+    remaining: List[(Int, PipelineStep)],
+    basePromptOverride: Option[String],
+  ): IO[PersistenceError, Unit] =
+    remaining match
+      case Nil                       =>
+        publishPipelineActivity(
+          issueId = issueId,
+          executionId = executionId,
+          message = "Sequential pipeline completed.",
+        )
+      case (index, nextStep) :: tail =>
+        for
+          previousRun <- waitForTerminalRun(previousRunId)
+          canContinue  = previousRun.status == workspace.entity.RunStatus.Completed || previousStep.continueOnFailure
+          _           <-
+            if canContinue then ZIO.unit
+            else
+              publishPipelineActivity(
+                issueId = issueId,
+                executionId = executionId,
+                message =
+                  s"Sequential pipeline halted at step ${index} because previous run ${previousRun.id} ended with ${previousRun.status}.",
+              )
+          _           <-
+            if canContinue then
+              for
+                continued <- workspaceRunService
+                               .continueRun(
+                                 previousRunId,
+                                 pipelinePrompt(issue, nextStep, basePromptOverride),
+                                 Some(nextStep.agentId.trim),
+                               )
+                               .mapError(err =>
+                                 PersistenceError.QueryFailed("pipeline_sequential_continue", err.toString)
+                               )
+                _         <- publishPipelineActivity(
+                               issueId = issueId,
+                               executionId = executionId,
+                               message =
+                                 s"Sequential pipeline started step ${index + 1} with agent ${nextStep.agentId} (run ${continued.id}).",
+                             )
+                _         <- processSequentialPipeline(
+                               issueId = issueId,
+                               issue = issue,
+                               executionId = executionId,
+                               previousRunId = continued.id,
+                               previousStep = nextStep,
+                               remaining = tail,
+                               basePromptOverride = basePromptOverride,
+                             )
+              yield ()
+            else ZIO.unit
+        yield ()
+
+  private def waitForTerminalRun(runId: String): IO[PersistenceError, workspace.entity.WorkspaceRun] =
+    def loop: IO[PersistenceError, workspace.entity.WorkspaceRun] =
+      workspaceRepository
+        .getRun(runId)
+        .mapError(mapIssueRepoError)
+        .flatMap(
+          _.fold[IO[PersistenceError, workspace.entity.WorkspaceRun]](
+            ZIO.fail(PersistenceError.QueryFailed("pipeline", s"Run not found: $runId"))
+          )(ZIO.succeed)
+        )
+        .flatMap { run =>
+          if run.status == workspace.entity.RunStatus.Completed ||
+            run.status == workspace.entity.RunStatus.Failed ||
+            run.status == workspace.entity.RunStatus.Cancelled
+          then ZIO.succeed(run)
+          else ZIO.sleep(2.seconds) *> loop
+        }
+    loop
+
+  private def pipelinePrompt(
+    issue: DomainIssue,
+    step: PipelineStep,
+    basePromptOverride: Option[String],
+  ): String =
+    step.promptOverride
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .orElse(basePromptOverride.map(_.trim).filter(_.nonEmpty))
+      .getOrElse(issue.description)
+
+  private def publishPipelineActivity(
+    issueId: String,
+    executionId: String,
+    message: String,
+  ): UIO[Unit] =
+    Clock.instant.flatMap(now =>
+      activityHub.publish(
+        ActivityEvent(
+          id = EventId.generate,
+          eventType = ActivityEventType.RunStateChanged,
+          source = "pipeline",
+          summary = s"[pipeline:$executionId issue:#$issueId] $message",
+          createdAt = now,
+        )
+      )
+    )
+
   private def previewIssuesFromConfiguredFolder: IO[PersistenceError, List[FolderImportPreviewItem]] =
     for
       files <- issueImportMarkdownFiles
@@ -1236,6 +1641,7 @@ final case class IssueControllerLive(
                                   issueType = "github",
                                   priority = "medium",
                                   occurredAt = now,
+                                  requiredCapabilities = Nil,
                                 )
                               )
                               .mapError(mapIssueRepoError)
@@ -1304,6 +1710,50 @@ final case class IssueControllerLive(
   private def parseTagList(raw: Option[String]): List[String] =
     raw.toList.flatMap(_.split(",").toList).map(_.trim).filter(_.nonEmpty).distinct
 
+  private def parseCapabilityList(raw: Option[String]): List[String] =
+    raw.toList
+      .flatMap(_.split(",").toList)
+      .map(_.trim.toLowerCase)
+      .filter(_.nonEmpty)
+      .distinct
+
+  private def rankedAgentSuggestions(requiredCapabilities: List[String])
+    : IO[PersistenceError, List[AgentMatchSuggestion]] =
+    for
+      allAgents <- agentRepository.list().mapError(mapIssueRepoError)
+      activeMap <- activeRunsByAgent.mapError(mapIssueRepoError)
+      ranked     = AgentMatching
+                     .rankAgents(allAgents, requiredCapabilities, activeMap)
+                     .map(result =>
+                       AgentMatchSuggestion(
+                         agentId = result.agent.id.value,
+                         agentName = result.agent.name,
+                         capabilities = result.agent.capabilities,
+                         score = result.score,
+                         overlapCount = result.overlapCount,
+                         requiredCount = result.requiredCount,
+                         activeRuns = result.activeRuns,
+                       )
+                     )
+    yield ranked
+
+  private def activeRunsByAgent: IO[shared.errors.PersistenceError, Map[String, Int]] =
+    for
+      workspaces <- workspaceRepository.list
+      runs       <- ZIO.foreach(workspaces)(ws => workspaceRepository.listRuns(ws.id)).map(_.flatten)
+    yield AgentMatching.activeRunsByAgent(runs)
+
+  private def registryAgentToAgentInfo(registryAgent: _root_.agent.entity.Agent): _root_.config.entity.AgentInfo =
+    _root_.config.entity.AgentInfo(
+      name = registryAgent.name,
+      handle = registryAgent.name.trim.toLowerCase.replaceAll("[^a-z0-9_-]+", "-"),
+      displayName = registryAgent.name,
+      description = registryAgent.description,
+      agentType = _root_.config.entity.AgentType.Custom,
+      usesAI = true,
+      tags = registryAgent.capabilities,
+    )
+
   private def required(form: Map[String, String], key: String): IO[PersistenceError, String] =
     ZIO
       .fromOption(form.get(key).map(_.trim).filter(_.nonEmpty))
@@ -1345,6 +1795,8 @@ final case class IssueControllerLive(
       issueType = metadata("type").getOrElse("task"),
       priority = metadata("priority").getOrElse("medium"),
       occurredAt = now,
+      requiredCapabilities =
+        parseCapabilityList(metadata("required_capabilities").orElse(metadata("required-capabilities"))),
     )
 
   private def parseForm(req: Request): IO[PersistenceError, Map[String, String]] =

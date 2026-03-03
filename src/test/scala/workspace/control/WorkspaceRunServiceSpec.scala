@@ -5,6 +5,7 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
+import agent.entity.Agent
 import conversation.entity.api.{ ChatConversation, ConversationEntry }
 import db.{ ChatRepository, PersistenceError as DbPersistenceError }
 import issues.entity.{ IssueFilter, IssueRepository }
@@ -193,7 +194,9 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
   private def makeService(
     ws: Workspace = sampleWs,
     dockerCheck: IO[WorkspaceError, Unit] = dockerAvailable,
-    runCliAgent: (List[String], String, String => Task[Unit]) => Task[Int] = CliAgentRunner.runProcessStreaming,
+    runCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+      CliAgentRunner.runProcessStreaming,
+    resolveProfile: String => IO[WorkspaceError, Option[Agent]] = _ => ZIO.succeed(None),
   ) =
     for
       messages <- Ref.make(List.empty[String])
@@ -212,6 +215,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
           dockerCheck = dockerCheck,
           runCliAgent = runCliAgent,
           fiberRegistry = registry,
+          resolveAgentProfile = resolveProfile,
         )
     yield (svc, wsRepo, messages)
 
@@ -303,8 +307,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     },
     test("cancelRun on a running fiber returns unit and marks run Cancelled") {
       // Use ZIO.never as the CLI runner so the fiber is always running and can be cleanly interrupted
-      val neverCliAgent: (List[String], String, String => Task[Unit]) => Task[Int] =
-        (_, _, _) => ZIO.never.as(0)
+      val neverCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+        (_, _, _, _) => ZIO.never.as(0)
       for
         messages <- Ref.make(List.empty[String])
         wsMap    <- Ref.make(Map("ws-1" -> sampleWs))
@@ -337,8 +341,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         case _                                            => false)
     },
     test("continueRun creates a child run reusing parent worktree and branch") {
-      val instantCliAgent: (List[String], String, String => Task[Unit]) => Task[Int] =
-        (_, _, _) => ZIO.succeed(0)
+      val instantCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+        (_, _, _, _) => ZIO.succeed(0)
       for
         (svc, wsRepo, _) <- makeService(runCliAgent = instantCliAgent)
         req               = AssignRunRequest(issueRef = "#100", prompt = "initial", agentName = "echo")
@@ -351,5 +355,34 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         saved.exists(_.worktreePath == parent.worktreePath),
         saved.exists(_.branchName == parent.branchName),
       )
+    } @@ TestAspect.withLiveClock,
+    test("assign passes merged environment vars to process runner") {
+      val profile = Agent(
+        id = shared.ids.Ids.AgentId("agent-1"),
+        name = "echo",
+        description = "echo profile",
+        cliTool = "echo",
+        capabilities = Nil,
+        defaultModel = None,
+        systemPrompt = None,
+        maxConcurrentRuns = 2,
+        envVars = Map("AGENT_FLAG" -> "true"),
+        timeout = java.time.Duration.ofMinutes(5),
+        enabled = true,
+        createdAt = sampleWs.createdAt,
+        updatedAt = sampleWs.updatedAt,
+      )
+      for
+        envRef      <- Ref.make(Map.empty[String, String])
+        runCli       = (argv: List[String], cwd: String, onLine: String => Task[Unit], env: Map[String, String]) =>
+                         envRef.set(env) *> ZIO.succeed(0)
+        (svc, _, _) <- makeService(
+                         runCliAgent = runCli,
+                         resolveProfile = _ => ZIO.succeed(Some(profile)),
+                       )
+        _           <- svc.assign("ws-1", AssignRunRequest("#env", "check env", "echo"))
+        _           <- ZIO.sleep(100.millis)
+        env         <- envRef.get
+      yield assertTrue(env.get("AGENT_FLAG").contains("true"))
     } @@ TestAspect.withLiveClock,
   )

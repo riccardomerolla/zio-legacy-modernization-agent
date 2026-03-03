@@ -1,5 +1,7 @@
 package shared.web
 
+import agent.entity.Agent
+import agent.entity.api.{ AgentActiveRun, AgentMetricsHistoryPoint, AgentMetricsSummary, AgentRunHistoryItem }
 import config.control.{ ModelRegistryResponse, ProviderProbeStatus }
 import config.entity.{ AgentChannelBinding, AgentInfo, WorkflowDefinition }
 import conversation.entity.api.{ ChatConversation, ConversationEntry, ConversationSessionMeta }
@@ -120,6 +122,26 @@ object HtmlViews:
     flash: Option[String] = None,
   ): String =
     AgentsView.editCustomAgentForm(name, values, flash)
+
+  def agentRegistryListPage(agents: List[Agent], flash: Option[String] = None): String =
+    AgentRegistryView.list(agents, flash)
+
+  def agentRegistryDetailPage(
+    agent: Agent,
+    metrics: AgentMetricsSummary,
+    runs: List[AgentRunHistoryItem],
+    activeRuns: List[AgentActiveRun],
+    history: List[AgentMetricsHistoryPoint],
+    flash: Option[String] = None,
+  ): String =
+    AgentRegistryView.detail(agent, metrics, runs, activeRuns, history, flash)
+
+  def agentRegistryFormPage(
+    title: String,
+    action: String,
+    values: Map[String, String],
+  ): String =
+    AgentRegistryView.form(title, action, values)
 
   def agentConfigPage(
     agent: AgentInfo,

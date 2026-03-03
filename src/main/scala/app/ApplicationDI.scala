@@ -22,6 +22,7 @@ import _root_.config.entity.{ AIProvider, AIProviderConfig, GatewayConfig }
 import activity.boundary.ActivityController
 import activity.control.ActivityHub
 import activity.entity.ActivityRepository
+import agent.entity.{ AgentEventStoreES, AgentRepositoryES }
 import app.boundary.{
   AgentMonitorController as AppAgentMonitorController,
   HealthController as AppHealthController,
@@ -248,6 +249,8 @@ object ApplicationDI:
       StreamAbortRegistry.live,
       ToolRegistry.layer,
       WorkspaceRepository.live,
+      AgentEventStoreES.live,
+      AgentRepositoryES.live,
       InteractiveAgentRunner.live,
       RunSessionManager.live,
       IssueEventStoreES.live,
