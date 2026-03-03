@@ -2,6 +2,7 @@ package config.boundary
 
 import java.net.{ URLDecoder, URLEncoder }
 import java.nio.charset.StandardCharsets
+import java.time.{ Duration, Instant, LocalDate, ZoneOffset }
 
 import zio.*
 import zio.http.*
@@ -9,11 +10,15 @@ import zio.json.*
 import zio.stream.ZStream
 
 import _root_.config.entity.{ AgentChannelBinding, AgentInfo }
+import agent.control.AgentMatching
+import agent.entity.api.*
+import agent.entity.{ Agent as RegistryAgent, AgentEvent, AgentRepository }
 import db.{ ConfigRepository, CustomAgentRow, PersistenceError }
 import llm4zio.core.{ LlmError, LlmService }
 import orchestration.control.AgentRegistry
 import shared.ids.Ids.AgentId
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
+import workspace.entity.{ RunStatus, WorkspaceRepository, WorkspaceRun }
 
 trait AgentsController:
   def routes: Routes[Any, Response]
@@ -23,12 +28,14 @@ object AgentsController:
   def routes: ZIO[AgentsController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[AgentsController](_.routes)
 
-  val live: ZLayer[ConfigRepository & LlmService, Nothing, AgentsController] =
+  val live: ZLayer[ConfigRepository & LlmService & AgentRepository & WorkspaceRepository, Nothing, AgentsController] =
     ZLayer.fromFunction(AgentsControllerLive.apply)
 
 final case class AgentsControllerLive(
   repository: ConfigRepository,
   llmService: LlmService,
+  agentRepository: AgentRepository,
+  workspaceRepository: WorkspaceRepository,
 ) extends AgentsController:
 
   private val aiSettingKeys: List[String] = List(
@@ -47,27 +54,270 @@ final case class AgentsControllerLive(
   )
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / "api" / "agents"                                   -> handler { (_: Request) =>
+    Method.GET / "api" / "agents"                                        -> handler { (_: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          custom <- repository.listCustomAgents
-          all     = AgentRegistry.allAgents(custom)
-        yield Response.json(all.toJson)
+          _      <- ensureRegistryMigrated
+          agents <- agentRepository.list().mapError(mapAgentRepoError)
+        yield Response.json(agents.toJson)
       }
     },
-    Method.GET / "agents"                                           -> handler { (req: Request) =>
+    Method.GET / "api" / "agents" / string("id") / "metrics"             -> handler { (id: String, _: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
-          custom   <- repository.listCustomAgents
-          bindings <- repository.listAgentChannelBindings
-          flash     = req.queryParam("flash").map(urlDecode).filter(_.nonEmpty)
-        yield html(HtmlViews.agentsPage(AgentRegistry.allAgents(custom), bindingsByAgent(bindings), flash))
+          _             <- ensureRegistryMigrated
+          agent         <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          workspaceRuns <- loadWorkspaceRuns(agent)
+          now           <- Clock.instant
+        yield Response.json(computeMetrics(workspaceRuns, now).toJson)
       }
     },
-    Method.GET / "agents" / "new"                                   -> handler { (_: Request) =>
+    Method.GET / "api" / "agents" / "metrics"                            -> handler { (_: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _      <- ensureRegistryMigrated
+          agents <- agentRepository.list().mapError(mapAgentRepoError)
+          now    <- Clock.instant
+          rows   <- ZIO.foreach(agents.filter(_.enabled)) { agent =>
+                      loadWorkspaceRuns(agent).map(runs =>
+                        AgentMetricsOverviewItem(
+                          agentId = agent.id.value,
+                          agentName = agent.name,
+                          metrics = computeMetrics(runs, now).summary,
+                        )
+                      )
+                    }
+        yield Response.json(rows.sortBy(_.agentName.toLowerCase).toJson)
+      }
+    },
+    Method.GET / "api" / "agents" / string("id") / "metrics" / "history" -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _             <- ensureRegistryMigrated
+          agent         <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          workspaceRuns <- loadWorkspaceRuns(agent)
+          days          <- parsePeriodDays(req)
+          now           <- Clock.instant
+        yield Response.json(computeHistory(workspaceRuns, days, now).toJson)
+      }
+    },
+    Method.GET / "api" / "agents" / "capabilities"                       -> handler { (_: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _           <- ensureRegistryMigrated
+          agents      <- agentRepository.list().mapError(mapAgentRepoError)
+          capabilities = agents.flatMap(_.capabilities).map(_.trim.toLowerCase).filter(_.nonEmpty).distinct.sorted
+        yield Response.json(capabilities.toJson)
+      }
+    },
+    Method.GET / "api" / "agents" / "match"                              -> handler { (req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _            <- ensureRegistryMigrated
+          agents       <- agentRepository.list().mapError(mapAgentRepoError)
+          capabilities  = parseCapabilities(req)
+          workspaces   <- workspaceRepository.list.mapError(mapAgentRepoError)
+          allRuns      <-
+            ZIO.foreach(
+              workspaces
+            )(ws => workspaceRepository.listRuns(ws.id).mapError(mapAgentRepoError)).map(_.flatten)
+          activeByAgent = AgentMatching.activeRunsByAgent(allRuns)
+          ranked        = AgentMatching.rankAgents(agents, capabilities, activeByAgent)
+          response      = ranked.map(result =>
+                            AgentMatchSuggestion(
+                              agentId = result.agent.id.value,
+                              agentName = result.agent.name,
+                              capabilities = result.agent.capabilities,
+                              score = result.score,
+                              overlapCount = result.overlapCount,
+                              requiredCount = result.requiredCount,
+                              activeRuns = result.activeRuns,
+                            )
+                          )
+        yield Response.json(response.toJson)
+      }
+    },
+    Method.GET / "api" / "agents" / string("id")                         -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _             <- ensureRegistryMigrated
+          agent         <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          workspaceRuns <- loadWorkspaceRuns(agent)
+          now           <- Clock.instant
+          metrics        = computeMetrics(workspaceRuns, now)
+          history        = computeHistory(workspaceRuns, 30, now)
+        yield Response.json(
+          AgentDetailResponse(
+            agent = agent,
+            metrics = metrics.summary,
+            history = history,
+            activeRuns = metrics.activeRuns,
+          ).toJson
+        )
+      }
+    },
+    Method.POST / "api" / "agents"                                       -> handler { (req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _      <- ensureRegistryMigrated
+          body   <- req.body.asString.mapError(err => PersistenceError.QueryFailed("agent_create", err.getMessage))
+          upsert <- ZIO
+                      .fromEither(body.fromJson[AgentUpsertRequest])
+                      .mapError(err => PersistenceError.QueryFailed("agent_create", err))
+          dup    <- agentRepository.findByName(upsert.name).mapError(mapAgentRepoError)
+          _      <- ZIO
+                      .fail(PersistenceError.QueryFailed("agent_create", s"Agent '${upsert.name}' already exists"))
+                      .when(dup.isDefined)
+          now    <- Clock.instant
+          agent  <- buildAgentFromUpsert(AgentId.generate, upsert, now, createdAt = now)
+          _      <- agentRepository.append(AgentEvent.Created(agent, now)).mapError(mapAgentRepoError)
+        yield Response.json(agent.toJson).status(Status.Created)
+      }
+    },
+    Method.PUT / "api" / "agents" / string("id")                         -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _        <- ensureRegistryMigrated
+          existing <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          body     <- req.body.asString.mapError(err => PersistenceError.QueryFailed("agent_update", err.getMessage))
+          upsert   <- ZIO
+                        .fromEither(body.fromJson[AgentUpsertRequest])
+                        .mapError(err => PersistenceError.QueryFailed("agent_update", err))
+          byName   <- agentRepository.findByName(upsert.name).mapError(mapAgentRepoError)
+          _        <- ZIO
+                        .fail(PersistenceError.QueryFailed("agent_update", s"Agent '${upsert.name}' already exists"))
+                        .when(byName.exists(_.id != existing.id))
+          now      <- Clock.instant
+          updated  <- buildAgentFromUpsert(existing.id, upsert, now, createdAt = existing.createdAt)
+          _        <- agentRepository.append(AgentEvent.Updated(updated, now)).mapError(mapAgentRepoError)
+        yield Response.json(updated.toJson)
+      }
+    },
+    Method.DELETE / "api" / "agents" / string("id")                      -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _   <- ensureRegistryMigrated
+          now <- Clock.instant
+          _   <- agentRepository
+                   .append(AgentEvent.Disabled(AgentId(id), Some("Deleted via API"), now))
+                   .mapError(mapAgentRepoError)
+          _   <- agentRepository.append(AgentEvent.Deleted(AgentId(id), now)).mapError(mapAgentRepoError)
+        yield Response(status = Status.NoContent)
+      }
+    },
+    Method.GET / "api" / "agents" / string("id") / "runs"                -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _             <- ensureRegistryMigrated
+          agent         <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          workspaceRuns <- loadWorkspaceRuns(agent)
+        yield Response.json(toRunHistory(workspaceRuns).toJson)
+      }
+    },
+    Method.GET / "agents" / "registry"                                   -> handler { (req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _      <- ensureRegistryMigrated
+          agents <- agentRepository.list().mapError(mapAgentRepoError)
+          flash   = req.queryParam("flash").map(urlDecode).filter(_.nonEmpty)
+        yield html(HtmlViews.agentRegistryListPage(agents, flash))
+      }
+    },
+    Method.GET / "agents" / "registry" / "new"                           -> handler { (_: Request) =>
+      ZIO.succeed(
+        html(
+          HtmlViews.agentRegistryFormPage(
+            title = "Create Agent",
+            action = "/agents/registry",
+            values = Map("enabled" -> "true", "timeout" -> "PT30M", "maxConcurrentRuns" -> "1"),
+          )
+        )
+      )
+    },
+    Method.POST / "agents" / "registry"                                  -> handler { (req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _      <- ensureRegistryMigrated
+          form   <- parseForm(req)
+          upsert <- upsertFromForm(form)
+          dup    <- agentRepository.findByName(upsert.name).mapError(mapAgentRepoError)
+          _      <- ZIO
+                      .fail(PersistenceError.QueryFailed("agent_create", s"Agent '${upsert.name}' already exists"))
+                      .when(dup.isDefined)
+          now    <- Clock.instant
+          agent  <- buildAgentFromUpsert(AgentId.generate, upsert, now, now)
+          _      <- agentRepository.append(AgentEvent.Created(agent, now)).mapError(mapAgentRepoError)
+        yield redirectToAgentRegistry(s"Agent '${agent.name}' created.")
+      }
+    },
+    Method.GET / "agents" / "registry" / string("id")                    -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _             <- ensureRegistryMigrated
+          agent         <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          workspaceRuns <- loadWorkspaceRuns(agent)
+          now           <- Clock.instant
+          metrics        = computeMetrics(workspaceRuns, now)
+          runs           = toRunHistory(workspaceRuns)
+          history        = computeHistory(workspaceRuns, 30, now)
+          flash          = req.queryParam("flash").map(urlDecode).filter(_.nonEmpty)
+        yield html(HtmlViews.agentRegistryDetailPage(agent, metrics.summary, runs, metrics.activeRuns, history, flash))
+      }
+    },
+    Method.GET / "agents" / "registry" / string("id") / "edit"           -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _     <- ensureRegistryMigrated
+          agent <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          values = valuesFromAgent(agent)
+        yield html(HtmlViews.agentRegistryFormPage("Edit Agent", s"/agents/registry/$id/edit", values))
+      }
+    },
+    Method.POST / "agents" / "registry" / string("id") / "edit"          -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _        <- ensureRegistryMigrated
+          existing <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          form     <- parseForm(req)
+          upsert   <- upsertFromForm(form)
+          byName   <- agentRepository.findByName(upsert.name).mapError(mapAgentRepoError)
+          _        <- ZIO
+                        .fail(PersistenceError.QueryFailed("agent_update", s"Agent '${upsert.name}' already exists"))
+                        .when(byName.exists(_.id != existing.id))
+          now      <- Clock.instant
+          updated  <- buildAgentFromUpsert(existing.id, upsert, now, existing.createdAt)
+          _        <- agentRepository.append(AgentEvent.Updated(updated, now)).mapError(mapAgentRepoError)
+        yield redirectToAgentRegistry(s"Agent '${updated.name}' updated.")
+      }
+    },
+    Method.POST / "agents" / "registry" / string("id") / "disable"       -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          _        <- ensureRegistryMigrated
+          existing <- agentRepository.get(AgentId(id)).mapError(mapAgentRepoError)
+          now      <- Clock.instant
+          _        <-
+            if existing.enabled then
+              agentRepository.append(AgentEvent.Disabled(existing.id, Some("Disabled from UI"), now)).mapError(
+                mapAgentRepoError
+              )
+            else
+              agentRepository.append(AgentEvent.Enabled(existing.id, now)).mapError(mapAgentRepoError)
+        yield redirectToAgentRegistry("Agent status updated.")
+      }
+    },
+    Method.GET / "agents"                                                -> handler { (req: Request) =>
+      ZIO.succeed(
+        Response(
+          status = Status.Found,
+          headers = Headers(Header.Location(URL.decode("/agents/registry").getOrElse(URL.root))),
+        )
+      )
+    },
+    Method.GET / "agents" / "new"                                        -> handler { (_: Request) =>
       ZIO.succeed(html(HtmlViews.newCustomAgentPage()))
     },
-    Method.POST / "agents"                                          -> handler { (req: Request) =>
+    Method.POST / "agents"                                               -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           form         <- parseForm(req)
@@ -91,7 +341,7 @@ final case class AgentsControllerLive(
         yield redirectToAgents(s"Custom agent '$displayName' created.")
       }
     },
-    Method.GET / "agents" / string("name") / "edit"                 -> handler { (name: String, req: Request) =>
+    Method.GET / "agents" / string("name") / "edit"                      -> handler { (name: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           agent <- repository
@@ -107,7 +357,7 @@ final case class AgentsControllerLive(
         )
       }
     },
-    Method.POST / "agents" / string("name") / "edit"                -> handler { (name: String, req: Request) =>
+    Method.POST / "agents" / string("name") / "edit"                     -> handler { (name: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           existing <- repository
@@ -134,7 +384,7 @@ final case class AgentsControllerLive(
         yield redirectToAgents(s"Custom agent '${updated.displayName}' updated.")
       }
     },
-    Method.POST / "agents" / string("name") / "delete"              -> handler { (name: String, _: Request) =>
+    Method.POST / "agents" / string("name") / "delete"                   -> handler { (name: String, _: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           existing <- repository
@@ -148,7 +398,7 @@ final case class AgentsControllerLive(
         yield redirectToAgents(s"Custom agent '${existing.displayName}' deleted.")
       }
     },
-    Method.GET / "agents" / string("name") / "config"               -> handler { (name: String, req: Request) =>
+    Method.GET / "agents" / string("name") / "config"                    -> handler { (name: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           agent <- findAnyAgent(name)
@@ -178,7 +428,7 @@ final case class AgentsControllerLive(
         yield out
       }
     },
-    Method.POST / "agents" / string("name") / "config"              -> handler { (name: String, req: Request) =>
+    Method.POST / "agents" / string("name") / "config"                   -> handler { (name: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           agent <- findAnyAgent(name)
@@ -205,7 +455,7 @@ final case class AgentsControllerLive(
         yield out
       }
     },
-    Method.POST / "agents" / string("name") / "config" / "reset"    -> handler { (name: String, _: Request) =>
+    Method.POST / "agents" / string("name") / "config" / "reset"         -> handler { (name: String, _: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           agent <- findAnyAgent(name)
@@ -226,7 +476,7 @@ final case class AgentsControllerLive(
         yield out
       }
     },
-    Method.POST / "agents" / string("name") / "bindings"            -> handler { (name: String, req: Request) =>
+    Method.POST / "agents" / string("name") / "bindings"                 -> handler { (name: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           agent <-
@@ -242,7 +492,7 @@ final case class AgentsControllerLive(
         yield redirectToAgents(s"Channel binding saved for ${agent.displayName}.")
       }
     },
-    Method.POST / "agents" / string("name") / "bindings" / "remove" -> handler { (name: String, req: Request) =>
+    Method.POST / "agents" / string("name") / "bindings" / "remove"      -> handler { (name: String, req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {
         for
           agent <-
@@ -258,7 +508,7 @@ final case class AgentsControllerLive(
         yield redirectToAgents(s"Channel binding removed for ${agent.displayName}.")
       }
     },
-    Method.POST / "api" / "agent" / "invoke"                        -> handler { (req: Request) =>
+    Method.POST / "api" / "agent" / "invoke"                             -> handler { (req: Request) =>
       invokeAgent(req)
     },
   )
@@ -278,6 +528,303 @@ final case class AgentsControllerLive(
       headers = Headers(Header.Custom("Location", s"/agents?flash=${urlEncode(flash)}")),
     )
 
+  private def redirectToAgentRegistry(flash: String): Response =
+    Response(
+      status = Status.SeeOther,
+      headers = Headers(Header.Custom("Location", s"/agents/registry?flash=${urlEncode(flash)}")),
+    )
+
+  private def mapAgentRepoError(error: shared.errors.PersistenceError): PersistenceError =
+    error match
+      case shared.errors.PersistenceError.NotFound(entity, id)               =>
+        PersistenceError.QueryFailed(entity, s"Not found: $id")
+      case shared.errors.PersistenceError.QueryFailed(op, cause)             =>
+        PersistenceError.QueryFailed(op, cause)
+      case shared.errors.PersistenceError.SerializationFailed(entity, cause) =>
+        PersistenceError.QueryFailed(entity, cause)
+      case shared.errors.PersistenceError.StoreUnavailable(msg)              =>
+        PersistenceError.QueryFailed("store", msg)
+
+  private def ensureRegistryMigrated: IO[PersistenceError, Unit] =
+    for
+      existing     <- agentRepository.list(includeDeleted = true).mapError(mapAgentRepoError)
+      existingNames = existing.map(_.name.trim.toLowerCase).toSet
+      custom       <- repository.listCustomAgents
+      now          <- Clock.instant
+      migrated      = (seedBuiltInAgents(now) ++ seedCustomAgents(custom))
+                        .filterNot(agent => existingNames.contains(agent.name.trim.toLowerCase))
+      _            <- ZIO.foreachDiscard(migrated)(agent =>
+                        agentRepository.append(AgentEvent.Created(agent, now)).mapError(mapAgentRepoError)
+                      )
+    yield ()
+
+  private def seedBuiltInAgents(now: Instant): List[RegistryAgent] =
+    AgentRegistry.builtInAgents.map { info =>
+      RegistryAgent(
+        id = AgentId.generate,
+        name = info.name,
+        description = info.description,
+        cliTool = inferCliTool(info.name),
+        capabilities = info.tags,
+        defaultModel = None,
+        systemPrompt = None,
+        maxConcurrentRuns = 1,
+        envVars = Map.empty,
+        timeout = Duration.ofMinutes(30),
+        enabled = true,
+        createdAt = now,
+        updatedAt = now,
+      )
+    }
+
+  private def seedCustomAgents(custom: List[CustomAgentRow]): List[RegistryAgent] =
+    custom.map { row =>
+      RegistryAgent(
+        id = AgentId.generate,
+        name = row.name,
+        description = row.description.getOrElse(s"Custom agent ${row.displayName}"),
+        cliTool = inferCliTool(row.name),
+        capabilities = row.tags.toList.flatMap(_.split(",").toList.map(_.trim).filter(_.nonEmpty)),
+        defaultModel = None,
+        systemPrompt = Some(row.systemPrompt),
+        maxConcurrentRuns = 1,
+        envVars = Map.empty,
+        timeout = Duration.ofMinutes(30),
+        enabled = row.enabled,
+        createdAt = row.createdAt,
+        updatedAt = row.updatedAt,
+      )
+    }
+
+  private def inferCliTool(name: String): String =
+    val lower = name.trim.toLowerCase
+    if lower.contains("claude") then "claude"
+    else if lower.contains("opencode") then "opencode"
+    else if lower.contains("gemini") then "gemini"
+    else if lower.contains("codex") then "codex"
+    else "gemini"
+
+  private def parseCapabilities(req: Request): List[String] =
+    val raw = req.queryParam("capabilities").getOrElse("")
+    raw
+      .split(",")
+      .toList
+      .map(_.trim.toLowerCase)
+      .filter(_.nonEmpty)
+      .distinct
+
+  private def loadWorkspaceRuns(agent: RegistryAgent): IO[PersistenceError, List[WorkspaceRun]] =
+    for
+      workspaces <- workspaceRepository.list.mapError(mapAgentRepoError)
+      allRuns    <-
+        ZIO.foreach(workspaces)(ws => workspaceRepository.listRuns(ws.id).mapError(mapAgentRepoError)).map(_.flatten)
+      runs        = allRuns
+                      .filter(_.agentName.equalsIgnoreCase(agent.name))
+                      .sortBy(_.updatedAt)(Ordering[Instant].reverse)
+    yield runs
+
+  private def toRunHistory(runs: List[WorkspaceRun]): List[AgentRunHistoryItem] =
+    runs.map(run =>
+      AgentRunHistoryItem(
+        runId = run.id,
+        workspaceId = run.workspaceId,
+        issueRef = run.issueRef,
+        status = run.status.toString,
+        updatedAt = run.updatedAt,
+      )
+    )
+
+  private def computeMetrics(runs: List[WorkspaceRun], now: Instant): AgentMetricsView =
+    val completed      = runs.count(_.status == RunStatus.Completed)
+    val failed         = runs.count(_.status == RunStatus.Failed)
+    val active         = runs.filter(run => isActive(run.status))
+    val terminalRuns   = runs.filter(run => run.status == RunStatus.Completed || run.status == RunStatus.Failed)
+    val durations      =
+      terminalRuns.map(run => math.max(0L, Duration.between(run.createdAt, run.updatedAt).getSeconds))
+    val successDenom   = completed + failed
+    val successRate    = if successDenom == 0 then 0.0 else completed.toDouble / successDenom.toDouble
+    val cutoff7d       = now.minus(Duration.ofDays(7))
+    val cutoff30d      = now.minus(Duration.ofDays(30))
+    val runs7d         = runs.count(run => !run.createdAt.isBefore(cutoff7d))
+    val runs30d        = runs.count(run => !run.createdAt.isBefore(cutoff30d))
+    val issuesResolved = runs.count(run => run.status == RunStatus.Completed && run.issueRef.trim.startsWith("#"))
+    val activeRuns     = active
+      .map(run =>
+        AgentActiveRun(
+          runId = run.id,
+          workspaceId = run.workspaceId,
+          issueRef = run.issueRef,
+          conversationId = run.conversationId,
+          status = run.status.toString,
+          startedAt = run.createdAt,
+        )
+      )
+      .sortBy(_.startedAt)(Ordering[Instant].reverse)
+    AgentMetricsView(
+      summary = AgentMetricsSummary(
+        totalRuns = runs.size,
+        completedRuns = completed,
+        failedRuns = failed,
+        activeRuns = active.size,
+        successRate = successRate,
+        totalRuns7d = runs7d,
+        totalRuns30d = runs30d,
+        averageDurationSeconds = if durations.isEmpty then 0L else durations.sum / durations.size,
+        issuesResolvedCount = issuesResolved,
+      ),
+      activeRuns = activeRuns,
+    )
+
+  private def computeHistory(
+    runs: List[WorkspaceRun],
+    days: Int,
+    now: Instant,
+  ): List[AgentMetricsHistoryPoint] =
+    val fromDate = LocalDate.ofInstant(now.minus(Duration.ofDays((days - 1).toLong)), ZoneOffset.UTC)
+    val grouped  = runs.groupBy(run => LocalDate.ofInstant(run.createdAt, ZoneOffset.UTC))
+    (0 until days).toList.map(offset => fromDate.plusDays(offset.toLong)).map { date =>
+      val dayRuns         = grouped.getOrElse(date, Nil)
+      val completed       = dayRuns.count(_.status == RunStatus.Completed)
+      val failed          = dayRuns.count(_.status == RunStatus.Failed)
+      val successDenom    = completed + failed
+      val successRate     = if successDenom == 0 then 0.0 else completed.toDouble / successDenom.toDouble
+      val dayTerminalRuns = dayRuns.filter(run => run.status == RunStatus.Completed || run.status == RunStatus.Failed)
+      val dayDurations    =
+        dayTerminalRuns.map(run => math.max(0L, Duration.between(run.createdAt, run.updatedAt).getSeconds))
+      AgentMetricsHistoryPoint(
+        date = date.toString,
+        totalRuns = dayRuns.size,
+        completedRuns = completed,
+        failedRuns = failed,
+        successRate = successRate,
+        averageDurationSeconds = if dayDurations.isEmpty then 0L else dayDurations.sum / dayDurations.size,
+        issuesResolvedCount =
+          dayRuns.count(run => run.status == RunStatus.Completed && run.issueRef.trim.startsWith("#")),
+      )
+    }
+
+  private def parsePeriodDays(req: Request): IO[PersistenceError, Int] =
+    val raw = req.queryParam("period").map(_.trim.toLowerCase).filter(_.nonEmpty).getOrElse("30d")
+    raw.stripSuffix("d").toIntOption match
+      case Some(days) if days > 0 && days <= 365 => ZIO.succeed(days)
+      case _                                     =>
+        ZIO.fail(PersistenceError.QueryFailed("agent_metrics", s"Invalid period '$raw'. Expected like 30d"))
+
+  private def isActive(status: RunStatus): Boolean =
+    status == RunStatus.Pending || status.isInstanceOf[RunStatus.Running]
+
+  private def buildAgentFromUpsert(
+    id: AgentId,
+    request: AgentUpsertRequest,
+    now: Instant,
+    createdAt: Instant,
+  ): IO[PersistenceError, RegistryAgent] =
+    for
+      timeout <-
+        ZIO
+          .attempt(Duration.parse(request.timeout.trim))
+          .mapError(err =>
+            PersistenceError.QueryFailed("agent_upsert", s"Invalid timeout '${request.timeout}': ${err.getMessage}")
+          )
+      _       <- validateAgentNameFormat(request.name, "agent_upsert")
+      _       <- ZIO
+                   .fail(PersistenceError.QueryFailed("agent_upsert", "maxConcurrentRuns must be >= 1"))
+                   .when(request.maxConcurrentRuns < 1)
+      _       <- ZIO
+                   .fail(PersistenceError.QueryFailed("agent_upsert", "timeout must be between PT1S and PT24H"))
+                   .when(timeout.compareTo(Duration.ofSeconds(1)) < 0 || timeout.compareTo(Duration.ofHours(24)) > 0)
+      _       <- ZIO
+                   .fail(PersistenceError.QueryFailed("agent_upsert", "description cannot be empty"))
+                   .when(request.description.trim.isEmpty)
+      _       <- ZIO
+                   .fail(PersistenceError.QueryFailed("agent_upsert", "cliTool cannot be empty"))
+                   .when(request.cliTool.trim.isEmpty)
+      _       <- ZIO.foreachDiscard(request.envVars.keys) { key =>
+                   ZIO
+                     .fail(
+                       PersistenceError.QueryFailed(
+                         "agent_upsert",
+                         s"Invalid env var name '$key'. Use [A-Za-z_][A-Za-z0-9_]*",
+                       )
+                     )
+                     .when(!key.trim.matches("^[A-Za-z_][A-Za-z0-9_]*$"))
+                 }
+    yield RegistryAgent(
+      id = id,
+      name = request.name.trim,
+      description = request.description.trim,
+      cliTool = request.cliTool.trim,
+      capabilities = request.capabilities.map(_.trim).filter(_.nonEmpty).distinct,
+      defaultModel = request.defaultModel.map(_.trim).filter(_.nonEmpty),
+      systemPrompt = request.systemPrompt.map(_.trim).filter(_.nonEmpty),
+      maxConcurrentRuns = request.maxConcurrentRuns,
+      envVars = request.envVars.collect { case (k, v) if k.trim.nonEmpty => k.trim -> v },
+      dockerMemoryLimit = request.dockerMemoryLimit.map(_.trim).filter(_.nonEmpty),
+      dockerCpuLimit = request.dockerCpuLimit.map(_.trim).filter(_.nonEmpty),
+      timeout = timeout,
+      enabled = request.enabled,
+      createdAt = createdAt,
+      updatedAt = now,
+      deletedAt = None,
+    )
+
+  private def valuesFromAgent(agent: RegistryAgent): Map[String, String] =
+    Map(
+      "name"              -> agent.name,
+      "description"       -> agent.description,
+      "cliTool"           -> agent.cliTool,
+      "capabilities"      -> agent.capabilities.mkString(","),
+      "defaultModel"      -> agent.defaultModel.getOrElse(""),
+      "systemPrompt"      -> agent.systemPrompt.getOrElse(""),
+      "maxConcurrentRuns" -> agent.maxConcurrentRuns.toString,
+      "timeout"           -> agent.timeout.toString,
+      "envVars"           -> agent.envVars.toList.sortBy(_._1).map((k, v) => s"$k=$v").mkString("\n"),
+      "dockerMemoryLimit" -> agent.dockerMemoryLimit.getOrElse(""),
+      "dockerCpuLimit"    -> agent.dockerCpuLimit.getOrElse(""),
+      "enabled"           -> agent.enabled.toString,
+    )
+
+  private def upsertFromForm(form: Map[String, String]): IO[PersistenceError, AgentUpsertRequest] =
+    for
+      name        <- required(form, "name")
+      description <- required(form, "description")
+      cliTool     <- required(form, "cliTool")
+      timeout      = form.getOrElse("timeout", "PT30M").trim
+      maxRuns     <- ZIO
+                       .fromOption(form.get("maxConcurrentRuns").map(_.trim).filter(_.nonEmpty))
+                       .orElseSucceed("1")
+                       .flatMap(raw =>
+                         ZIO
+                           .fromOption(raw.toIntOption)
+                           .orElseFail(PersistenceError.QueryFailed("parseForm", "maxConcurrentRuns must be numeric"))
+                       )
+    yield AgentUpsertRequest(
+      name = name,
+      description = description,
+      cliTool = cliTool,
+      capabilities = form.get("capabilities").toList.flatMap(_.split(",").toList.map(_.trim).filter(_.nonEmpty)),
+      defaultModel = optional(form, "defaultModel"),
+      systemPrompt = optional(form, "systemPrompt"),
+      maxConcurrentRuns = maxRuns,
+      envVars = parseEnvVars(form.get("envVars")),
+      dockerMemoryLimit = optional(form, "dockerMemoryLimit"),
+      dockerCpuLimit = optional(form, "dockerCpuLimit"),
+      timeout = timeout,
+      enabled = form.get("enabled").exists(v => v == "on" || v.equalsIgnoreCase("true")),
+    )
+
+  private def parseEnvVars(raw: Option[String]): Map[String, String] =
+    raw.toList
+      .flatMap(_.split("\n").toList)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap { line =>
+        line.split("=", 2).toList match
+          case key :: value :: Nil => Some(key.trim -> value.trim)
+          case _                   => None
+      }
+      .toMap
+
   private def toKeyMap(rows: List[db.SettingRow]): Map[String, String] =
     rows.map(row => row.key -> row.value).toMap
 
@@ -287,9 +834,6 @@ final case class AgentsControllerLive(
         case suffix if suffix.nonEmpty => Some(s"ai.$suffix" -> row.value)
         case _                         => None
     }.toMap
-
-  private def bindingsByAgent(bindings: List[AgentChannelBinding]): Map[String, List[AgentChannelBinding]] =
-    bindings.groupBy(_.agentId.value)
 
   private def parseForm(req: Request): IO[PersistenceError, Map[String, String]] =
     req.body.asString
@@ -340,10 +884,28 @@ final case class AgentsControllerLive(
 
   private def findAnyAgent(name: String): IO[PersistenceError, Option[AgentInfo]] =
     for
-      custom <- repository.listCustomAgents
-    yield AgentRegistry.allAgents(custom).find { agent =>
+      _        <- ensureRegistryMigrated
+      registry <- agentRepository.list().mapError(mapAgentRepoError)
+      custom   <- repository.listCustomAgents
+      merged    = (registry.map(toAgentInfo) ++ AgentRegistry.allAgents(custom)).groupBy(_.name.toLowerCase).values.map(
+                    _.head
+                  ).toList
+    yield merged.find { agent =>
       agent.name.equalsIgnoreCase(name.trim) || agent.handle.equalsIgnoreCase(name.trim)
     }
+
+  private def toAgentInfo(agent: RegistryAgent): AgentInfo =
+    val builtInNames = AgentRegistry.builtInAgents.map(_.name.toLowerCase).toSet
+    AgentInfo(
+      name = agent.name,
+      handle = agent.name.trim.toLowerCase.replaceAll("[^a-z0-9_-]+", "-"),
+      displayName = agent.name,
+      description = agent.description,
+      agentType = if builtInNames.contains(agent.name.toLowerCase) then _root_.config.entity.AgentType.BuiltIn
+      else _root_.config.entity.AgentType.Custom,
+      usesAI = true,
+      tags = agent.capabilities,
+    )
 
   final private case class AgentInvokeRequest(
     message: String,

@@ -19,6 +19,7 @@ object IssueEvent:
     issueType: String,
     priority: String,
     occurredAt: Instant,
+    requiredCapabilities: List[String] = Nil,
   ) extends IssueEvent
 
   final case class Assigned(

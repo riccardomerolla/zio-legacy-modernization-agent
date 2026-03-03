@@ -11,6 +11,9 @@ enum IssuePriority derives JsonCodec, Schema:
 enum IssueStatus derives JsonCodec, Schema:
   case Open, Assigned, InProgress, Completed, Failed, Skipped
 
+enum PipelineExecutionMode derives JsonCodec, Schema:
+  case Sequential, Parallel
+
 case class AgentIssueView(
   id: Option[String] = None,
   runId: Option[String] = None,
@@ -19,6 +22,7 @@ case class AgentIssueView(
   description: String,
   issueType: String,
   tags: Option[String] = None,
+  requiredCapabilities: Option[String] = None,
   preferredAgent: Option[String] = None,
   contextPath: Option[String] = None,
   sourceFolder: Option[String] = None,
@@ -52,6 +56,7 @@ case class AgentIssueCreateRequest(
   description: String,
   issueType: String,
   tags: Option[String] = None,
+  requiredCapabilities: List[String] = Nil,
   preferredAgent: Option[String] = None,
   contextPath: Option[String] = None,
   sourceFolder: Option[String] = None,
@@ -152,6 +157,62 @@ case class BulkIssueOperationResponse(
   succeeded: Int,
   failed: Int,
   errors: List[String] = Nil,
+) derives JsonCodec
+
+case class AutoAssignIssueRequest(
+  workspaceId: Option[String] = None,
+  thresholdPercent: Option[Double] = None,
+) derives JsonCodec
+
+case class AutoAssignIssueResponse(
+  assigned: Boolean,
+  queued: Boolean,
+  agentName: Option[String] = None,
+  score: Option[Double] = None,
+  reason: Option[String] = None,
+) derives JsonCodec
+
+case class PipelineStep(
+  agentId: String,
+  promptOverride: Option[String] = None,
+  continueOnFailure: Boolean = false,
+) derives JsonCodec
+
+case class AgentPipeline(
+  id: String,
+  name: String,
+  steps: List[PipelineStep],
+  createdAt: Instant,
+  updatedAt: Instant,
+) derives JsonCodec
+
+case class PipelineCreateRequest(
+  name: String,
+  steps: List[PipelineStep],
+) derives JsonCodec
+
+case class RunPipelineRequest(
+  pipelineId: String,
+  workspaceId: Option[String] = None,
+  mode: PipelineExecutionMode = PipelineExecutionMode.Sequential,
+  basePromptOverride: Option[String] = None,
+) derives JsonCodec
+
+case class PipelineExecutionRun(
+  stepIndex: Int,
+  agentId: String,
+  runId: String,
+  status: String,
+) derives JsonCodec
+
+case class RunPipelineResponse(
+  executionId: String,
+  issueId: String,
+  pipelineId: String,
+  mode: PipelineExecutionMode,
+  status: String,
+  runs: List[PipelineExecutionRun],
+  message: Option[String] = None,
 ) derives JsonCodec
 
 case class FolderImportPreviewItem(

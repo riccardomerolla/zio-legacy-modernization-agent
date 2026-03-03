@@ -99,6 +99,22 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
       )
       assertTrue(!argv.contains("-v") && !argv.contains("--workdir"))
     },
+    test("buildArgv with RunMode.Docker includes env and resource flags") {
+      val argv = CliAgentRunner.buildArgv(
+        "gemini",
+        "fix it",
+        "/tmp/wt",
+        RunMode.Docker("gemini:latest", Nil, mountWorktree = true, None),
+        envVars = Map("A" -> "1"),
+        dockerMemoryLimit = Some("2g"),
+        dockerCpuLimit = Some("1.5"),
+      )
+      assertTrue(
+        argv.containsSlice(List("--memory", "2g")),
+        argv.containsSlice(List("--cpus", "1.5")),
+        argv.containsSlice(List("-e", "A=1")),
+      )
+    },
     test("runProcess with echo collects output line and returns exit 0") {
       for
         result           <- CliAgentRunner.runProcess(List("echo", "line one"), cwd = "/tmp")
