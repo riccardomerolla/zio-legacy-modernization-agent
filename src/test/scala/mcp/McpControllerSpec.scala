@@ -77,5 +77,14 @@ object McpControllerSpec extends ZIOSpecDefault:
           response.headers.get(Header.ContentType).exists(_.mediaType == MediaType.text.`event-stream`),
         )
       },
+      test("includes X-Session-Id response header so client knows the sessionId") {
+        for
+          transport <- SseTransport.make(apiKey = None)
+          controller = McpController(transport)
+          request    = Request.get(URL.decode("/mcp/sse").toOption.get)
+          response  <- controller.routes.runZIO(request)
+          sessionId  = response.rawHeader("X-Session-Id")
+        yield assertTrue(sessionId.isDefined, sessionId.exists(_.nonEmpty))
+      },
     ),
   )

@@ -75,13 +75,20 @@ class SseTransport(
   val sessions: SseSessionRegistry,
   val apiKey: Option[String],
   inboundQ: Queue[JsonRpcRequest],
+  pendingRoutes: Ref[Map[String, String]], // requestId.toString -> sessionId
 ) extends McpTransport:
 
   override def receive: ZStream[Any, McpError, JsonRpcRequest] =
     ZStream.fromQueue(inboundQ)
 
   override def send(response: JsonRpcResponse): IO[McpError, Unit] =
-    ZIO.unit // Per-session routing done via sendToSession
+    val key = response.id match
+      case RequestId.Str(s) => s
+      case RequestId.Num(n) => n.toString
+    pendingRoutes.modify(m => (m.get(key), m - key)).flatMap {
+      case Some(sessionId) => sessions.enqueue(sessionId, Right(response))
+      case None            => ZIO.unit
+    }
 
   override def notify(notification: JsonRpcNotification): IO[McpError, Unit] =
     sessions.broadcast(Left(notification))
@@ -90,9 +97,13 @@ class SseTransport(
   def sendToSession(sessionId: String, response: JsonRpcResponse): UIO[Unit] =
     sessions.enqueue(sessionId, Right(response))
 
-  /** Called by the HTTP route handler to push an inbound request. */
-  def accept(request: JsonRpcRequest): UIO[Unit] =
-    inboundQ.offer(request).unit
+  /** Called by the HTTP route handler to push an inbound request, registering session routing. */
+  def accept(sessionId: String, request: JsonRpcRequest): UIO[Unit] =
+    val register = request.id match
+      case Some(RequestId.Str(s)) => pendingRoutes.update(_ + (s -> sessionId))
+      case Some(RequestId.Num(n)) => pendingRoutes.update(_ + (n.toString -> sessionId))
+      case None                   => ZIO.unit
+    register *> inboundQ.offer(request).unit
 
   /** True when the request carries a valid API key (or no key is required). */
   def validateKey(providedKey: Option[String]): Boolean =
@@ -103,9 +114,10 @@ class SseTransport(
 object SseTransport:
   def make(apiKey: Option[String]): UIO[SseTransport] =
     for
-      sessions <- SseSessionRegistry.make
-      inboundQ <- Queue.unbounded[JsonRpcRequest]
-    yield new SseTransport(sessions, apiKey, inboundQ)
+      sessions      <- SseSessionRegistry.make
+      inboundQ      <- Queue.unbounded[JsonRpcRequest]
+      pendingRoutes <- Ref.make(Map.empty[String, String])
+    yield new SseTransport(sessions, apiKey, inboundQ, pendingRoutes)
 
   val live: ZLayer[Any, Nothing, McpTransport] =
     ZLayer.fromZIO(make(apiKey = None))

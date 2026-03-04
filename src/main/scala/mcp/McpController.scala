@@ -38,7 +38,7 @@ final class McpController(transport: SseTransport):
               req.body.asString.orDie.flatMap { body =>
                 body.fromJson[JsonRpcRequest] match
                   case Left(_)    => ZIO.succeed(Response.status(Status.BadRequest))
-                  case Right(rpc) => transport.accept(rpc).as(Response.status(Status.Accepted))
+                  case Right(rpc) => transport.accept(sessionId, rpc).as(Response.status(Status.Accepted))
               }
           }
 
@@ -50,18 +50,21 @@ final class McpController(transport: SseTransport):
       ZIO.succeed(Response.status(Status.Unauthorized))
     else
       transport.sessions.create.map { sessionId =>
-        val stream: ZStream[Any, Nothing, String] = transport.sessions
-          .stream(sessionId)
-          .map {
-            case Left(notif) => s"event: message\ndata: ${notif.toJson}\n\n"
-            case Right(resp) => s"event: message\ndata: ${resp.toJson}\n\n"
-          }
+        val endpointEvent                         = s"event: endpoint\ndata: /mcp?sessionId=$sessionId\n\n"
+        val stream: ZStream[Any, Nothing, String] =
+          ZStream(endpointEvent) ++ transport.sessions
+            .stream(sessionId)
+            .map {
+              case Left(notif) => s"event: message\ndata: ${notif.toJson}\n\n"
+              case Right(resp) => s"event: message\ndata: ${resp.toJson}\n\n"
+            }
         Response(
           status = Status.Ok,
           headers = Headers(
             Header.ContentType(MediaType.text.`event-stream`),
             Header.CacheControl.NoCache,
             Header.Custom("Connection", "keep-alive"),
+            Header.Custom("X-Session-Id", sessionId),
           ),
           body = Body.fromCharSequenceStreamChunked(stream),
         )

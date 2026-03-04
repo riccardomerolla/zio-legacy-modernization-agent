@@ -41,7 +41,18 @@ object SseTransportSpec extends ZIOSpecDefault:
           _         <- transport.sendToSession(id, resp)
           outbound  <- transport.sessions.take(id)
         yield assertTrue(outbound.contains(Right(resp)))
-      }
+      },
+      test("routes response to session that submitted the request") {
+        for
+          transport <- SseTransport.make(apiKey = None)
+          sessionId <- transport.sessions.create
+          req        = JsonRpcRequest(id = Some(RequestId.Num(42L)), method = "tools/list")
+          _         <- transport.accept(sessionId, req)
+          resp       = JsonRpcResponse.success(RequestId.Num(42L), Json.Obj())
+          _         <- transport.send(resp)
+          outbound  <- transport.sessions.take(sessionId)
+        yield assertTrue(outbound.contains(Right(resp)))
+      },
     ),
     suite("notify")(
       test("broadcasts notification to all active sessions") {
