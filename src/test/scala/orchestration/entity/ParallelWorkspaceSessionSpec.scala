@@ -11,7 +11,7 @@ object ParallelWorkspaceSessionSpec extends ZIOSpecDefault:
       test("round-trips through JSON") {
         val stats = DiffStats(filesChanged = 8, linesAdded = 142, linesRemoved = 12)
         assertTrue(stats.toJson.fromJson[DiffStats] == Right(stats))
-      },
+      }
     ),
     suite("WorktreeRunStatus")(
       test("all values round-trip through JSON") {
@@ -23,7 +23,7 @@ object ParallelWorkspaceSessionSpec extends ZIOSpecDefault:
           WorktreeRunStatus.Cancelled,
         )
         assertTrue(statuses.forall(s => s.toJson.fromJson[WorktreeRunStatus] == Right(s)))
-      },
+      }
     ),
     suite("ParallelSessionStatus")(
       test("all values round-trip through JSON") {
@@ -37,7 +37,7 @@ object ParallelWorkspaceSessionSpec extends ZIOSpecDefault:
           ParallelSessionStatus.Cancelled,
         )
         assertTrue(statuses.forall(s => s.toJson.fromJson[ParallelSessionStatus] == Right(s)))
-      },
+      }
     ),
     suite("WorktreeRunRef")(
       test("round-trips through JSON with all fields") {
@@ -83,7 +83,7 @@ object ParallelWorkspaceSessionSpec extends ZIOSpecDefault:
               status = WorktreeRunStatus.Running,
               summary = None,
               diffStats = None,
-            ),
+            )
           ),
           createdAt = now,
           updatedAt = now,
@@ -147,7 +147,8 @@ object ParallelWorkspaceSessionSpec extends ZIOSpecDefault:
         assertTrue(err.toJson.fromJson[ParallelSessionError] == Right(err))
       },
       test("AgentAssignmentFailed round-trips through JSON") {
-        val err: ParallelSessionError = ParallelSessionError.AgentAssignmentFailed(stepId = "step-1", reason = "no capable agent found")
+        val err: ParallelSessionError =
+          ParallelSessionError.AgentAssignmentFailed(stepId = "step-1", reason = "no capable agent found")
         assertTrue(err.toJson.fromJson[ParallelSessionError] == Right(err))
       },
       test("WorktreeError round-trips through JSON") {

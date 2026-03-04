@@ -42,9 +42,9 @@ final case class ParallelWorkspaceSession(
 
 sealed trait ParallelSessionError derives JsonCodec
 object ParallelSessionError:
-  final case class WorkflowNotFound(workflowId: String)                      extends ParallelSessionError
-  final case class WorkspaceNotFound(workspaceId: String)                    extends ParallelSessionError
-  final case class SessionNotFound(sessionId: String)                        extends ParallelSessionError
-  final case class InsufficientResources(available: Int, required: Int)      extends ParallelSessionError
-  final case class AgentAssignmentFailed(stepId: String, reason: String)     extends ParallelSessionError
-  final case class WorktreeError(detail: String)                             extends ParallelSessionError
+  final case class WorkflowNotFound(workflowId: String)                  extends ParallelSessionError
+  final case class WorkspaceNotFound(workspaceId: String)                extends ParallelSessionError
+  final case class SessionNotFound(sessionId: String)                    extends ParallelSessionError
+  final case class InsufficientResources(available: Int, required: Int)  extends ParallelSessionError
+  final case class AgentAssignmentFailed(stepId: String, reason: String) extends ParallelSessionError
+  final case class WorktreeError(detail: String)                         extends ParallelSessionError
