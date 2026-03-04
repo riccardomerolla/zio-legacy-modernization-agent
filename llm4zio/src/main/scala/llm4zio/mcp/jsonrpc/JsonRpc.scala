@@ -11,17 +11,16 @@ enum RequestId:
 
 object RequestId:
   given JsonDecoder[RequestId] = JsonDecoder[Json].mapOrFail {
-    case Json.Str(s)  => Right(RequestId.Str(s))
-    case Json.Num(n)  => Right(RequestId.Num(BigDecimal(n).toLongExact))
-    case other        => Left(s"RequestId must be a string or number, got: $other")
+    case Json.Str(s) => Right(RequestId.Str(s))
+    case Json.Num(n) => Right(RequestId.Num(BigDecimal(n).toLongExact))
+    case other       => Left(s"RequestId must be a string or number, got: $other")
   }
   given JsonEncoder[RequestId] = JsonEncoder[Json].contramap {
     case RequestId.Str(s) => Json.Str(s)
     case RequestId.Num(n) => Json.Num(BigDecimal(n))
   }
 
-/** A JSON-RPC 2.0 request or notification.
-  * When `id` is None this is a notification (no response expected).
+/** A JSON-RPC 2.0 request or notification. When `id` is None this is a notification (no response expected).
   */
 case class JsonRpcRequest(
   jsonrpc: String = "2.0",
@@ -38,12 +37,12 @@ case class JsonRpcError(
 ) derives JsonCodec
 
 object JsonRpcError:
-  def parseError(msg: String): JsonRpcError      = JsonRpcError(-32700, s"Parse error: $msg")
-  def invalidRequest(msg: String): JsonRpcError  = JsonRpcError(-32600, s"Invalid request: $msg")
+  def parseError(msg: String): JsonRpcError        = JsonRpcError(-32700, s"Parse error: $msg")
+  def invalidRequest(msg: String): JsonRpcError    = JsonRpcError(-32600, s"Invalid request: $msg")
   def methodNotFound(method: String): JsonRpcError =
     JsonRpcError(-32601, s"Method not found: $method")
-  def invalidParams(msg: String): JsonRpcError   = JsonRpcError(-32602, s"Invalid params: $msg")
-  def internalError(msg: String): JsonRpcError   = JsonRpcError(-32603, s"Internal error: $msg")
+  def invalidParams(msg: String): JsonRpcError     = JsonRpcError(-32602, s"Invalid params: $msg")
+  def internalError(msg: String): JsonRpcError     = JsonRpcError(-32603, s"Internal error: $msg")
 
 /** A JSON-RPC 2.0 response. Exactly one of `result` or `error` is set. */
 case class JsonRpcResponse(
@@ -54,7 +53,7 @@ case class JsonRpcResponse(
 ) derives JsonCodec
 
 object JsonRpcResponse:
-  def success(id: RequestId, result: Json): JsonRpcResponse =
+  def success(id: RequestId, result: Json): JsonRpcResponse    =
     JsonRpcResponse(id = id, result = Some(result))
   def error(id: RequestId, err: JsonRpcError): JsonRpcResponse =
     JsonRpcResponse(id = id, error = Some(err))

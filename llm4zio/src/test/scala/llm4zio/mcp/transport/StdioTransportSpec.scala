@@ -11,11 +11,11 @@ import llm4zio.mcp.jsonrpc.*
 import llm4zio.mcp.server.McpError
 
 object StdioTransportSpec extends ZIOSpecDefault:
-  def spec = suite("StdioTransport")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("StdioTransport")(
     suite("receive")(
       test("reads newline-delimited JSON-RPC requests from input stream") {
-        val req1 = JsonRpcRequest(id = Some(RequestId.Num(1L)), method = "tools/list")
-        val req2 = JsonRpcRequest(id = Some(RequestId.Num(2L)), method = "ping")
+        val req1  = JsonRpcRequest(id = Some(RequestId.Num(1L)), method = "tools/list")
+        val req2  = JsonRpcRequest(id = Some(RequestId.Num(2L)), method = "ping")
         val input = (req1.toJson + "\n" + req2.toJson + "\n").getBytes("UTF-8")
         val in    = new ByteArrayInputStream(input)
         val out   = new ByteArrayOutputStream()
@@ -58,7 +58,7 @@ object StdioTransportSpec extends ZIOSpecDefault:
           _      <- transport.send(resp)
           written = out.toString("UTF-8")
         yield assertTrue(written.endsWith("\n"), written.fromJson[JsonRpcResponse].isRight)
-      },
+      }
     ),
     suite("notify")(
       test("writes notification as newline-terminated JSON to output stream") {
@@ -70,6 +70,6 @@ object StdioTransportSpec extends ZIOSpecDefault:
           _      <- transport.notify(notif)
           written = out.toString("UTF-8")
         yield assertTrue(written.endsWith("\n"), written.contains("notifications/initialized"))
-      },
+      }
     ),
   )

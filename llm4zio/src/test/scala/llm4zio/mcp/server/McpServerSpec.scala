@@ -22,7 +22,7 @@ object McpServerSpec extends ZIOSpecDefault:
       val transport = new InMemoryTransport(inQ, outQ)
       (transport, transport)
 
-  def spec = suite("McpServer")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("McpServer")(
     suite("initialize")(
       test("responds with server capabilities including tools") {
         for
@@ -46,7 +46,7 @@ object McpServerSpec extends ZIOSpecDefault:
           resp.error.isEmpty,
           resp.result.isDefined,
         )
-      },
+      }
     ),
     suite("tools/list")(
       test("returns empty list when no tools registered") {
@@ -144,7 +144,7 @@ object McpServerSpec extends ZIOSpecDefault:
           _                         <- transport.push(req)
           resp                      <- transport.nextResponse
         yield assertTrue(resp.error.exists(_.code == -32601))
-      },
+      }
     ),
     suite("addTool")(
       test("registers tool and emits tools/list_changed notification") {
@@ -163,7 +163,7 @@ object McpServerSpec extends ZIOSpecDefault:
                                        )
           notification              <- transport.nextNotification
         yield assertTrue(notification.method == "notifications/tools/list_changed")
-      },
+      }
     ),
   )
 
@@ -183,7 +183,7 @@ class InMemoryTransport(
 
   def nextNotification: UIO[JsonRpcNotification] =
     outQ.take.flatMap {
-      case Left(n) => ZIO.succeed(n)
+      case Left(n)  => ZIO.succeed(n)
       case Right(_) => nextNotification // skip responses
     }
 

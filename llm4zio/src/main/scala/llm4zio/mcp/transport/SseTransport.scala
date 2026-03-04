@@ -65,12 +65,11 @@ object SseSessionRegistry:
 
 /** MCP transport over HTTP SSE.
   *
-  * - Client connects via `GET /mcp/sse?sessionId=<id>` and receives a stream of SSE events.
-  * - Client sends requests via `POST /mcp?sessionId=<id>` with JSON-RPC body.
+  *   - Client connects via `GET /mcp/sse?sessionId=<id>` and receives a stream of SSE events.
+  *   - Client sends requests via `POST /mcp?sessionId=<id>` with JSON-RPC body.
   *
-  * The gateway layer is responsible for mounting the HTTP routes and pushing
-  * incoming requests into this transport's inbound queue via `accept()`.
-  * Responses are sent per-session via `sendToSession()`. Notifications are broadcast.
+  * The gateway layer is responsible for mounting the HTTP routes and pushing incoming requests into this transport's
+  * inbound queue via `accept()`. Responses are sent per-session via `sendToSession()`. Notifications are broadcast.
   */
 class SseTransport(
   val sessions: SseSessionRegistry,

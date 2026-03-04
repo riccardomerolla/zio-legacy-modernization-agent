@@ -9,8 +9,8 @@ import zio.stream.*
 import llm4zio.mcp.jsonrpc.*
 import llm4zio.mcp.server.{ McpError, McpTransport }
 
-/** MCP transport over stdin/stdout — newline-delimited JSON-RPC framing.
-  * All logging goes to stderr to avoid corrupting the protocol on stdout.
+/** MCP transport over stdin/stdout — newline-delimited JSON-RPC framing. All logging goes to stderr to avoid corrupting
+  * the protocol on stdout.
   */
 class StdioTransport(in: InputStream, out: OutputStream) extends McpTransport:
 

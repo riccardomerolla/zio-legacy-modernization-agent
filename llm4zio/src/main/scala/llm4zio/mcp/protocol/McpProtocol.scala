@@ -76,8 +76,8 @@ enum McpContent:
 
 object McpContent:
   given JsonEncoder[McpContent] = JsonEncoder[Json].contramap {
-    case McpContent.Text(t)       => Json.Obj("type" -> Json.Str("text"), "text" -> Json.Str(t))
-    case McpContent.Image(d, m)   =>
+    case McpContent.Text(t)        => Json.Obj("type" -> Json.Str("text"), "text" -> Json.Str(t))
+    case McpContent.Image(d, m)    =>
       Json.Obj("type" -> Json.Str("image"), "data" -> Json.Str(d), "mimeType" -> Json.Str(m))
     case McpContent.Resource(u, t) =>
       Json.Obj("type" -> Json.Str("resource"), "uri" -> Json.Str(u), "text" -> Json.Str(t))
@@ -91,7 +91,7 @@ object McpContent:
             .toRight("Missing 'text' field")
         case Some(Json.Str("image"))    =>
           for
-            d <- m.get("data").collect { case Json.Str(s) => s }.toRight("Missing 'data'")
+            d  <- m.get("data").collect { case Json.Str(s) => s }.toRight("Missing 'data'")
             mt <- m.get("mimeType").collect { case Json.Str(s) => s }.toRight("Missing 'mimeType'")
           yield McpContent.Image(d, mt)
         case Some(Json.Str("resource")) =>
@@ -99,8 +99,8 @@ object McpContent:
             u <- m.get("uri").collect { case Json.Str(s) => s }.toRight("Missing 'uri'")
             t <- m.get("text").collect { case Json.Str(s) => s }.toRight("Missing 'text'")
           yield McpContent.Resource(u, t)
-        case _ => Left("Unknown McpContent type")
-    case _ => Left("McpContent must be a JSON object")
+        case _                          => Left("Unknown McpContent type")
+    case _                => Left("McpContent must be a JSON object")
   }
 
 case class McpToolCallResponse(content: List[McpContent], isError: Boolean = false) derives JsonCodec

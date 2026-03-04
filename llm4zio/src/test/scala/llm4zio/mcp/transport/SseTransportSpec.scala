@@ -8,7 +8,7 @@ import zio.test.*
 import llm4zio.mcp.jsonrpc.*
 
 object SseTransportSpec extends ZIOSpecDefault:
-  def spec = suite("SseTransport")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("SseTransport")(
     suite("session management")(
       test("creates a new session and returns a session id") {
         for
@@ -41,7 +41,7 @@ object SseTransportSpec extends ZIOSpecDefault:
           _         <- transport.sendToSession(id, resp)
           outbound  <- transport.sessions.take(id)
         yield assertTrue(outbound.contains(Right(resp)))
-      },
+      }
     ),
     suite("notify")(
       test("broadcasts notification to all active sessions") {
@@ -57,7 +57,7 @@ object SseTransportSpec extends ZIOSpecDefault:
           out1.contains(Left(notif)),
           out2.contains(Left(notif)),
         )
-      },
+      }
     ),
     suite("API key validation")(
       test("accepts request when no API key is configured") {

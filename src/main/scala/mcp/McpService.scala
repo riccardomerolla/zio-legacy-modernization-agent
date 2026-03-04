@@ -13,8 +13,8 @@ import workspace.entity.WorkspaceRepository
 
 /** Holds the running MCP server (SSE transport) and its controller.
   *
-  * Starts the MCP message-loop as a background fiber on construction.
-  * The fiber is interrupted when the ZLayer scope is closed.
+  * Starts the MCP message-loop as a background fiber on construction. The fiber is interrupted when the ZLayer scope is
+  * closed.
   */
 final class McpService(
   val transport: SseTransport,
@@ -34,13 +34,13 @@ object McpService:
     memoryRepo: MemoryRepository,
   ): ZIO[Scope, Nothing, McpService] =
     for
-      transport  <- SseTransport.make(apiKey)
-      registry   <- ToolRegistry.make
-      tools       = GatewayMcpTools(issueRepo, agentRepo, wsRepo, runService, memoryRepo)
-      _          <- registry.registerAll(tools.all).mapError(e => new RuntimeException(e.toString)).orDie
-      server     <- McpServer.make(registry, transport)
-      fiber      <- server.start.forkScoped
-      controller  = McpController(transport)
+      transport <- SseTransport.make(apiKey)
+      registry  <- ToolRegistry.make
+      tools      = GatewayMcpTools(issueRepo, agentRepo, wsRepo, runService, memoryRepo)
+      _         <- registry.registerAll(tools.all).mapError(e => new RuntimeException(e.toString)).orDie
+      server    <- McpServer.make(registry, transport)
+      fiber     <- server.start.forkScoped
+      controller = McpController(transport)
     yield McpService(transport, controller, fiber)
 
   /** ZLayer for wiring into ApplicationDI. */

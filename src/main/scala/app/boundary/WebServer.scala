@@ -21,6 +21,7 @@ import gateway.boundary.{
 }
 import issues.boundary.IssueController as IssuesIssueController
 import issues.entity.IssueRepository
+import mcp.McpService
 import memory.boundary.MemoryController as MemoryBoundaryController
 import orchestration.control.AgentRegistry
 import taskrun.boundary.{
@@ -30,7 +31,6 @@ import taskrun.boundary.{
   ReportsController as TaskRunReportsController,
   TasksController as TaskRunTasksController,
 }
-import mcp.McpService
 import workspace.boundary.WorkspacesController
 import workspace.control.{ GitService, WorkspaceRunService }
 import workspace.entity.WorkspaceRepository

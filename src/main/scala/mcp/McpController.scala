@@ -10,16 +10,16 @@ import llm4zio.mcp.transport.SseTransport
 
 /** HTTP routes for the MCP SSE transport.
   *
-  * - `GET  /mcp/sse`            — open SSE stream; creates a session, sends outbound messages
-  * - `POST /mcp?sessionId=<id>` — receive a JSON-RPC request from the client
+  *   - `GET  /mcp/sse` — open SSE stream; creates a session, sends outbound messages
+  *   - `POST /mcp?sessionId=<id>` — receive a JSON-RPC request from the client
   *
   * Authentication: if an API key is configured, the client must supply it via the `X-Api-Key` header.
   */
 final class McpController(transport: SseTransport):
 
   val routes: Routes[Any, Response] = Routes(
-    Method.GET / "mcp" / "sse" -> handler { (req: Request) => sseHandler(req) },
-    Method.POST / "mcp"        -> handler { (req: Request) => postHandler(req) },
+    Method.GET / "mcp" / "sse" -> handler((req: Request) => sseHandler(req)),
+    Method.POST / "mcp"        -> handler((req: Request) => postHandler(req)),
   )
 
   // ── POST /mcp ─────────────────────────────────────────────────────────────

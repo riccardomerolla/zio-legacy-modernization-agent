@@ -1568,7 +1568,8 @@ final case class IssueControllerLive(
       )
     )
 
-  private def previewIssuesFromFolder(request: FolderImportRequest): IO[PersistenceError, List[FolderImportPreviewItem]] =
+  private def previewIssuesFromFolder(request: FolderImportRequest)
+    : IO[PersistenceError, List[FolderImportPreviewItem]] =
     for
       files <- issueImportMarkdownFiles(request.folder)
       now   <- Clock.instant
@@ -1630,20 +1631,20 @@ final case class IssueControllerLive(
       folder     <- ZIO
                       .attempt(Paths.get(folderPath))
                       .mapError(e => PersistenceError.QueryFailed("folder", e.getMessage))
-      files   <- ZIO
-                   .attemptBlocking {
-                     if !Files.exists(folder) then List.empty[Path]
-                     else
-                       Files
-                         .list(folder)
-                         .iterator()
-                         .asScala
-                         .filter(path =>
-                           Files.isRegularFile(path) && path.getFileName.toString.toLowerCase.endsWith(".md")
-                         )
-                         .toList
-                   }
-                   .mapError(e => PersistenceError.QueryFailed("folder", e.getMessage))
+      files      <- ZIO
+                      .attemptBlocking {
+                        if !Files.exists(folder) then List.empty[Path]
+                        else
+                          Files
+                            .list(folder)
+                            .iterator()
+                            .asScala
+                            .filter(path =>
+                              Files.isRegularFile(path) && path.getFileName.toString.toLowerCase.endsWith(".md")
+                            )
+                            .toList
+                      }
+                      .mapError(e => PersistenceError.QueryFailed("folder", e.getMessage))
     yield files
 
   private def previewGitHubIssues(request: GitHubImportPreviewRequest)

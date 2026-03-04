@@ -9,13 +9,13 @@ import zio.test.Assertion.*
 import llm4zio.tools.{ Tool, ToolExecutionError }
 
 object McpProtocolSpec extends ZIOSpecDefault:
-  def spec = suite("McpProtocol")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("McpProtocol")(
     suite("McpInitializeRequest")(
       test("decodes client capabilities") {
         val json =
           """{"protocolVersion":"2024-11-05","capabilities":{"roots":{"listChanged":true}},"clientInfo":{"name":"claude-code","version":"1.0"}}"""
         assertTrue(json.fromJson[McpInitializeRequest].isRight)
-      },
+      }
     ),
     suite("McpInitializeResponse")(
       test("encodes server capabilities with tools support") {
@@ -26,7 +26,7 @@ object McpProtocolSpec extends ZIOSpecDefault:
         )
         val json = resp.toJson
         assertTrue(json.contains("\"tools\""), json.contains("\"llm4zio-gateway\""))
-      },
+      }
     ),
     suite("McpToolsListResponse")(
       test("encodes tool list with schema") {
@@ -38,7 +38,12 @@ object McpProtocolSpec extends ZIOSpecDefault:
       },
       test("McpToolInfo.fromTool converts Tool to McpToolInfo") {
         val schema = Json.Obj("type" -> Json.Str("object"))
-        val tool   = Tool(name = "my_tool", description = "does stuff", parameters = schema, execute = _ => ZIO.fail(ToolExecutionError.ExecutionFailed("test")))
+        val tool   = Tool(
+          name = "my_tool",
+          description = "does stuff",
+          parameters = schema,
+          execute = _ => ZIO.fail(ToolExecutionError.ExecutionFailed("test")),
+        )
         val info   = McpToolInfo.fromTool(tool)
         assertTrue(info.name == "my_tool", info.description == "does stuff", info.inputSchema == schema)
       },
@@ -62,7 +67,7 @@ object McpProtocolSpec extends ZIOSpecDefault:
       test("TextContent encodes with type field") {
         val c = McpContent.Text("hello")
         assertTrue(c.toJson.contains("\"text\""), c.toJson.contains("\"hello\""))
-      },
+      }
     ),
     suite("McpNotifications")(
       test("initialized notification has correct method") {

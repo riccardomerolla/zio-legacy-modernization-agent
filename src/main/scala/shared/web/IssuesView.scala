@@ -42,7 +42,7 @@ object IssuesView:
               a(
                 href := "/issues/new",
                 cls  := "rounded-md border border-emerald-400/30 bg-emerald-500/20 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/30",
-              )("New issue"),
+              )("New issue")
             ),
           ),
           div(cls := "mt-3 flex items-center gap-2 text-sm")(
@@ -816,10 +816,10 @@ object IssuesView:
           attr("data-bulk-scope")    := scope,
         )("Import Folder"),
         input(
-          `type`                   := "text",
-          cls                      := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
-          attr("data-import-repo") := scope,
-          attr("placeholder")      := "owner/repo",
+          `type`                     := "text",
+          cls                        := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
+          attr("data-import-repo")   := scope,
+          attr("placeholder")        := "owner/repo",
         ),
         button(
           `type`                     := "button",

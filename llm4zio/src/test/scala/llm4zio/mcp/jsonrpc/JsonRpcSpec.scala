@@ -6,7 +6,7 @@ import zio.test.*
 import zio.test.Assertion.*
 
 object JsonRpcSpec extends ZIOSpecDefault:
-  def spec = suite("JsonRpc")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("JsonRpc")(
     suite("RequestId")(
       test("encodes and decodes String id") {
         val id   = RequestId.Str("abc-123")
@@ -42,7 +42,8 @@ object JsonRpcSpec extends ZIOSpecDefault:
     ),
     suite("JsonRpcResponse")(
       test("encodes success response") {
-        val resp = JsonRpcResponse.success(RequestId.Num(1L), """{"ok":true}""".fromJson[zio.json.ast.Json].toOption.get)
+        val resp =
+          JsonRpcResponse.success(RequestId.Num(1L), """{"ok":true}""".fromJson[zio.json.ast.Json].toOption.get)
         val json = resp.toJson
         assertTrue(json.contains("\"result\""), !json.contains("\"error\""))
       },
@@ -78,7 +79,7 @@ object JsonRpcSpec extends ZIOSpecDefault:
         val n    = JsonRpcNotification(method = "notifications/initialized", params = None)
         val json = n.toJson
         assertTrue(json.contains("\"jsonrpc\":\"2.0\""), !json.contains("\"id\""))
-      },
+      }
     ),
     suite("JsonRpcHandler")(
       test("routes method to handler and returns response") {
@@ -86,7 +87,7 @@ object JsonRpcSpec extends ZIOSpecDefault:
           case req if req.method == "ping" =>
             ZIO.succeed(JsonRpcResponse.success(req.id.getOrElse(RequestId.Num(0L)), zio.json.ast.Json.Obj()))
         }
-        val req = JsonRpcRequest(id = Some(RequestId.Num(1L)), method = "ping", params = None)
+        val req     = JsonRpcRequest(id = Some(RequestId.Num(1L)), method = "ping", params = None)
         for
           resp <- handler.handle(req)
         yield assertTrue(resp.error.isEmpty)

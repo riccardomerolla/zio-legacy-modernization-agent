@@ -505,9 +505,9 @@ object ChatView:
             div(cls := "text-xs text-gray-400", attr("data-role") := "ahead-behind")(),
             div(cls := "pt-1")(
               button(
-                `type`               := "button",
-                cls                  := "rounded bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500",
-                attr("data-role")    := "apply-button",
+                `type`            := "button",
+                cls               := "rounded bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500",
+                attr("data-role") := "apply-button",
               )("Apply to repo")
             ),
             div(cls := "text-xs text-gray-400", attr("data-role") := "apply-feedback")(),

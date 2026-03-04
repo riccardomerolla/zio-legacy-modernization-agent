@@ -99,30 +99,31 @@ private class McpServerLive(
         }.mapError(e => McpError.TransportError(e.toString))
 
       case "tools/call" =>
-        val callResult = for
-          params <- ZIO
-                      .fromOption(req.params)
-                      .orElseFail(McpError.ProtocolError("Missing params for tools/call"))
-          callReq <- ZIO
-                       .fromEither(params.as[McpToolCallRequest])
-                       .mapError(e => McpError.ProtocolError(s"Invalid tools/call params: $e"))
-          tool    <- registry
-                       .get(callReq.name)
-                       .mapError(e => McpError.ProtocolError(e.toString))
-          result  <- tool
-                       .execute(callReq.arguments)
-                       .mapError(e => McpError.ToolExecutionError(e.message))
-          content  = List(McpContent.Text(result.toJson))
-          resp     = JsonRpcResponse.success(
-                       respondId,
-                       McpToolCallResponse(content = content, isError = false)
-                         .toJson.fromJson[Json].toOption.get,
-                     )
-          _       <- transport.send(resp)
-        yield ()
+        val callResult =
+          for
+            params  <- ZIO
+                         .fromOption(req.params)
+                         .orElseFail(McpError.ProtocolError("Missing params for tools/call"))
+            callReq <- ZIO
+                         .fromEither(params.as[McpToolCallRequest])
+                         .mapError(e => McpError.ProtocolError(s"Invalid tools/call params: $e"))
+            tool    <- registry
+                         .get(callReq.name)
+                         .mapError(e => McpError.ProtocolError(e.toString))
+            result  <- tool
+                         .execute(callReq.arguments)
+                         .mapError(e => McpError.ToolExecutionError(e.message))
+            content  = List(McpContent.Text(result.toJson))
+            resp     = JsonRpcResponse.success(
+                         respondId,
+                         McpToolCallResponse(content = content, isError = false)
+                           .toJson.fromJson[Json].toOption.get,
+                       )
+            _       <- transport.send(resp)
+          yield ()
 
         callResult.catchAll {
-          case McpError.ProtocolError(msg) =>
+          case McpError.ProtocolError(msg)      =>
             transport.send(
               JsonRpcResponse.error(respondId, JsonRpcError.invalidParams(msg))
             )
@@ -135,7 +136,7 @@ private class McpServerLive(
                   .toJson.fromJson[Json].toOption.get,
               )
             )
-          case e =>
+          case e                                =>
             transport.send(
               JsonRpcResponse.error(respondId, JsonRpcError.internalError(e.toString))
             )
