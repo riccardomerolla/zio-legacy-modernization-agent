@@ -302,7 +302,7 @@ object WorkspacesController:
       Method.POST / "api" / "workspaces" / string("wsId") / "runs" / string("runId") / "apply" ->
         handler { (wsId: String, runId: String, _: Request) =>
           resolveRunWorktree(repo, wsId, runId).flatMap {
-            case Left(resp)            => ZIO.succeed(resp)
+            case Left(resp)                      => ZIO.succeed(resp)
             case Right((workspace, run, wtPath)) =>
               applyRunBranchToRepo(workspace, run, wtPath)
           }
@@ -556,45 +556,45 @@ object WorkspacesController:
 
     val program =
       for
-        repoPath <- ZIO
-                      .fromOption(Option(workspace.localPath).map(_.trim).filter(_.nonEmpty))
-                      .orElseFail(fail(Status.BadRequest, "Workspace local path is empty."))
-        _        <- ZIO.when(sourceBranch.isEmpty) {
-                      ZIO.fail(fail(Status.BadRequest, "Run branch is empty; cannot apply to repository."))
-                    }
-        _        <- run.status match
-                      case RunStatus.Pending | RunStatus.Running(_) =>
-                        ZIO.fail(fail(Status.Conflict, "Run is still active. Wait for completion before applying."))
-                      case _                                        => ZIO.unit
-        _        <- ZIO.when(!Files.exists(Paths.get(repoPath))) {
-                      ZIO.fail(fail(Status.NotFound, s"Workspace path not found: $repoPath"))
-                    }
-        repoChk  <- runGit(repoPath, List("rev-parse", "--is-inside-work-tree"))
-        _        <- ZIO.when(repoChk._1 != 0 || repoChk._2.trim != "true") {
-                      ZIO.fail(fail(Status.BadRequest, s"Not a git repository: $repoPath", Some(repoChk._2)))
-                    }
-        statusChk <- runGit(repoPath, List("status", "--porcelain"))
-        _         <- ZIO.when(statusChk._1 != 0) {
-                       ZIO.fail(fail(Status.InternalServerError, "Failed to inspect repository status.", Some(statusChk._2)))
-                     }
-        _         <- ZIO.when(statusChk._2.trim.nonEmpty) {
-                       ZIO.fail(
-                         fail(
-                           Status.Conflict,
-                           "Workspace repository has uncommitted changes. Commit or stash before applying.",
-                           Some(statusChk._2),
+        repoPath    <- ZIO
+                         .fromOption(Option(workspace.localPath).map(_.trim).filter(_.nonEmpty))
+                         .orElseFail(fail(Status.BadRequest, "Workspace local path is empty."))
+        _           <- ZIO.when(sourceBranch.isEmpty) {
+                         ZIO.fail(fail(Status.BadRequest, "Run branch is empty; cannot apply to repository."))
+                       }
+        _           <- run.status match
+                         case RunStatus.Pending | RunStatus.Running(_) =>
+                           ZIO.fail(fail(Status.Conflict, "Run is still active. Wait for completion before applying."))
+                         case _                                        => ZIO.unit
+        _           <- ZIO.when(!Files.exists(Paths.get(repoPath))) {
+                         ZIO.fail(fail(Status.NotFound, s"Workspace path not found: $repoPath"))
+                       }
+        repoChk     <- runGit(repoPath, List("rev-parse", "--is-inside-work-tree"))
+        _           <- ZIO.when(repoChk._1 != 0 || repoChk._2.trim != "true") {
+                         ZIO.fail(fail(Status.BadRequest, s"Not a git repository: $repoPath", Some(repoChk._2)))
+                       }
+        statusChk   <- runGit(repoPath, List("status", "--porcelain"))
+        _           <- ZIO.when(statusChk._1 != 0) {
+                         ZIO.fail(fail(Status.InternalServerError, "Failed to inspect repository status.", Some(statusChk._2)))
+                       }
+        _           <- ZIO.when(statusChk._2.trim.nonEmpty) {
+                         ZIO.fail(
+                           fail(
+                             Status.Conflict,
+                             "Workspace repository has uncommitted changes. Commit or stash before applying.",
+                             Some(statusChk._2),
+                           )
                          )
-                       )
-                     }
-        branch    <- runGit(repoPath, List("rev-parse", "--abbrev-ref", "HEAD"))
-        _         <- ZIO.when(branch._1 != 0) {
-                       ZIO.fail(
-                         fail(Status.InternalServerError, "Unable to determine target branch.", Some(branch._2))
-                       )
-                     }
-        target     = branch._2.trim
-        merge      <- runGit(repoPath, List("merge", "--no-ff", "--no-edit", sourceBranch))
-        _          <-
+                       }
+        branch      <- runGit(repoPath, List("rev-parse", "--abbrev-ref", "HEAD"))
+        _           <- ZIO.when(branch._1 != 0) {
+                         ZIO.fail(
+                           fail(Status.InternalServerError, "Unable to determine target branch.", Some(branch._2))
+                         )
+                       }
+        target       = branch._2.trim
+        merge       <- runGit(repoPath, List("merge", "--no-ff", "--no-edit", sourceBranch))
+        _           <-
           if merge._1 == 0 then ZIO.unit
           else
             runGit(repoPath, List("merge", "--abort")).ignore *>
@@ -606,26 +606,27 @@ object WorkspacesController:
                   Some(target),
                 )
               )
-        trackedWt  <- runGit(worktreePath, List("diff", "--name-only"))
-        stagedWt   <- runGit(worktreePath, List("diff", "--cached", "--name-only"))
+        trackedWt   <- runGit(worktreePath, List("diff", "--name-only"))
+        stagedWt    <- runGit(worktreePath, List("diff", "--cached", "--name-only"))
         untrackedWt <- runGit(worktreePath, List("ls-files", "--others", "--exclude-standard"))
-        deletedWt  <- runGit(worktreePath, List("diff", "--name-only", "--diff-filter=D"))
-        _          <- ZIO.when(
-                        List(trackedWt, stagedWt, untrackedWt, deletedWt).exists(_._1 != 0)
-                      ) {
-                        ZIO.fail(
-                          fail(
-                            Status.InternalServerError,
-                            "Failed to inspect run worktree changes.",
-                            Some(
-                              List(trackedWt, stagedWt, untrackedWt, deletedWt).map(_._2).mkString("\n")
-                            ),
-                            Some(target),
-                          )
-                        )
-                      }
-        changedRaw  = (parseGitPaths(trackedWt._2) ++ parseGitPaths(stagedWt._2) ++ parseGitPaths(untrackedWt._2)).distinct
-        deletedRaw  = parseGitPaths(deletedWt._2).distinct
+        deletedWt   <- runGit(worktreePath, List("diff", "--name-only", "--diff-filter=D"))
+        _           <- ZIO.when(
+                         List(trackedWt, stagedWt, untrackedWt, deletedWt).exists(_._1 != 0)
+                       ) {
+                         ZIO.fail(
+                           fail(
+                             Status.InternalServerError,
+                             "Failed to inspect run worktree changes.",
+                             Some(
+                               List(trackedWt, stagedWt, untrackedWt, deletedWt).map(_._2).mkString("\n")
+                             ),
+                             Some(target),
+                           )
+                         )
+                       }
+        changedRaw   =
+          (parseGitPaths(trackedWt._2) ++ parseGitPaths(stagedWt._2) ++ parseGitPaths(untrackedWt._2)).distinct
+        deletedRaw   = parseGitPaths(deletedWt._2).distinct
         changed     <- ZIO.foreach(changedRaw)(path =>
                          validateGitFilePath(path).flatMap {
                            case Left(resp) => ZIO.fail(resp)
@@ -670,14 +671,12 @@ object WorkspacesController:
       .attemptBlocking {
         val repoRoot = Paths.get(repoPath).normalize
         val wtRoot   = Paths.get(worktreePath).normalize
-        var copied   = 0
-        var deleted  = 0
 
-        changedPaths.distinct.foreach { rel =>
+        val copied = changedPaths.distinct.count { rel =>
           val source = wtRoot.resolve(rel).normalize
           val target = repoRoot.resolve(rel).normalize
           if !source.startsWith(wtRoot) || !target.startsWith(repoRoot) then
-            throw new IllegalArgumentException(s"Unsafe path: $rel")
+            scala.sys.error(s"Unsafe path: $rel")
           if Files.exists(source) then
             Option(target.getParent).foreach(parent => Files.createDirectories(parent))
             Files.copy(
@@ -686,13 +685,14 @@ object WorkspacesController:
               java.nio.file.StandardCopyOption.REPLACE_EXISTING,
               java.nio.file.StandardCopyOption.COPY_ATTRIBUTES,
             )
-            copied += 1
+            true
+          else false
         }
 
-        deletedPaths.distinct.foreach { rel =>
+        val deleted = deletedPaths.distinct.count { rel =>
           val target = repoRoot.resolve(rel).normalize
-          if !target.startsWith(repoRoot) then throw new IllegalArgumentException(s"Unsafe delete path: $rel")
-          if Files.deleteIfExists(target) then deleted += 1
+          if !target.startsWith(repoRoot) then scala.sys.error(s"Unsafe delete path: $rel")
+          Files.deleteIfExists(target)
         }
 
         (copied, deleted)

@@ -19,15 +19,15 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
   // ── Stubs ─────────────────────────────────────────────────────────────────
 
   private val stubIssueRepo: IssueRepository = new IssueRepository:
-    override def append(event: IssueEvent): IO[PersistenceError, Unit] = ZIO.unit
-    override def get(id: IssueId): IO[PersistenceError, AgentIssue]   =
+    override def append(event: IssueEvent): IO[PersistenceError, Unit]             = ZIO.unit
+    override def get(id: IssueId): IO[PersistenceError, AgentIssue]                =
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
     override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] = ZIO.succeed(Nil)
-    override def delete(id: IssueId): IO[PersistenceError, Unit]      = ZIO.unit
+    override def delete(id: IssueId): IO[PersistenceError, Unit]                   = ZIO.unit
 
   private val stubAgentRepo: AgentRepository = new AgentRepository:
     import agent.entity.*
-    private val testAgent = Agent(
+    private val testAgent                                                         = Agent(
       id = AgentId("a1"),
       name = "test-agent",
       description = "A test agent",
@@ -52,7 +52,7 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
 
   private val stubWorkspaceRepo: WorkspaceRepository = new WorkspaceRepository:
     import workspace.entity.*
-    private val testWorkspace = Workspace(
+    private val testWorkspace                                                            = Workspace(
       id = "ws1",
       name = "main-repo",
       localPath = "/repos/main",
@@ -75,24 +75,27 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
   private val stubRunService: WorkspaceRunService = new WorkspaceRunService:
     override def assign(workspaceId: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
       ZIO.fail(WorkspaceError.NotFound(workspaceId))
-    override def continueRun(runId: String, followUpPrompt: String, agentNameOverride: Option[String]): IO[WorkspaceError, WorkspaceRun] =
+    override def continueRun(runId: String, followUpPrompt: String, agentNameOverride: Option[String])
+      : IO[WorkspaceError, WorkspaceRun] =
       ZIO.fail(WorkspaceError.NotFound(runId))
-    override def cancelRun(runId: String): IO[WorkspaceError, Unit] =
+    override def cancelRun(runId: String): IO[WorkspaceError, Unit]                                   =
       ZIO.fail(WorkspaceError.NotFound(runId))
 
   private val stubMemoryRepo: MemoryRepository = new MemoryRepository:
     import memory.entity.*
-    override def save(entry: MemoryEntry): IO[Throwable, Unit] = ZIO.unit
-    override def searchRelevant(userId: UserId, query: String, limit: Int, filter: MemoryFilter): IO[Throwable, List[ScoredMemory]] =
+    override def save(entry: MemoryEntry): IO[Throwable, Unit]                               = ZIO.unit
+    override def searchRelevant(userId: UserId, query: String, limit: Int, filter: MemoryFilter)
+      : IO[Throwable, List[ScoredMemory]] =
       ZIO.succeed(Nil)
-    override def listForUser(userId: UserId, filter: MemoryFilter, page: Int, pageSize: Int): IO[Throwable, List[MemoryEntry]] =
+    override def listForUser(userId: UserId, filter: MemoryFilter, page: Int, pageSize: Int)
+      : IO[Throwable, List[MemoryEntry]] =
       ZIO.succeed(Nil)
     override def deleteById(userId: UserId, id: memory.entity.MemoryId): IO[Throwable, Unit] = ZIO.unit
-    override def deleteBySession(sessionId: memory.entity.SessionId): IO[Throwable, Unit] = ZIO.unit
+    override def deleteBySession(sessionId: memory.entity.SessionId): IO[Throwable, Unit]    = ZIO.unit
 
   // ── Tests ─────────────────────────────────────────────────────────────────
 
-  def spec = suite("GatewayMcpTools")(
+  def spec: Spec[Environment & (TestEnvironment & Scope), Any] = suite("GatewayMcpTools")(
     suite("tool registration")(
       test("registers all 7 gateway tools") {
         for
@@ -110,7 +113,7 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
           names.contains("search_conversations"),
           names.contains("get_metrics"),
         )
-      },
+      }
     ),
     suite("list_agents")(
       test("returns registered agents as JSON array") {
@@ -121,7 +124,7 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
           result   <- registry.execute(llm4zio.core.ToolCall(id = "1", name = "list_agents", arguments = "{}"))
           json      = result.result.toOption.get
         yield assertTrue(json.toJson.contains("test-agent"))
-      },
+      }
     ),
     suite("list_workspaces")(
       test("returns workspaces as JSON array") {
@@ -132,36 +135,37 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
           result   <- registry.execute(llm4zio.core.ToolCall(id = "2", name = "list_workspaces", arguments = "{}"))
           json      = result.result.toOption.get
         yield assertTrue(json.toJson.contains("main-repo"))
-      },
+      }
     ),
     suite("assign_issue")(
       test("creates issue event and returns issue id") {
-        var appended: Option[IssueEvent] = None
-        val capturingRepo                = new IssueRepository:
-          override def append(event: IssueEvent): IO[PersistenceError, Unit] =
-            ZIO.succeed { appended = Some(event) }
-          override def get(id: IssueId): IO[PersistenceError, AgentIssue]   =
-            ZIO.fail(PersistenceError.NotFound("issue", id.value))
-          override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] = ZIO.succeed(Nil)
-          override def delete(id: IssueId): IO[PersistenceError, Unit]                   = ZIO.unit
-
         for
-          registry <- ToolRegistry.make
-          tools     = GatewayMcpTools(capturingRepo, stubAgentRepo, stubWorkspaceRepo, stubRunService, stubMemoryRepo)
-          _        <- registry.registerAll(tools.all)
-          args      = Json.Obj(
-                        "title"       -> Json.Str("Fix bug"),
-                        "description" -> Json.Str("Reproduce and fix the crash"),
-                        "priority"    -> Json.Str("high"),
-                      )
-          result   <- registry.execute(llm4zio.core.ToolCall(id = "3", name = "assign_issue", arguments = args.toJson))
-          json      = result.result.toOption.get
+          appendedRef  <- Ref.make(Option.empty[IssueEvent])
+          capturingRepo = new IssueRepository:
+                            override def append(event: IssueEvent): IO[PersistenceError, Unit]             =
+                              appendedRef.set(Some(event))
+                            override def get(id: IssueId): IO[PersistenceError, AgentIssue]                =
+                              ZIO.fail(PersistenceError.NotFound("issue", id.value))
+                            override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] =
+                              ZIO.succeed(Nil)
+                            override def delete(id: IssueId): IO[PersistenceError, Unit]                   = ZIO.unit
+          registry     <- ToolRegistry.make
+          tools         = GatewayMcpTools(capturingRepo, stubAgentRepo, stubWorkspaceRepo, stubRunService, stubMemoryRepo)
+          _            <- registry.registerAll(tools.all)
+          args          = Json.Obj(
+                            "title"       -> Json.Str("Fix bug"),
+                            "description" -> Json.Str("Reproduce and fix the crash"),
+                            "priority"    -> Json.Str("high"),
+                          )
+          result       <- registry.execute(llm4zio.core.ToolCall(id = "3", name = "assign_issue", arguments = args.toJson))
+          json          = result.result.toOption.get
+          appended     <- appendedRef.get
         yield assertTrue(
           appended.isDefined,
           appended.get.isInstanceOf[IssueEvent.Created],
           json.toJson.contains("issueId"),
         )
-      },
+      }
     ),
     suite("get_run_status")(
       test("returns not_found when run does not exist") {
@@ -173,7 +177,7 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
           result   <- registry.execute(llm4zio.core.ToolCall(id = "4", name = "get_run_status", arguments = args.toJson))
           json      = result.result.toOption.get
         yield assertTrue(json.toJson.contains("not_found"))
-      },
+      }
     ),
     suite("search_conversations")(
       test("returns empty results from stub memory repository") {
@@ -182,10 +186,11 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
           tools     = GatewayMcpTools(stubIssueRepo, stubAgentRepo, stubWorkspaceRepo, stubRunService, stubMemoryRepo)
           _        <- registry.registerAll(tools.all)
           args      = Json.Obj("query" -> Json.Str("test query"))
-          result   <- registry.execute(llm4zio.core.ToolCall(id = "5", name = "search_conversations", arguments = args.toJson))
+          result   <-
+            registry.execute(llm4zio.core.ToolCall(id = "5", name = "search_conversations", arguments = args.toJson))
           json      = result.result.toOption.get
         yield assertTrue(json.isInstanceOf[Json.Arr])
-      },
+      }
     ),
     suite("get_metrics")(
       test("returns gateway metrics JSON") {
@@ -199,6 +204,6 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
           json.toJson.contains("agents"),
           json.toJson.contains("workspaces"),
         )
-      },
+      }
     ),
   )

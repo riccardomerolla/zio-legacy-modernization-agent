@@ -1,7 +1,5 @@
 package mcp
 
-import java.time.Instant
-
 import zio.*
 import zio.json.*
 import zio.json.ast.Json
@@ -16,8 +14,8 @@ import workspace.entity.WorkspaceRepository
 
 /** The 7 gateway tools exposed over MCP.
   *
-  * Each tool is a pure `Tool` value: name + JSON schema + execute function.
-  * All repository/service dependencies are injected at construction time.
+  * Each tool is a pure `Tool` value: name + JSON schema + execute function. All repository/service dependencies are
+  * injected at construction time.
   */
 final class GatewayMcpTools(
   issueRepo: IssueRepository,
@@ -30,9 +28,9 @@ final class GatewayMcpTools(
   // ── assign_issue ──────────────────────────────────────────────────────────
 
   private val assignIssueTool: Tool = Tool(
-    name        = "assign_issue",
+    name = "assign_issue",
     description = "Create a new issue in the gateway issue tracker",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(
         "title"       -> Json.Obj("type" -> Json.Str("string")),
@@ -47,13 +45,14 @@ final class GatewayMcpTools(
         description <- fieldStr(args, "description")
         priority     = fieldStrOpt(args, "priority").getOrElse("medium")
         issueId      = IssueId(java.util.UUID.randomUUID().toString)
+        now         <- zio.Clock.instant
         event        = IssueEvent.Created(
                          issueId = issueId,
                          title = title,
                          description = description,
                          issueType = "task",
                          priority = priority,
-                         occurredAt = Instant.now(),
+                         occurredAt = now,
                        )
         _           <- issueRepo
                          .append(event)
@@ -64,9 +63,9 @@ final class GatewayMcpTools(
   // ── run_agent ─────────────────────────────────────────────────────────────
 
   private val runAgentTool: Tool = Tool(
-    name        = "run_agent",
+    name = "run_agent",
     description = "Start an agent run on a workspace for a given issue",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(
         "workspaceId" -> Json.Obj("type" -> Json.Str("string")),
@@ -93,12 +92,12 @@ final class GatewayMcpTools(
   // ── get_run_status ────────────────────────────────────────────────────────
 
   private val getRunStatusTool: Tool = Tool(
-    name        = "get_run_status",
+    name = "get_run_status",
     description = "Get the status of an agent run by its run ID",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(
-        "runId" -> Json.Obj("type" -> Json.Str("string")),
+        "runId" -> Json.Obj("type" -> Json.Str("string"))
       ),
       "required"   -> Json.Arr(Chunk(Json.Str("runId"))),
     ),
@@ -122,9 +121,9 @@ final class GatewayMcpTools(
   // ── list_agents ───────────────────────────────────────────────────────────
 
   private val listAgentsTool: Tool = Tool(
-    name        = "list_agents",
+    name = "list_agents",
     description = "List all registered agents in this gateway",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(),
       "required"   -> Json.Arr(Chunk.empty),
@@ -152,9 +151,9 @@ final class GatewayMcpTools(
   // ── list_workspaces ───────────────────────────────────────────────────────
 
   private val listWorkspacesTool: Tool = Tool(
-    name        = "list_workspaces",
+    name = "list_workspaces",
     description = "List all configured workspaces in this gateway",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(),
       "required"   -> Json.Arr(Chunk.empty),
@@ -181,9 +180,9 @@ final class GatewayMcpTools(
   // ── search_conversations ──────────────────────────────────────────────────
 
   private val searchConversationsTool: Tool = Tool(
-    name        = "search_conversations",
+    name = "search_conversations",
     description = "Semantic search over conversation memory",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(
         "query" -> Json.Obj("type" -> Json.Str("string")),
@@ -213,9 +212,9 @@ final class GatewayMcpTools(
   // ── get_metrics ───────────────────────────────────────────────────────────
 
   private val getMetricsTool: Tool = Tool(
-    name        = "get_metrics",
+    name = "get_metrics",
     description = "Get aggregate gateway metrics (agent count, workspace count, active runs)",
-    parameters  = Json.Obj(
+    parameters = Json.Obj(
       "type"       -> Json.Str("object"),
       "properties" -> Json.Obj(),
       "required"   -> Json.Arr(Chunk.empty),
@@ -232,10 +231,10 @@ final class GatewayMcpTools(
                         )
                         .map(_.flatten)
       yield Json.Obj(
-        "agents"      -> Json.Num(BigDecimal(agents.size)),
-        "workspaces"  -> Json.Num(BigDecimal(workspaces.size)),
-        "activeRuns"  -> Json.Num(BigDecimal(runs.count(r => isActive(r.status)))),
-        "totalRuns"   -> Json.Num(BigDecimal(runs.size)),
+        "agents"     -> Json.Num(BigDecimal(agents.size)),
+        "workspaces" -> Json.Num(BigDecimal(workspaces.size)),
+        "activeRuns" -> Json.Num(BigDecimal(runs.count(r => isActive(r.status)))),
+        "totalRuns"  -> Json.Num(BigDecimal(runs.size)),
       ),
   )
 
@@ -262,7 +261,7 @@ final class GatewayMcpTools(
 
   private def isActive(status: workspace.entity.RunStatus): Boolean =
     status == workspace.entity.RunStatus.Pending ||
-      status.isInstanceOf[workspace.entity.RunStatus.Running]
+    status.isInstanceOf[workspace.entity.RunStatus.Running]
 
   val all: List[Tool] = List(
     assignIssueTool,
