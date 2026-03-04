@@ -105,8 +105,8 @@ object ApplicationDI:
       TaskProgressNotifier &
       AgentConfigResolver &
       MemoryRepository &
-      EmbeddingService
-      & GitService &
+      EmbeddingService &
+      GitService &
       GitWatcher
 
   def aiProviderToLlmProvider(aiProvider: AIProvider): LlmProvider =
