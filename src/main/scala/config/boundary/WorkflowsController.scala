@@ -97,50 +97,55 @@ final case class WorkflowsControllerLive(
       }
     },
     Method.POST / "workflows"                      -> handler { (req: Request) =>
-      handle {
-        for
-          form       <- parseForm(req)
-          name       <- required(form, "name")
-          description = optional(form, "description")
-          steps      <- parseOrderedSteps(form)
-          stepAgents <- parseStepAgents(form, steps)
-          workflow    = WorkflowDefinition(
-                          name = name,
-                          description = description,
-                          steps = steps,
-                          stepAgents = stepAgents,
-                          isBuiltin = false,
-                        )
-          _          <- validateForForm(workflow)
-          _          <- service.createWorkflow(workflow)
-        yield redirectToList("Workflow created")
-      }
+      handleWithValidationRedirect(
+        effect =
+          for
+            form       <- parseForm(req)
+            name       <- required(form, "name")
+            description = optional(form, "description")
+            steps      <- parseOrderedSteps(form)
+            stepAgents <- parseStepAgents(form, steps)
+            workflow    = WorkflowDefinition(
+                            name = name,
+                            description = description,
+                            steps = steps,
+                            stepAgents = stepAgents,
+                            isBuiltin = false,
+                          )
+            _          <- validateForForm(workflow)
+            _          <- service.createWorkflow(workflow)
+          yield redirectToList("Workflow created"),
+        validationRedirect = errors => redirectToCreateForm(errors.mkString("; ")),
+      )
     },
     Method.POST / "workflows" / long("id")         -> handler { (id: Long, req: Request) =>
-      handle {
-        for
-          existing   <- service
-                          .getWorkflow(id)
-                          .someOrFail(WorkflowServiceError.PersistenceFailed(PersistenceError.NotFound("workflows", id)))
-          _          <- {
-            if existing.isBuiltin then
-              ZIO.fail(WorkflowServiceError.ValidationFailed(List("Built-in workflows cannot be edited")))
-            else ZIO.unit
-          }
-          form       <- parseForm(req)
-          name       <- required(form, "name")
-          steps      <- parseOrderedSteps(form)
-          stepAgents <- parseStepAgents(form, steps)
-          workflow    = existing.copy(
-                          name = name,
-                          description = optional(form, "description"),
-                          steps = steps,
-                          stepAgents = stepAgents,
-                        )
-          _          <- validateForForm(workflow)
-          _          <- service.updateWorkflow(workflow)
-        yield redirectToList("Workflow updated")
-      }
+      handleWithValidationRedirect(
+        effect =
+          for
+            existing   <-
+              service
+                .getWorkflow(id)
+                .someOrFail(WorkflowServiceError.PersistenceFailed(PersistenceError.NotFound("workflows", id)))
+            _          <- {
+              if existing.isBuiltin then
+                ZIO.fail(WorkflowServiceError.ValidationFailed(List("Built-in workflows cannot be edited")))
+              else ZIO.unit
+            }
+            form       <- parseForm(req)
+            name       <- required(form, "name")
+            steps      <- parseOrderedSteps(form)
+            stepAgents <- parseStepAgents(form, steps)
+            workflow    = existing.copy(
+                            name = name,
+                            description = optional(form, "description"),
+                            steps = steps,
+                            stepAgents = stepAgents,
+                          )
+            _          <- validateForForm(workflow)
+            _          <- service.updateWorkflow(workflow)
+          yield redirectToList("Workflow updated"),
+        validationRedirect = errors => redirectToEditForm(id, errors.mkString("; ")),
+      )
     },
     Method.DELETE / "workflows" / long("id")       -> handler { (id: Long, _: Request) =>
       handle {
@@ -258,6 +263,15 @@ final case class WorkflowsControllerLive(
   private def handle(effect: IO[WorkflowServiceError, Response]): UIO[Response] =
     effect.catchAll(err => ZIO.succeed(mapError(err)))
 
+  private def handleWithValidationRedirect(
+    effect: IO[WorkflowServiceError, Response],
+    validationRedirect: List[String] => Response,
+  ): UIO[Response] =
+    effect.catchAll {
+      case WorkflowServiceError.ValidationFailed(errors) => ZIO.succeed(validationRedirect(errors))
+      case err                                           => ZIO.succeed(mapError(err))
+    }
+
   private def mapError(error: WorkflowServiceError): Response =
     error match
       case WorkflowServiceError.ValidationFailed(errors)                  =>
@@ -279,6 +293,18 @@ final case class WorkflowsControllerLive(
     Response(
       status = Status.SeeOther,
       headers = Headers(Header.Custom("Location", s"/workflows?flash=${urlEncode(flash)}")),
+    )
+
+  private def redirectToCreateForm(flash: String): Response =
+    Response(
+      status = Status.SeeOther,
+      headers = Headers(Header.Custom("Location", s"/workflows/new?flash=${urlEncode(flash)}")),
+    )
+
+  private def redirectToEditForm(id: Long, flash: String): Response =
+    Response(
+      status = Status.SeeOther,
+      headers = Headers(Header.Custom("Location", s"/workflows/$id/edit?flash=${urlEncode(flash)}")),
     )
 
   private def html(content: String): Response =

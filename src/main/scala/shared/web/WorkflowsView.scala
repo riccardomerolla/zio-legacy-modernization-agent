@@ -1,10 +1,14 @@
 package shared.web
 
+import zio.json.*
+
 import _root_.config.entity.{ AgentInfo, WorkflowDefinition, WorkflowStepAgent }
 import scalatags.Text.all.*
 import taskrun.entity.TaskStep
 
 object WorkflowsView:
+
+  final private case class AgentOption(name: String, display: String) derives JsonEncoder
 
   def list(
     workflows: List[WorkflowDefinition],
@@ -263,30 +267,16 @@ object WorkflowsView:
     )
 
   private def stepAgentsToJson(stepAgents: List[WorkflowStepAgent]): String =
-    val payload = stepAgents
+    stepAgents
       .collect {
         case WorkflowStepAgent(step, agentName) if agentName.trim.nonEmpty =>
           step -> agentName.trim
       }
       .toMap
-    val entries = payload.toList.sortBy(_._1).map {
-      case (key, value) =>
-        val safeKey   = key.replace("\\", "\\\\").replace("\"", "\\\"")
-        val safeValue = value.replace("\\", "\\\\").replace("\"", "\\\"")
-        s"\"$safeKey\":\"$safeValue\""
-    }
-    s"{${entries.mkString(",")}}"
+      .toJson
 
   private def formScript(agentOptions: List[(String, String)]): String =
-    val agentOptionsJson = {
-      val items = agentOptions.map {
-        case (name, displayName) =>
-          val safeName    = name.replace("\\", "\\\\").replace("\"", "\\\"")
-          val safeDisplay = displayName.replace("\\", "\\\\").replace("\"", "\\\"")
-          s"""{"name":"$safeName","display":"$safeDisplay"}"""
-      }
-      s"[${items.mkString(",")}]"
-    }
+    val agentOptionsJson = agentOptions.map((name, displayName) => AgentOption(name, displayName)).toJson
 
     s"""
        |document.addEventListener("DOMContentLoaded", function () {
@@ -323,7 +313,7 @@ object WorkflowsView:
        |      return ["graph LR", '  empty["No steps selected"]'].join(String.fromCharCode(10));
        |    }
        |    var escapeStepLabel = function (value) {
-       |      return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+       |      return JSON.stringify(String(value)).slice(1, -1);
        |    };
        |    var nodes = steps.map(function (step, idx) {
        |      return '  step' + idx + '["' + escapeStepLabel(step) + '"]';
