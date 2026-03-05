@@ -1,4 +1,5 @@
 package workspace.control
+
 import java.nio.file.Paths
 
 import zio.*
@@ -13,13 +14,14 @@ object CliAgentRunner:
   def interactionSupport(cliTool: String): InteractionSupport =
     cliTool.toLowerCase match
       // Supports stdin conversation when not using --print.
-      case "claude"                => InteractionSupport.InteractiveStdin
+      case "claude"                        => InteractionSupport.InteractiveStdin
       // Gemini CLI supports interactive sessions; we still pass include-directories.
-      case "gemini"                => InteractionSupport.InteractiveStdin
+      case "gemini"                        => InteractionSupport.InteractiveStdin
       // Conservative defaults for tools where stdin conversation is not guaranteed.
-      case "opencode" | "copilot"  => InteractionSupport.ContinuationOnly
-      case "codex" | "echo" | "sh" => InteractionSupport.InteractiveStdin
-      case _                       => InteractionSupport.ContinuationOnly
+      case "opencode" | "copilot"          => InteractionSupport.ContinuationOnly
+      case "codex" | "echo" | "sh" | "cmd" => InteractionSupport.InteractiveStdin
+      case "powershell" | "pwsh"           => InteractionSupport.InteractiveStdin
+      case _                               => InteractionSupport.ContinuationOnly
 
   /** Map CLI tool name → argv list for host execution. `cliTool` is the binary to invoke (e.g. "claude", "gemini",
     * "opencode"). All agents use the process `cwd` (set to `worktreePath`) for directory context.
@@ -27,26 +29,43 @@ object CliAgentRunner:
     * For `gemini`, the original repository path is passed via `--include-directories` so the sandbox allows access to
     * both the worktree checkout and the source repository root.
     */
-  private def buildArgvForHost(cliTool: String, prompt: String, repoPath: String): List[String] =
+  private[workspace] def buildArgvForHost(
+    cliTool: String,
+    prompt: String,
+    repoPath: String,
+    isWindowsHost: Boolean,
+  ): List[String] =
     cliTool match
-      case "gemini"   => List("gemini", "--yolo", "--include-directories", repoPath, "-p", prompt)
-      case "opencode" => List("opencode", "run", "--prompt", prompt)
-      case "claude"   => List("claude", "--print", prompt)
-      case "codex"    => List("codex", prompt)
-      case "copilot"  => List("gh", "copilot", "suggest", "-t", "shell", prompt)
-      case other      => List(other, prompt)
+      case "gemini"                      => List("gemini", "--yolo", "--include-directories", repoPath, "-p", prompt)
+      case "opencode"                    => List("opencode", "run", "--prompt", prompt)
+      case "claude"                      => List("claude", "--print", prompt)
+      case "codex"                       => List("codex", prompt)
+      case "copilot"                     => List("gh", "copilot", "suggest", "-t", "shell", prompt)
+      case "echo" if isWindowsHost       => List("cmd", "/c", "echo", prompt)
+      case "sh" if isWindowsHost         => List("cmd", "/c", prompt)
+      case "cmd" if !isWindowsHost       => List("sh", "-lc", prompt)
+      case "powershell" if isWindowsHost => List("powershell", "-Command", prompt)
+      case "pwsh" if isWindowsHost       => List("pwsh", "-Command", prompt)
+      case other                         => List(other, prompt)
 
   /** Host argv for interactive sessions.
     *
     * For tools that do not support stdin conversations, callers should degrade to continuation runs.
     */
-  private def buildInteractiveArgvForHost(cliTool: String, repoPath: String): List[String] =
+  private[workspace] def buildInteractiveArgvForHost(
+    cliTool: String,
+    repoPath: String,
+    isWindowsHost: Boolean,
+  ): List[String] =
     cliTool match
-      case "gemini"   => List("gemini", "--yolo", "--include-directories", repoPath)
-      case "claude"   => List("claude")
-      case "codex"    => List("codex")
-      case "opencode" => List("opencode", "run")
-      case other      => List(other)
+      case "gemini"                      => List("gemini", "--yolo", "--include-directories", repoPath)
+      case "claude"                      => List("claude")
+      case "codex"                       => List("codex")
+      case "opencode"                    => List("opencode", "run")
+      case "sh" if isWindowsHost         => List("cmd")
+      case "powershell" if isWindowsHost => List("powershell")
+      case "pwsh" if isWindowsHost       => List("pwsh")
+      case other                         => List(other)
 
   /** Build the full argv list, wrapping in `docker run` when `runMode` is `RunMode.Docker`. `cliTool` is the CLI binary
     * to invoke (from the workspace's `cliTool` setting). `repoPath` is the original workspace `localPath`; it is added
@@ -66,11 +85,12 @@ object CliAgentRunner:
       if cliTool == "gemini" then worktreePath
       else if repoPath.nonEmpty then repoPath
       else worktreePath
+    val isWindowsHost        = HostPlatform.isWindows()
     runMode match
       case RunMode.Host                                             =>
-        buildArgvForHost(cliTool, prompt, effectiveIncludePath)
+        buildArgvForHost(cliTool, prompt, effectiveIncludePath, isWindowsHost)
       case RunMode.Docker(image, extraArgs, mountWorktree, network) =>
-        val innerArgv     = buildArgvForHost(cliTool, prompt, effectiveIncludePath)
+        val innerArgv     = buildArgvForHost(cliTool, prompt, effectiveIncludePath, isWindowsHost)
         val mountFlags    = if mountWorktree then List("-v", s"$worktreePath:/workspace", "--workdir", "/workspace")
         else List.empty
         val networkFlags  = network.map(n => List("--network", n)).getOrElse(List.empty)
@@ -101,11 +121,12 @@ object CliAgentRunner:
       if cliTool == "gemini" then worktreePath
       else if repoPath.nonEmpty then repoPath
       else worktreePath
+    val isWindowsHost        = HostPlatform.isWindows()
     runMode match
       case RunMode.Host                                             =>
-        buildInteractiveArgvForHost(cliTool, effectiveIncludePath)
+        buildInteractiveArgvForHost(cliTool, effectiveIncludePath, isWindowsHost)
       case RunMode.Docker(image, extraArgs, mountWorktree, network) =>
-        val innerArgv    = buildInteractiveArgvForHost(cliTool, effectiveIncludePath)
+        val innerArgv    = buildInteractiveArgvForHost(cliTool, effectiveIncludePath, isWindowsHost)
         val mountFlags   = if mountWorktree then List("-v", s"$worktreePath:/workspace", "--workdir", "/workspace")
         else List.empty
         val networkFlags = network.map(n => List("--network", n)).getOrElse(List.empty)

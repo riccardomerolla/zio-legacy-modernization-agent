@@ -1,16 +1,35 @@
 package workspace.control
 
+import java.nio.file.Files
+
 import zio.*
 import zio.test.*
 
 import workspace.entity.RunMode
 
 object CliAgentRunnerSpec extends ZIOSpecDefault:
+  private val isWindowsHost = HostPlatform.isWindows()
+
   def spec: Spec[TestEnvironment & Scope, Any] = suite("CliAgentRunnerSpec")(
     // RunMode.Host
     test("buildArgv for unknown cli tool passes prompt as single arg") {
       val argv = CliAgentRunner.buildArgv("echo", "hello world", "/tmp/wt")
-      assertTrue(argv == List("echo", "hello world"))
+      assertTrue(
+        if isWindowsHost then argv == List("cmd", "/c", "echo", "hello world")
+        else argv == List("echo", "hello world")
+      )
+    },
+    test("buildArgvForHost uses cmd.exe for echo on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("echo", "hello", "", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "echo", "hello"))
+    },
+    test("buildArgvForHost maps sh to cmd on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("sh", "echo hi", "", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "echo hi"))
+    },
+    test("buildArgvForHost maps cmd to sh on Unix hosts") {
+      val argv = CliAgentRunner.buildArgvForHost("cmd", "echo hi", "", isWindowsHost = false)
+      assertTrue(argv == List("sh", "-lc", "echo hi"))
     },
     test("buildArgv for gemini returns correct args (includes --yolo and --include-directories)") {
       val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt")
@@ -122,22 +141,29 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
     },
     test("runProcess with echo collects output line and returns exit 0") {
       for
-        result           <- CliAgentRunner.runProcess(List("echo", "line one"), cwd = "/tmp")
+        cwd              <- ZIO.attemptBlocking(Files.createTempDirectory("cli-runner").toString).orDie
+        command           = CliAgentRunner.buildArgvForHost("echo", "line one", "", isWindowsHost)
+        result           <- CliAgentRunner.runProcess(command, cwd = cwd)
         (lines, exitCode) = result
       yield assertTrue(exitCode == 0 && lines.exists(_.contains("line one")))
     },
-    test("runProcess with false command returns non-zero exit code") {
+    test("runProcess with failing command returns non-zero exit code") {
       for
-        result       <- CliAgentRunner.runProcess(List("sh", "-c", "exit 1"), cwd = "/tmp")
+        cwd          <- ZIO.attemptBlocking(Files.createTempDirectory("cli-runner-fail").toString).orDie
+        command       = if isWindowsHost then List("cmd", "/c", "exit", "1") else List("sh", "-c", "exit 1")
+        result       <- CliAgentRunner.runProcess(command, cwd = cwd)
         (_, exitCode) = result
       yield assertTrue(exitCode != 0)
     },
     test("runProcessStreaming invokes callback per line and returns exit 0") {
       for
+        cwd      <- ZIO.attemptBlocking(Files.createTempDirectory("cli-runner-stream").toString).orDie
+        command   = if isWindowsHost then List("cmd", "/c", "echo first && echo second")
+                    else List("sh", "-c", "echo first; echo second")
         received <- zio.Ref.make(List.empty[String])
         exitCode <- CliAgentRunner.runProcessStreaming(
-                      List("sh", "-c", "echo first; echo second"),
-                      cwd = "/tmp",
+                      command,
+                      cwd = cwd,
                       line => received.update(_ :+ line),
                     )
         lines    <- received.get
@@ -145,9 +171,11 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
     },
     test("runProcessStreaming returns non-zero exit code on failure") {
       for
+        cwd      <- ZIO.attemptBlocking(Files.createTempDirectory("cli-runner-stream-fail").toString).orDie
+        command   = if isWindowsHost then List("cmd", "/c", "exit", "2") else List("sh", "-c", "exit 2")
         exitCode <- CliAgentRunner.runProcessStreaming(
-                      List("sh", "-c", "exit 2"),
-                      cwd = "/tmp",
+                      command,
+                      cwd = cwd,
                       _ => ZIO.unit,
                     )
       yield assertTrue(exitCode == 2)

@@ -58,6 +58,24 @@ object WorkspaceRunService:
     ZIO.serviceWithZIO[WorkspaceRunService](_.cancelRun(runId))
 
 object WorkspaceRunServiceLive:
+  def worktreePath(workspaceName: String, runId: String): String =
+    worktreePath(
+      workspaceName = workspaceName,
+      runId = runId,
+      userHome = sys.props.getOrElse("user.home", "."),
+      localAppData = sys.env.get("LOCALAPPDATA"),
+      osName = java.lang.System.getProperty("os.name", ""),
+    )
+
+  private[workspace] def worktreePath(
+    workspaceName: String,
+    runId: String,
+    userHome: String,
+    localAppData: Option[String],
+    osName: String,
+  ): String =
+    HostPlatform.defaultWorktreeRoot(userHome, localAppData, osName).resolve(workspaceName).resolve(runId).toString
+
   val defaultWorktreeAdd: (String, String, String) => IO[WorkspaceError, Unit] =
     (repoPath, wtPath, branch) =>
       ZIO
@@ -131,7 +149,7 @@ final case class WorkspaceRunServiceLive(
       runId    = java.util.UUID.randomUUID().toString
       short    = runId.take(8)
       branch   = s"agent/${sanitizeBranchPart(req.agentName)}-${req.issueRef.stripPrefix("#")}-$short"
-      wtPath   = s"${sys.props("user.home")}/.cache/agent-worktrees/${ws.name}/$runId"
+      wtPath   = WorkspaceRunServiceLive.worktreePath(ws.name, runId)
       _       <- worktreeAdd(ws.localPath, wtPath, branch)
       prompt   = buildPrompt(req, issue, ws.localPath, wtPath)
       _       <- injectAgentPromptFile(ws.name, req.issueRef, branch, wtPath, profile)
