@@ -4,59 +4,237 @@ class IssuesBoard {
     this.fragmentUrl = root?.dataset?.fragmentUrl || '/issues/board/fragment';
     this.wsTopic = root?.dataset?.wsTopic || 'activity:feed';
     this.dragIssueId = null;
+    this.dragCard = null;
+    this.ghost = null;          // semi-transparent placeholder in source column
+    this.placeholder = null;    // dashed drop-target shown in hovered column
+    this.sourceColumn = null;   // column where drag started
     this.ws = null;
 
     this.bindDragDrop();
+    this.bindPointerDrag();
     this.connectWs();
   }
+
+  // ---------------------------------------------------------------------------
+  // HTML5 drag & drop
+  // ---------------------------------------------------------------------------
 
   bindDragDrop() {
     this.root.addEventListener('dragstart', (event) => {
       const card = event.target.closest('[data-issue-id]');
       if (!card) return;
+
+      this.dragCard = card;
       this.dragIssueId = card.dataset.issueId || null;
+      this.sourceColumn = card.closest('[data-drop-status]');
+
       event.dataTransfer?.setData('text/plain', this.dragIssueId || '');
       event.dataTransfer.effectAllowed = 'move';
-      card.classList.add('opacity-70');
+
+      // Card lift effect applied after paint so browser captures the un-lifted image
+      requestAnimationFrame(() => {
+        card.classList.add('opacity-40', '-translate-y-0.5', 'shadow-xl');
+      });
+
+      this._insertSourceGhost(card);
     });
 
     this.root.addEventListener('dragend', (event) => {
       const card = event.target.closest('[data-issue-id]');
-      card?.classList.remove('opacity-70');
+      card?.classList.remove('opacity-40', '-translate-y-0.5', 'shadow-xl');
+      this._removePlaceholder();
+      this._removeSourceGhost();
+      this.dragCard = null;
       this.dragIssueId = null;
+      this.sourceColumn = null;
       this.clearHighlights();
     });
 
+    this._bindColumnListeners();
+  }
+
+  _bindColumnListeners() {
     this.root.querySelectorAll('[data-drop-status]').forEach((column) => {
       column.addEventListener('dragover', (event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
-        column.classList.add('ring-2', 'ring-indigo-400/60');
+        this._highlightColumn(column);
+        this._movePlaceholderTo(column);
       });
 
-      column.addEventListener('dragleave', () => {
-        column.classList.remove('ring-2', 'ring-indigo-400/60');
+      column.addEventListener('dragleave', (event) => {
+        // Only clear if leaving the column entirely (not entering a child)
+        if (!column.contains(event.relatedTarget)) {
+          this._unhighlightColumn(column);
+          if (this._placeholderColumn() === column) {
+            this._removePlaceholder();
+          }
+        }
       });
 
       column.addEventListener('drop', async (event) => {
         event.preventDefault();
-        column.classList.remove('ring-2', 'ring-indigo-400/60');
+        this._unhighlightColumn(column);
+        this._removePlaceholder();
 
         const status = column.dataset.dropStatus || '';
         const issueId = this.dragIssueId || event.dataTransfer?.getData('text/plain') || '';
         if (!status || !issueId) return;
 
         await this.patchIssueStatus(issueId, status);
-        this.refreshBoard();
+        this.refreshBoard(issueId);
       });
     });
   }
 
+  // Insert a ghost (dashed placeholder) where the card was in the source column
+  _insertSourceGhost(card) {
+    this.ghost = document.createElement('div');
+    this.ghost.className = 'rounded-lg border border-dashed border-white/20 bg-white/5 h-[4.5rem] pointer-events-none';
+    this.ghost.dataset.boardGhost = 'source';
+    card.after(this.ghost);
+  }
+
+  _removeSourceGhost() {
+    this.ghost?.remove();
+    this.ghost = null;
+  }
+
+  // Insert/move a dashed placeholder into the hovered destination column
+  _movePlaceholderTo(column) {
+    if (this._placeholderColumn() === column) return;
+    this._removePlaceholder();
+    this.placeholder = document.createElement('div');
+    this.placeholder.className = 'rounded-lg border-2 border-dashed border-indigo-400/50 bg-indigo-500/10 h-[4.5rem] pointer-events-none';
+    this.placeholder.dataset.boardGhost = 'target';
+    const cardsArea = column.querySelector('[data-role="column-cards"]');
+    if (cardsArea) cardsArea.appendChild(this.placeholder);
+    else column.appendChild(this.placeholder);
+  }
+
+  _removePlaceholder() {
+    this.placeholder?.remove();
+    this.placeholder = null;
+  }
+
+  _placeholderColumn() {
+    return this.placeholder?.closest('[data-drop-status]') || null;
+  }
+
+  _highlightColumn(column) {
+    this.clearHighlights();
+    column.classList.add('ring-2', 'ring-indigo-400/60', 'bg-indigo-500/5');
+  }
+
+  _unhighlightColumn(column) {
+    column.classList.remove('ring-2', 'ring-indigo-400/60', 'bg-indigo-500/5');
+  }
+
   clearHighlights() {
     this.root.querySelectorAll('[data-drop-status]').forEach((column) => {
-      column.classList.remove('ring-2', 'ring-indigo-400/60');
+      column.classList.remove('ring-2', 'ring-indigo-400/60', 'bg-indigo-500/5');
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Touch / pointer drag (basic support for mobile/tablet)
+  // ---------------------------------------------------------------------------
+
+  bindPointerDrag() {
+    let dragging = false;
+    let pointerCard = null;
+    let clone = null;
+    let startX = 0, startY = 0;
+    let offsetX = 0, offsetY = 0;
+
+    const onPointerDown = (event) => {
+      if (event.pointerType === 'mouse') return; // handled by native DnD
+      const card = event.target.closest('[data-issue-id]');
+      if (!card) return;
+
+      dragging = false;
+      pointerCard = card;
+      startX = event.clientX;
+      startY = event.clientY;
+
+      const rect = card.getBoundingClientRect();
+      offsetX = event.clientX - rect.left;
+      offsetY = event.clientY - rect.top;
+    };
+
+    const onPointerMove = (event) => {
+      if (!pointerCard) return;
+      const dx = Math.abs(event.clientX - startX);
+      const dy = Math.abs(event.clientY - startY);
+      if (!dragging && dx < 8 && dy < 8) return;
+
+      if (!dragging) {
+        dragging = true;
+        this.dragIssueId = pointerCard.dataset.issueId || null;
+        this.dragCard = pointerCard;
+        this.sourceColumn = pointerCard.closest('[data-drop-status]');
+
+        pointerCard.classList.add('opacity-40');
+        this._insertSourceGhost(pointerCard);
+
+        // Create floating visual clone
+        clone = pointerCard.cloneNode(true);
+        clone.style.cssText = `position:fixed;pointer-events:none;z-index:9999;width:${pointerCard.offsetWidth}px;opacity:0.9;box-shadow:0 8px 32px rgba(0,0,0,0.5);`;
+        document.body.appendChild(clone);
+      }
+
+      if (clone) {
+        clone.style.left = `${event.clientX - offsetX}px`;
+        clone.style.top = `${event.clientY - offsetY}px`;
+      }
+
+      // Highlight column under pointer
+      const el = document.elementFromPoint(event.clientX, event.clientY);
+      const col = el?.closest('[data-drop-status]');
+      if (col) {
+        this._highlightColumn(col);
+        this._movePlaceholderTo(col);
+      }
+    };
+
+    const onPointerUp = async (event) => {
+      if (!dragging || !pointerCard) {
+        pointerCard = null;
+        return;
+      }
+
+      clone?.remove();
+      clone = null;
+      pointerCard.classList.remove('opacity-40');
+      this._removePlaceholder();
+      this._removeSourceGhost();
+      this.clearHighlights();
+
+      const el = document.elementFromPoint(event.clientX, event.clientY);
+      const col = el?.closest('[data-drop-status]');
+      const status = col?.dataset?.dropStatus || '';
+      const issueId = this.dragIssueId || '';
+
+      dragging = false;
+      pointerCard = null;
+      this.dragIssueId = null;
+      this.dragCard = null;
+      this.sourceColumn = null;
+
+      if (status && issueId) {
+        await this.patchIssueStatus(issueId, status);
+        this.refreshBoard(issueId);
+      }
+    };
+
+    this.root.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  }
+
+  // ---------------------------------------------------------------------------
+  // API & board refresh
+  // ---------------------------------------------------------------------------
 
   async patchIssueStatus(issueId, status) {
     const payload = { status: this.toIssueStatus(status) };
@@ -90,13 +268,23 @@ class IssuesBoard {
     }
   }
 
-  refreshBoard() {
+  _flashLandedCard(issueId) {
+    if (!issueId) return;
+    const landed = this.root.querySelector(`[data-issue-id="${CSS.escape(issueId)}"]`);
+    if (landed) {
+      landed.classList.add('bg-white/10');
+      setTimeout(() => landed.classList.remove('bg-white/10'), 300);
+    }
+  }
+
+  refreshBoard(landedIssueId = null) {
     if (window.htmx?.ajax) {
       window.htmx.ajax('GET', this.fragmentUrl, {
         target: this.root,
         swap: 'innerHTML',
       }).then(() => {
         this.bindDragDrop();
+        this._flashLandedCard(landedIssueId);
       });
       return;
     }
@@ -104,11 +292,17 @@ class IssuesBoard {
     fetch(this.fragmentUrl)
       .then((response) => response.ok ? response.text() : Promise.reject(new Error('refresh failed')))
       .then((html) => {
-        this.root.innerHTML = html;
+        // html is server-rendered markup from our own trusted endpoint
+        this.root.innerHTML = html; // nosec: trusted server HTML, same origin
         this.bindDragDrop();
+        this._flashLandedCard(landedIssueId);
       })
       .catch(() => {});
   }
+
+  // ---------------------------------------------------------------------------
+  // WebSocket
+  // ---------------------------------------------------------------------------
 
   connectWs() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
