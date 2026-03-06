@@ -12,6 +12,7 @@ class IssuesBoard {
 
     this.bindDragDrop();
     this.bindPointerDrag();
+    this.bindCollapse();
     this.connectWs();
   }
 
@@ -133,6 +134,95 @@ class IssuesBoard {
   clearHighlights() {
     this.root.querySelectorAll('[data-drop-status]').forEach((column) => {
       column.classList.remove('ring-2', 'ring-indigo-400/60', 'bg-indigo-500/5');
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Column collapse / expand (persisted in localStorage)
+  // ---------------------------------------------------------------------------
+
+  bindCollapse() {
+    this.root.querySelectorAll('[data-collapse-toggle]').forEach((btn) => {
+      const statusToken = btn.dataset.collapseToggle;
+      const cardsArea = this.root.querySelector(`[data-column-cards="${statusToken}"]`);
+      if (!cardsArea) return;
+
+      // Restore persisted state
+      if (this._isCollapsed(statusToken)) {
+        cardsArea.classList.add('hidden');
+      }
+
+      btn.addEventListener('click', () => {
+        const collapsed = cardsArea.classList.toggle('hidden');
+        this._setCollapsed(statusToken, collapsed);
+        this._renderHiddenPanel();
+      });
+    });
+
+    this._renderHiddenPanel();
+  }
+
+  _collapseKey(statusToken) {
+    return `board-col-collapsed:${statusToken}`;
+  }
+
+  _isCollapsed(statusToken) {
+    return localStorage.getItem(this._collapseKey(statusToken)) === 'true';
+  }
+
+  _setCollapsed(statusToken, collapsed) {
+    if (collapsed) localStorage.setItem(this._collapseKey(statusToken), 'true');
+    else localStorage.removeItem(this._collapseKey(statusToken));
+  }
+
+  _renderHiddenPanel() {
+    let panel = this.root.parentElement?.querySelector('[data-hidden-columns-panel]');
+
+    const collapsedColumns = [];
+    this.root.querySelectorAll('[data-column-status]').forEach((col) => {
+      const statusToken = col.dataset.columnStatus;
+      const cardsArea = col.querySelector(`[data-column-cards="${statusToken}"]`);
+      if (cardsArea?.classList.contains('hidden')) {
+        const label = col.dataset.columnLabel || statusToken;
+        const count = col.querySelector(`[data-column-count="${statusToken}"]`)?.textContent || '0';
+        collapsedColumns.push({ statusToken, label, count });
+      }
+    });
+
+    if (collapsedColumns.length === 0) {
+      panel?.remove();
+      return;
+    }
+
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.dataset.hiddenColumnsPanel = 'true';
+      panel.className = 'mt-3 flex flex-wrap gap-2 px-1';
+      this.root.after(panel);
+    }
+
+    // Build chips for each hidden column
+    panel.textContent = ''; // clear safely
+    const label = document.createElement('span');
+    label.className = 'text-xs text-slate-400 self-center';
+    label.textContent = 'Hidden:';
+    panel.appendChild(label);
+
+    collapsedColumns.forEach(({ statusToken, label: colLabel, count }) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'flex items-center gap-1 rounded-full border border-white/15 bg-slate-800/70 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700';
+      chip.dataset.uncollapse = statusToken;
+      chip.textContent = `${colLabel} (${count})`;
+      chip.addEventListener('click', () => {
+        const cardsArea = this.root.querySelector(`[data-column-cards="${statusToken}"]`);
+        if (cardsArea) {
+          cardsArea.classList.remove('hidden');
+          this._setCollapsed(statusToken, false);
+          this._renderHiddenPanel();
+        }
+      });
+      panel.appendChild(chip);
     });
   }
 
@@ -284,6 +374,7 @@ class IssuesBoard {
         swap: 'innerHTML',
       }).then(() => {
         this.bindDragDrop();
+        this.bindCollapse();
         this._flashLandedCard(landedIssueId);
       });
       return;
@@ -295,6 +386,7 @@ class IssuesBoard {
         // html is server-rendered markup from our own trusted endpoint
         this.root.innerHTML = html; // nosec: trusted server HTML, same origin
         this.bindDragDrop();
+        this.bindCollapse();
         this._flashLandedCard(landedIssueId);
       })
       .catch(() => {});

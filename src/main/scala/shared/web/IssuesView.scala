@@ -19,6 +19,14 @@ object IssuesView:
     IssueStatus.Failed     -> "Failed",
   )
 
+  private def columnStatusDotCls(status: IssueStatus): String = status match
+    case IssueStatus.Open       => "bg-indigo-400"
+    case IssueStatus.Assigned   => "bg-amber-400"
+    case IssueStatus.InProgress => "bg-emerald-400"
+    case IssueStatus.Completed  => "bg-teal-400"
+    case IssueStatus.Failed     => "bg-rose-500"
+    case _                      => "bg-slate-500"
+
   def list(
     runId: Option[String],
     issues: List[AgentIssueView],
@@ -175,18 +183,34 @@ object IssuesView:
             catch case _: Throwable => Instant.EPOCH
           )
           .reverse
+        val statusToken = issueStatusToken(status)
         div(
           cls                         := "rounded-xl border border-white/10 bg-slate-900/70 p-3",
-          attr("data-drop-status")    := issueStatusToken(status),
-          attr("data-column-status")  := issueStatusToken(status),
+          attr("data-drop-status")    := statusToken,
+          attr("data-column-status")  := statusToken,
           attr("data-column-label")   := label,
           attr("data-drop-highlight") := "false",
         )(
-          div(cls := "mb-2 flex items-center justify-between")(
-            h3(cls := "text-sm font-semibold text-slate-100")(label),
-            span(cls := "rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300")(columnIssues.size.toString),
+          div(cls := "mb-2 flex items-center justify-between gap-1")(
+            button(
+              cls                          := "flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 bg-transparent border-0 p-0 text-left",
+              attr("data-collapse-toggle") := statusToken,
+              `type`                       := "button",
+            )(
+              span(cls := s"inline-block h-2 w-2 flex-shrink-0 rounded-full ${columnStatusDotCls(status)}"),
+              h3(cls := "text-sm font-semibold text-slate-100 truncate")(label),
+              span(
+                cls                          := "rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300",
+                attr("data-column-count")    := statusToken,
+              )(columnIssues.size.toString),
+            ),
+            a(
+              href  := s"/issues/new?status=$statusToken",
+              cls   := "flex-shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-100",
+              title := s"New $label issue",
+            )("+"),
           ),
-          div(cls := "space-y-2 max-h-[65vh] overflow-y-auto", attr("data-role") := "column-cards")(
+          div(cls := "space-y-2 max-h-[65vh] overflow-y-auto", attr("data-role") := "column-cards", attr("data-column-cards") := statusToken)(
             if columnIssues.isEmpty then
               p(cls := "rounded border border-dashed border-white/10 px-2 py-3 text-xs text-slate-500")("No issues")
             else

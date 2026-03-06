@@ -144,6 +144,29 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
         val html = IssuesView.boardCardFragment(baseIssue, Nil, workReport = None)
         assertTrue(html.contains("Updated "))
       },
+      test("board column header renders colored status dot") {
+        val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
+        // InProgress column should have emerald dot, Open should have indigo dot
+        assertTrue(
+          html.contains("bg-emerald-400"),
+          html.contains("bg-indigo-400"),
+        )
+      },
+      test("board column header renders + new issue link for each status") {
+        val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
+        assertTrue(
+          html.contains("/issues/new?status=open"),
+          html.contains("/issues/new?status=in_progress"),
+        )
+      },
+      test("board column header renders collapse toggle button") {
+        val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
+        assertTrue(html.contains("data-collapse-toggle"))
+      },
+      test("board column cards area has data-column-cards attribute") {
+        val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
+        assertTrue(html.contains("data-column-cards"))
+      },
       test("board card agent chip appears after updated label in bottom row") {
         val issue = baseIssue.copy(assignedAgent = Some("claude-3-5-sonnet"))
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
