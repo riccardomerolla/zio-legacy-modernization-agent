@@ -113,4 +113,48 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
         )
         assertTrue(html.contains("data-proof-of-work"))
       },
+      test("board card renders short issue ID chip top-left") {
+        val html = IssuesView.boardCardFragment(baseIssue, Nil, workReport = None)
+        assertTrue(html.contains("#issue-po"))
+      },
+      test("board card renders status dot for Open issue (ring style)") {
+        val issue = baseIssue.copy(status = IssueStatus.Open)
+        val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
+        assertTrue(html.contains("border-indigo-400"))
+      },
+      test("board card renders status dot for InProgress issue (filled pulse)") {
+        val issue = baseIssue.copy(status = IssueStatus.InProgress)
+        val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
+        assertTrue(
+          html.contains("bg-emerald-400"),
+          html.contains("animate-pulse"),
+        )
+      },
+      test("board card renders status dot for Failed issue") {
+        val issue = baseIssue.copy(status = IssueStatus.Failed)
+        val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
+        assertTrue(html.contains("bg-rose-500"))
+      },
+      test("board card does not render description excerpt") {
+        val issue = baseIssue.copy(description = "This should not appear on card")
+        val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
+        assertTrue(!html.contains("This should not appear on card"))
+      },
+      test("board card always shows updated date") {
+        val html = IssuesView.boardCardFragment(baseIssue, Nil, workReport = None)
+        assertTrue(html.contains("Updated "))
+      },
+      test("board card agent chip appears after updated label in bottom row") {
+        val issue = baseIssue.copy(assignedAgent = Some("claude-3-5-sonnet"))
+        val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
+        // Updated label and agent chip are both in the bottom flex row;
+        // use lastIndexOf for agent chip text to skip the data-attr occurrence
+        val updatedIdx = html.indexOf("Updated ")
+        val agentIdx   = html.lastIndexOf("claude-3-5")
+        assertTrue(
+          updatedIdx >= 0,
+          agentIdx >= 0,
+          updatedIdx < agentIdx,
+        )
+      },
     )

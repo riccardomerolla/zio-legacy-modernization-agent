@@ -750,7 +750,6 @@ object IssuesView:
     val workspaceName = workspaceNameOf(workspaces, workspaceId).getOrElse(workspaceId)
     val titleText     = safeStr(issue.title, "Untitled")
     val updatedLabel  = prettyRelativeTime(issue.updatedAt)
-    val isInProgress  = issue.status == IssueStatus.InProgress
     val agentName     =
       safe(issue.assignedAgent) match
         case v if v.nonEmpty => v
@@ -762,6 +761,14 @@ object IssuesView:
       case IssueStatus.Completed  => "border-l-4 border-l-teal-400"
       case IssueStatus.Failed     => "border-l-4 border-l-rose-500"
       case _                      => "border-l-4 border-l-slate-600"
+    val statusDotCls  = issue.status match
+      case IssueStatus.Open       => "rounded-full border-2 border-indigo-400 bg-transparent"
+      case IssueStatus.Assigned   => "rounded-full border-2 border-amber-400 bg-transparent"
+      case IssueStatus.InProgress => "rounded-full bg-emerald-400 animate-pulse"
+      case IssueStatus.Completed  => "rounded-full bg-teal-400"
+      case IssueStatus.Failed     => "rounded-full bg-rose-500"
+      case _                      => "rounded-full bg-slate-500"
+    val shortId       = s"#${issueId.take(8)}"
     val powHtml       = workReport.map(r => ProofOfWorkView.evidenceBar(r)).getOrElse("")
     div(
       cls                         := s"block rounded-lg border border-white/10 bg-slate-800/80 p-3 hover:border-indigo-400/40 hover:bg-slate-800 $borderCls",
@@ -775,24 +782,23 @@ object IssuesView:
       attr("data-workspace-id")   := workspaceId,
     )(
       a(href := s"/issues/$issueId", cls := "block")(
-        div(cls := "mb-1 flex items-start justify-between gap-2")(
-          p(cls := "flex-1 text-sm font-semibold text-slate-100 line-clamp-2")(titleText),
-          if isInProgress then
-            span(cls := "mt-1 h-2 w-2 flex-shrink-0 rounded-full bg-emerald-400 animate-pulse")
-          else (),
+        div(cls := "mb-1.5 flex items-center gap-1.5")(
+          span(cls := s"inline-block h-2.5 w-2.5 flex-shrink-0 $statusDotCls"),
+          span(cls := "text-[10px] font-mono text-slate-500")(shortId),
         ),
-        div(cls := "mt-1.5 flex flex-wrap items-center gap-1.5")(
+        p(cls := "mb-2 text-sm font-semibold text-slate-100 line-clamp-2")(titleText),
+        div(cls := "flex flex-wrap items-center gap-1")(
           priorityBadge(safeStr(issue.priority.toString, "medium")),
           safeTags(issue.tags).take(2).map(tagBadge),
           if workspaceName.nonEmpty then workspaceBadge(workspaceName) else (),
         ),
         div(cls := "mt-2 flex items-center justify-between")(
+          p(cls := "text-[11px] text-slate-500")(s"Updated $updatedLabel"),
           if agentName.nonEmpty then
             span(cls := "rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-slate-300")(
               agentName.take(12)
             )
           else span(),
-          p(cls := "text-[11px] text-slate-500")(s"Updated $updatedLabel"),
         ),
       ),
       if powHtml.nonEmpty then raw(powHtml) else (),
