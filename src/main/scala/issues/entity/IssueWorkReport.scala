@@ -3,23 +3,57 @@ package issues.entity
 import java.time.Instant
 
 import zio.*
+import zio.json.JsonCodec
+import zio.schema.{ Schema, derived }
 
-import orchestration.entity.DiffStats
-import shared.ids.Ids.IssueId
-import taskrun.entity.{ CiStatus, PrStatus, TaskArtifact, TaskReport, TokenUsage }
+import shared.ids.Ids.{ ArtifactId, IssueId, ReportId }
+
+enum IssuePrStatus derives JsonCodec, Schema:
+  case Open, Merged, Closed, Draft
+
+enum IssueCiStatus derives JsonCodec, Schema:
+  case Pending, Running, Passed, Failed
+
+final case class TokenUsage(
+  inputTokens: Long,
+  outputTokens: Long,
+  totalTokens: Long,
+) derives JsonCodec, Schema
+
+final case class IssueDiffStats(
+  filesChanged: Int,
+  linesAdded: Int,
+  linesRemoved: Int,
+) derives JsonCodec, Schema
+
+final case class IssueReport(
+  id: ReportId,
+  stepName: String,
+  reportType: String,
+  content: String,
+  createdAt: Instant,
+) derives JsonCodec, Schema
+
+final case class IssueArtifact(
+  id: ArtifactId,
+  stepName: String,
+  key: String,
+  value: String,
+  createdAt: Instant,
+) derives JsonCodec, Schema
 
 final case class IssueWorkReport(
   issueId: IssueId,
   walkthrough: Option[String],
   agentSummary: Option[String],
-  diffStats: Option[DiffStats],
+  diffStats: Option[IssueDiffStats],
   prLink: Option[String],
-  prStatus: Option[PrStatus],
-  ciStatus: Option[CiStatus],
+  prStatus: Option[IssuePrStatus],
+  ciStatus: Option[IssueCiStatus],
   tokenUsage: Option[TokenUsage],
   runtimeSeconds: Option[Long],
-  reports: List[TaskReport],
-  artifacts: List[TaskArtifact],
+  reports: List[IssueReport],
+  artifacts: List[IssueArtifact],
   lastUpdated: Instant,
 )
 
@@ -45,12 +79,12 @@ trait IssueWorkReportProjection:
   def getAll: UIO[Map[IssueId, IssueWorkReport]]
   def updateWalkthrough(issueId: IssueId, summary: String, at: Instant): UIO[Unit]
   def updateAgentSummary(issueId: IssueId, summary: String, at: Instant): UIO[Unit]
-  def updateDiffStats(issueId: IssueId, stats: DiffStats, at: Instant): UIO[Unit]
-  def updatePrLink(issueId: IssueId, prUrl: String, status: PrStatus, at: Instant): UIO[Unit]
-  def updateCiStatus(issueId: IssueId, status: CiStatus, at: Instant): UIO[Unit]
+  def updateDiffStats(issueId: IssueId, stats: IssueDiffStats, at: Instant): UIO[Unit]
+  def updatePrLink(issueId: IssueId, prUrl: String, status: IssuePrStatus, at: Instant): UIO[Unit]
+  def updateCiStatus(issueId: IssueId, status: IssueCiStatus, at: Instant): UIO[Unit]
   def updateTokenUsage(issueId: IssueId, usage: TokenUsage, runtimeSeconds: Long, at: Instant): UIO[Unit]
-  def addReport(issueId: IssueId, report: TaskReport, at: Instant): UIO[Unit]
-  def addArtifact(issueId: IssueId, artifact: TaskArtifact, at: Instant): UIO[Unit]
+  def addReport(issueId: IssueId, report: IssueReport, at: Instant): UIO[Unit]
+  def addArtifact(issueId: IssueId, artifact: IssueArtifact, at: Instant): UIO[Unit]
 
 object IssueWorkReportProjection:
 
@@ -80,20 +114,20 @@ object IssueWorkReportProjection:
     override def updateAgentSummary(issueId: IssueId, summary: String, at: Instant): UIO[Unit] =
       upsert(issueId, at)(_.copy(agentSummary = Some(summary)))
 
-    override def updateDiffStats(issueId: IssueId, stats: DiffStats, at: Instant): UIO[Unit] =
+    override def updateDiffStats(issueId: IssueId, stats: IssueDiffStats, at: Instant): UIO[Unit] =
       upsert(issueId, at)(_.copy(diffStats = Some(stats)))
 
-    override def updatePrLink(issueId: IssueId, prUrl: String, status: PrStatus, at: Instant): UIO[Unit] =
+    override def updatePrLink(issueId: IssueId, prUrl: String, status: IssuePrStatus, at: Instant): UIO[Unit] =
       upsert(issueId, at)(_.copy(prLink = Some(prUrl), prStatus = Some(status)))
 
-    override def updateCiStatus(issueId: IssueId, status: CiStatus, at: Instant): UIO[Unit] =
+    override def updateCiStatus(issueId: IssueId, status: IssueCiStatus, at: Instant): UIO[Unit] =
       upsert(issueId, at)(_.copy(ciStatus = Some(status)))
 
     override def updateTokenUsage(issueId: IssueId, usage: TokenUsage, runtimeSeconds: Long, at: Instant): UIO[Unit] =
       upsert(issueId, at)(_.copy(tokenUsage = Some(usage), runtimeSeconds = Some(runtimeSeconds)))
 
-    override def addReport(issueId: IssueId, report: TaskReport, at: Instant): UIO[Unit] =
+    override def addReport(issueId: IssueId, report: IssueReport, at: Instant): UIO[Unit] =
       upsert(issueId, at)(r => r.copy(reports = r.reports :+ report))
 
-    override def addArtifact(issueId: IssueId, artifact: TaskArtifact, at: Instant): UIO[Unit] =
+    override def addArtifact(issueId: IssueId, artifact: IssueArtifact, at: Instant): UIO[Unit] =
       upsert(issueId, at)(r => r.copy(artifacts = r.artifacts :+ artifact))

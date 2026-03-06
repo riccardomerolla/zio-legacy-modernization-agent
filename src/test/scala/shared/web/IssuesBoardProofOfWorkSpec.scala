@@ -4,9 +4,8 @@ import java.time.Instant
 
 import zio.test.*
 
-import issues.entity.IssueWorkReport
+import issues.entity.{ IssueDiffStats, IssueWorkReport }
 import issues.entity.api.{ AgentIssueView, IssuePriority, IssueStatus }
-import orchestration.entity.DiffStats
 import shared.ids.Ids.IssueId
 
 /** Tests that the board card and detail view correctly embed the ProofOfWork panel. */
@@ -55,7 +54,7 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
           .empty(issueId, now)
           .copy(
             walkthrough = Some("Changed 3 files."),
-            diffStats = Some(DiffStats(3, 20, 5)),
+            diffStats = Some(IssueDiffStats(3, 20, 5)),
           )
         val html   = IssuesView.detailWithProofOfWork(baseIssue, Nil, Nil, Nil, workReport = Some(report))
         assertTrue(
@@ -187,8 +186,8 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
         assertTrue(html.contains("data-column-cards"))
       },
       test("board card agent chip appears after updated label in bottom row") {
-        val issue = baseIssue.copy(assignedAgent = Some("claude-3-5-sonnet"))
-        val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
+        val issue      = baseIssue.copy(assignedAgent = Some("claude-3-5-sonnet"))
+        val html       = IssuesView.boardCardFragment(issue, Nil, workReport = None)
         // Updated label and agent chip are both in the bottom flex row;
         // use lastIndexOf for agent chip text to skip the data-attr occurrence
         val updatedIdx = html.indexOf("Updated ")

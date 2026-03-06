@@ -5,6 +5,7 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
+import issues.control.IssueWorkReportHydrator
 import shared.ids.Ids.*
 import taskrun.entity.*
 
@@ -103,11 +104,11 @@ object IssueWorkReportHydratorSpec extends ZIOSpecDefault:
         yield assertTrue(
           result.get.walkthrough == Some("Summary."),
           result.get.prLink == Some("https://github.com/pr/42"),
-          result.get.prStatus == Some(PrStatus.Open),
-          result.get.ciStatus == Some(CiStatus.Passed),
-          result.get.tokenUsage == Some(usage),
+          result.get.prStatus == Some(IssuePrStatus.Open),
+          result.get.ciStatus == Some(IssueCiStatus.Passed),
+          result.get.tokenUsage == Some(issues.entity.TokenUsage(usage.inputTokens, usage.outputTokens, usage.totalTokens)),
           result.get.runtimeSeconds == Some(45L),
-          result.get.reports == List(report),
+          result.get.reports == List(IssueReport(report.id, report.stepName, report.reportType, report.content, report.createdAt)),
         )
       },
       test("hydrating skips issues with no linked run") {
@@ -152,7 +153,7 @@ object IssueWorkReportHydratorSpec extends ZIOSpecDefault:
         yield assertTrue(
           result1.get.walkthrough == Some("Summary 1."),
           result2.get.prLink == Some("https://github.com/pr/43"),
-          result2.get.prStatus == Some(PrStatus.Merged),
+          result2.get.prStatus == Some(IssuePrStatus.Merged),
         )
       },
       test("hydrating sets agentSummary from issue state for InProgress issues") {

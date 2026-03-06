@@ -12,7 +12,7 @@ object AgentMonitor:
           p(cls := "mt-1 text-sm text-slate-400")(
             "Real-time execution states, resource usage, and control actions for all agents"
           ),
-        ),
+        )
       ),
       div(
         cls                 := "space-y-2",
@@ -20,15 +20,15 @@ object AgentMonitor:
         attr("sse-connect") := "/agent-monitor/stream",
       )(
         div(
-          id                    := "agent-stats-container",
-          attr("sse-swap")      := "agent-stats",
+          id               := "agent-stats-container",
+          attr("sse-swap") := "agent-stats",
         )(
           AgentMonitorView.statsHeader(AgentMonitorView.AgentGlobalStats.empty)
         ),
         div(
-          cls                   := "rounded-lg border border-white/10",
-          id                    := "agent-table-container",
-          attr("sse-swap")      := "agent-table",
+          cls              := "rounded-lg border border-white/10",
+          id               := "agent-table-container",
+          attr("sse-swap") := "agent-table",
         )(
           AgentMonitorView.table(Nil)
         ),

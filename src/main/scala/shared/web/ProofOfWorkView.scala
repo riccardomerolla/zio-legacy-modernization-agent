@@ -1,8 +1,7 @@
 package shared.web
 
-import issues.entity.IssueWorkReport
+import issues.entity.{ IssueCiStatus, IssuePrStatus, IssueWorkReport }
 import scalatags.Text.all.*
-import taskrun.entity.{ CiStatus, PrStatus }
 
 /** Renders the proof-of-work panel for an issue.
   *
@@ -133,18 +132,18 @@ object ProofOfWorkView:
     r.reports.nonEmpty ||
     r.artifacts.nonEmpty
 
-  private def prStatusBadge(s: PrStatus): Frag =
+  private def prStatusBadge(s: IssuePrStatus): Frag =
     val (bg, text) = s match
-      case PrStatus.Open   => ("bg-emerald-500/20 text-emerald-200", "Open")
-      case PrStatus.Merged => ("bg-indigo-500/20 text-indigo-200", "Merged")
-      case PrStatus.Closed => ("bg-slate-500/20 text-slate-300", "Closed")
-      case PrStatus.Draft  => ("bg-yellow-500/20 text-yellow-200", "Draft")
+      case IssuePrStatus.Open   => ("bg-emerald-500/20 text-emerald-200", "Open")
+      case IssuePrStatus.Merged => ("bg-indigo-500/20 text-indigo-200", "Merged")
+      case IssuePrStatus.Closed => ("bg-slate-500/20 text-slate-300", "Closed")
+      case IssuePrStatus.Draft  => ("bg-yellow-500/20 text-yellow-200", "Draft")
     span(cls := s"rounded-full px-2 py-0.5 $bg")(text)
 
-  private def ciStatusBadge(ci: CiStatus): Frag =
+  private def ciStatusBadge(ci: IssueCiStatus): Frag =
     val (bg, text) = ci match
-      case CiStatus.Passed  => ("bg-emerald-500/20 text-emerald-200", "Passed")
-      case CiStatus.Failed  => ("bg-red-500/20 text-red-300", "Failed")
-      case CiStatus.Running => ("bg-yellow-500/20 text-yellow-200", "Running")
-      case CiStatus.Pending => ("bg-slate-500/20 text-slate-300", "Pending")
+      case IssueCiStatus.Passed  => ("bg-emerald-500/20 text-emerald-200", "Passed")
+      case IssueCiStatus.Failed  => ("bg-red-500/20 text-red-300", "Failed")
+      case IssueCiStatus.Running => ("bg-yellow-500/20 text-yellow-200", "Running")
+      case IssueCiStatus.Pending => ("bg-slate-500/20 text-slate-300", "Pending")
     span(cls := s"rounded-full px-2 py-0.5 $bg")(text)

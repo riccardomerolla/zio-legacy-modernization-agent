@@ -4,10 +4,8 @@ import java.time.Instant
 
 import zio.test.*
 
-import issues.entity.IssueWorkReport
-import orchestration.entity.DiffStats
+import issues.entity.{ IssueCiStatus, IssueDiffStats, IssueReport, IssuePrStatus, IssueWorkReport, TokenUsage }
 import shared.ids.Ids.{ IssueId, ReportId }
-import taskrun.entity.{ CiStatus, PrStatus, TaskReport, TokenUsage }
 
 object ProofOfWorkViewSpec extends ZIOSpecDefault:
 
@@ -33,7 +31,7 @@ object ProofOfWorkViewSpec extends ZIOSpecDefault:
       test("renders PR link as clickable anchor with status badge") {
         val report = emptyReport.copy(
           prLink = Some("https://github.com/org/repo/pull/42"),
-          prStatus = Some(PrStatus.Open),
+          prStatus = Some(IssuePrStatus.Open),
         )
         val html   = ProofOfWorkView.panel(report, collapsed = false)
         assertTrue(
@@ -42,12 +40,12 @@ object ProofOfWorkViewSpec extends ZIOSpecDefault:
         )
       },
       test("renders CI status badge") {
-        val report = emptyReport.copy(ciStatus = Some(CiStatus.Passed))
+        val report = emptyReport.copy(ciStatus = Some(IssueCiStatus.Passed))
         val html   = ProofOfWorkView.panel(report, collapsed = false)
         assertTrue(html.contains("Passed"))
       },
       test("renders token usage") {
-        val report = emptyReport.copy(tokenUsage = Some(TokenUsage(1000L, 500L, 1500L)), runtimeSeconds = Some(30L))
+        val report = emptyReport.copy(tokenUsage = Some(TokenUsage(inputTokens = 1000L, outputTokens = 500L, totalTokens = 1500L)), runtimeSeconds = Some(30L))
         val html   = ProofOfWorkView.panel(report, collapsed = false)
         assertTrue(
           html.contains("1500"),
@@ -55,7 +53,7 @@ object ProofOfWorkViewSpec extends ZIOSpecDefault:
         )
       },
       test("renders diff stats") {
-        val report = emptyReport.copy(diffStats = Some(DiffStats(3, 45, 12)))
+        val report = emptyReport.copy(diffStats = Some(IssueDiffStats(3, 45, 12)))
         val html   = ProofOfWorkView.panel(report, collapsed = false)
         assertTrue(
           html.contains("3"),
@@ -74,7 +72,7 @@ object ProofOfWorkViewSpec extends ZIOSpecDefault:
         assertTrue(html.contains("data-pow-collapsed"))
       },
       test("renders reports list when reports are present") {
-        val report = emptyReport.copy(reports = List(TaskReport(ReportId("r1"), "analysis", "summary", "ok", now)))
+        val report = emptyReport.copy(reports = List(IssueReport(ReportId("r1"), "analysis", "summary", "ok", now)))
         val html   = ProofOfWorkView.panel(report, collapsed = false)
         assertTrue(html.contains("analysis"))
       },
@@ -90,8 +88,8 @@ object ProofOfWorkViewSpec extends ZIOSpecDefault:
       test("evidenceBar renders a details element with summary chips when signals present") {
         val report = emptyReport.copy(
           prLink = Some("https://github.com/org/repo/pull/1"),
-          prStatus = Some(PrStatus.Open),
-          ciStatus = Some(CiStatus.Passed),
+          prStatus = Some(IssuePrStatus.Open),
+          ciStatus = Some(IssueCiStatus.Passed),
         )
         val html   = ProofOfWorkView.evidenceBar(report)
         assertTrue(
@@ -102,7 +100,7 @@ object ProofOfWorkViewSpec extends ZIOSpecDefault:
         )
       },
       test("evidenceBar includes diff count chip when diffStats present") {
-        val report = emptyReport.copy(diffStats = Some(DiffStats(4, 30, 8)))
+        val report = emptyReport.copy(diffStats = Some(IssueDiffStats(4, 30, 8)))
         val html   = ProofOfWorkView.evidenceBar(report)
         assertTrue(
           html.contains("4"),

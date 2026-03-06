@@ -183,7 +183,7 @@ object IssuesView:
             catch case _: Throwable => Instant.EPOCH
           )
           .reverse
-        val statusToken = issueStatusToken(status)
+        val statusToken  = issueStatusToken(status)
         div(
           cls                         := "rounded-xl border border-white/10 bg-slate-900/70 p-3",
           attr("data-drop-status")    := statusToken,
@@ -200,27 +200,27 @@ object IssuesView:
               span(cls := s"inline-block h-2 w-2 flex-shrink-0 rounded-full ${columnStatusDotCls(status)}"),
               h3(cls := "text-sm font-semibold text-slate-100 truncate")(label),
               span(
-                cls                          := "rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300",
-                attr("data-column-count")    := statusToken,
+                cls                       := "rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300",
+                attr("data-column-count") := statusToken,
               )(columnIssues.size.toString),
             ),
             button(
-              `type`                         := "button",
-              cls                            := "flex-shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-100",
-              title                          := s"Quick-add $label issue",
-              attr("data-quick-add-toggle")  := statusToken,
+              `type`                        := "button",
+              cls                           := "flex-shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-100",
+              title                         := s"Quick-add $label issue",
+              attr("data-quick-add-toggle") := statusToken,
             )("+"),
           ),
           div(
-            cls                            := "mb-2 hidden rounded-lg border border-white/10 bg-slate-800/60 p-2",
-            attr("data-quick-add-form")    := statusToken,
+            cls                         := "mb-2 hidden rounded-lg border border-white/10 bg-slate-800/60 p-2",
+            attr("data-quick-add-form") := statusToken,
           )(
             input(
-              `type`                         := "text",
-              cls                            := "w-full rounded border border-white/20 bg-slate-900/80 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-indigo-400",
-              placeholder                    := "Issue title…",
-              attr("data-quick-add-title")   := statusToken,
-              attr("autocomplete")           := "off",
+              `type`                       := "text",
+              cls                          := "w-full rounded border border-white/20 bg-slate-900/80 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-indigo-400",
+              placeholder                  := "Issue title…",
+              attr("data-quick-add-title") := statusToken,
+              attr("autocomplete")         := "off",
             ),
             div(cls := "mt-2 flex items-center gap-1")(
               select(
@@ -233,19 +233,23 @@ object IssuesView:
                 option(value := "Low")("Low"),
               ),
               button(
-                `type`                          := "button",
-                cls                             := "flex-1 rounded border border-emerald-400/30 bg-emerald-500/20 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30",
-                attr("data-quick-add-submit")   := statusToken,
+                `type`                        := "button",
+                cls                           := "flex-1 rounded border border-emerald-400/30 bg-emerald-500/20 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30",
+                attr("data-quick-add-submit") := statusToken,
               )("Add"),
               button(
-                `type`                          := "button",
-                cls                             := "rounded border border-white/15 bg-slate-700/40 px-1.5 py-1 text-xs text-slate-400 hover:text-slate-200",
-                title                           := "Cancel",
-                attr("data-quick-add-cancel")   := statusToken,
+                `type`                        := "button",
+                cls                           := "rounded border border-white/15 bg-slate-700/40 px-1.5 py-1 text-xs text-slate-400 hover:text-slate-200",
+                title                         := "Cancel",
+                attr("data-quick-add-cancel") := statusToken,
               )("✕"),
             ),
           ),
-          div(cls := "space-y-2 max-h-[65vh] overflow-y-auto", attr("data-role") := "column-cards", attr("data-column-cards") := statusToken)(
+          div(
+            cls                       := "space-y-2 max-h-[65vh] overflow-y-auto",
+            attr("data-role")         := "column-cards",
+            attr("data-column-cards") := statusToken,
+          )(
             if columnIssues.isEmpty then
               p(cls := "rounded border border-dashed border-white/10 px-2 py-3 text-xs text-slate-500")("No issues")
             else

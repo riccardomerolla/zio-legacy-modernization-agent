@@ -1,7 +1,19 @@
-package issues.entity
+package issues.control
 
 import zio.*
 
+import issues.entity.{
+  AgentIssue,
+  IssueArtifact,
+  IssueCiStatus,
+  IssueFilter,
+  IssueReport,
+  IssuePrStatus,
+  IssueRepository,
+  IssueState,
+  IssueWorkReportProjection,
+  TokenUsage,
+}
 import taskrun.entity.{ TaskRun, TaskRunFilter, TaskRunRepository, TaskRunState }
 
 /** Hydrates `IssueWorkReportProjection` from historical state on application startup.
@@ -50,17 +62,41 @@ final class IssueWorkReportHydrator(projection: IssueWorkReportProjection):
             for
               _ <- run.walkthrough.fold(ZIO.unit)(w => projection.updateWalkthrough(issue.id, w, at))
               _ <- run.prLink.fold(ZIO.unit) { url =>
-                     projection.updatePrLink(issue.id, url, run.prStatus.getOrElse(taskrun.entity.PrStatus.Open), at)
+                     val status = run.prStatus.map(mapPrStatus).getOrElse(IssuePrStatus.Open)
+                     projection.updatePrLink(issue.id, url, status, at)
                    }
-              _ <- run.ciStatus.fold(ZIO.unit)(ci => projection.updateCiStatus(issue.id, ci, at))
+              _ <- run.ciStatus.fold(ZIO.unit)(ci => projection.updateCiStatus(issue.id, mapCiStatus(ci), at))
               _ <- run.tokenUsage.fold(ZIO.unit) { usage =>
-                     projection.updateTokenUsage(issue.id, usage, run.runtimeSeconds.getOrElse(0L), at)
+                     projection.updateTokenUsage(
+                       issue.id,
+                       TokenUsage(usage.inputTokens, usage.outputTokens, usage.totalTokens),
+                       run.runtimeSeconds.getOrElse(0L),
+                       at,
+                     )
                    }
-              _ <- ZIO.foreachDiscard(run.reports)(r => projection.addReport(issue.id, r, at))
-              _ <- ZIO.foreachDiscard(run.artifacts)(a => projection.addArtifact(issue.id, a, at))
+              _ <- ZIO.foreachDiscard(run.reports)(r => projection.addReport(issue.id, mapReport(r), at))
+              _ <- ZIO.foreachDiscard(run.artifacts)(a => projection.addArtifact(issue.id, mapArtifact(a), at))
               _ <- agentSummary.fold(ZIO.unit)(s => projection.updateAgentSummary(issue.id, s, at))
             yield ()
     }
+
+  private def mapPrStatus(s: taskrun.entity.PrStatus): IssuePrStatus = s match
+    case taskrun.entity.PrStatus.Open   => IssuePrStatus.Open
+    case taskrun.entity.PrStatus.Merged => IssuePrStatus.Merged
+    case taskrun.entity.PrStatus.Closed => IssuePrStatus.Closed
+    case taskrun.entity.PrStatus.Draft  => IssuePrStatus.Draft
+
+  private def mapCiStatus(s: taskrun.entity.CiStatus): IssueCiStatus = s match
+    case taskrun.entity.CiStatus.Pending => IssueCiStatus.Pending
+    case taskrun.entity.CiStatus.Running => IssueCiStatus.Running
+    case taskrun.entity.CiStatus.Passed  => IssueCiStatus.Passed
+    case taskrun.entity.CiStatus.Failed  => IssueCiStatus.Failed
+
+  private def mapReport(r: taskrun.entity.TaskReport): IssueReport =
+    IssueReport(r.id, r.stepName, r.reportType, r.content, r.createdAt)
+
+  private def mapArtifact(a: taskrun.entity.TaskArtifact): IssueArtifact =
+    IssueArtifact(a.id, a.stepName, a.key, a.value, a.createdAt)
 
 object IssueWorkReportHydrator:
 

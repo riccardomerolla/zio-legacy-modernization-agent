@@ -5,9 +5,7 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
-import orchestration.entity.DiffStats
 import shared.ids.Ids.{ ArtifactId, IssueId, ReportId }
-import taskrun.entity.{ CiStatus, PrStatus, TaskArtifact, TaskReport, TokenUsage }
 
 object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
 
@@ -58,7 +56,7 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
         yield assertTrue(result.get.agentSummary == Some("3 turns, 2 file edits."))
       },
       test("updateDiffStats creates entry and sets diff stats") {
-        val stats = DiffStats(filesChanged = 4, linesAdded = 87, linesRemoved = 23)
+        val stats = IssueDiffStats(filesChanged = 4, linesAdded = 87, linesRemoved = 23)
         for
           proj   <- freshProjection
           _      <- proj.updateDiffStats(issueId, stats, now)
@@ -68,36 +66,36 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
       test("updatePrLink creates entry and sets PR link and status") {
         for
           proj   <- freshProjection
-          _      <- proj.updatePrLink(issueId, "https://github.com/owner/repo/pull/42", PrStatus.Open, now)
+          _      <- proj.updatePrLink(issueId, "https://github.com/owner/repo/pull/42", IssuePrStatus.Open, now)
           result <- proj.get(issueId)
         yield assertTrue(
           result.get.prLink == Some("https://github.com/owner/repo/pull/42"),
-          result.get.prStatus == Some(PrStatus.Open),
+          result.get.prStatus == Some(IssuePrStatus.Open),
         )
       },
       test("updatePrLink updates status on second call") {
         for
           proj   <- freshProjection
-          _      <- proj.updatePrLink(issueId, "https://github.com/owner/repo/pull/42", PrStatus.Open, now)
-          _      <- proj.updatePrLink(issueId, "https://github.com/owner/repo/pull/42", PrStatus.Merged, now.plusSeconds(60))
+          _      <- proj.updatePrLink(issueId, "https://github.com/owner/repo/pull/42", IssuePrStatus.Open, now)
+          _      <- proj.updatePrLink(issueId, "https://github.com/owner/repo/pull/42", IssuePrStatus.Merged, now.plusSeconds(60))
           result <- proj.get(issueId)
-        yield assertTrue(result.get.prStatus == Some(PrStatus.Merged))
+        yield assertTrue(result.get.prStatus == Some(IssuePrStatus.Merged))
       },
       test("updateCiStatus creates entry and sets CI status") {
         for
           proj   <- freshProjection
-          _      <- proj.updateCiStatus(issueId, CiStatus.Passed, now)
+          _      <- proj.updateCiStatus(issueId, IssueCiStatus.Passed, now)
           result <- proj.get(issueId)
-        yield assertTrue(result.get.ciStatus == Some(CiStatus.Passed))
+        yield assertTrue(result.get.ciStatus == Some(IssueCiStatus.Passed))
       },
       test("updateCiStatus updates on subsequent calls") {
         for
           proj   <- freshProjection
-          _      <- proj.updateCiStatus(issueId, CiStatus.Pending, now)
-          _      <- proj.updateCiStatus(issueId, CiStatus.Running, now.plusSeconds(10))
-          _      <- proj.updateCiStatus(issueId, CiStatus.Failed, now.plusSeconds(60))
+          _      <- proj.updateCiStatus(issueId, IssueCiStatus.Pending, now)
+          _      <- proj.updateCiStatus(issueId, IssueCiStatus.Running, now.plusSeconds(10))
+          _      <- proj.updateCiStatus(issueId, IssueCiStatus.Failed, now.plusSeconds(60))
           result <- proj.get(issueId)
-        yield assertTrue(result.get.ciStatus == Some(CiStatus.Failed))
+        yield assertTrue(result.get.ciStatus == Some(IssueCiStatus.Failed))
       },
       test("updateTokenUsage creates entry and sets token usage and runtime") {
         val usage = TokenUsage(inputTokens = 8000L, outputTokens = 4200L, totalTokens = 12200L)
@@ -111,7 +109,7 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
         )
       },
       test("addReport appends to reports list") {
-        val report = TaskReport(ReportId("r1"), "analysis", "summary", "ok", now)
+        val report = IssueReport(ReportId("r1"), "analysis", "summary", "ok", now)
         for
           proj   <- freshProjection
           _      <- proj.addReport(issueId, report, now)
@@ -119,8 +117,8 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
         yield assertTrue(result.get.reports == List(report))
       },
       test("addReport accumulates multiple reports") {
-        val r1 = TaskReport(ReportId("r1"), "analysis", "summary", "ok", now)
-        val r2 = TaskReport(ReportId("r2"), "transform", "detail", "done", now.plusSeconds(5))
+        val r1 = IssueReport(ReportId("r1"), "analysis", "summary", "ok", now)
+        val r2 = IssueReport(ReportId("r2"), "transform", "detail", "done", now.plusSeconds(5))
         for
           proj   <- freshProjection
           _      <- proj.addReport(issueId, r1, now)
@@ -129,7 +127,7 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
         yield assertTrue(result.get.reports == List(r1, r2))
       },
       test("addArtifact appends to artifacts list") {
-        val artifact = TaskArtifact(ArtifactId("a1"), "build", "binary", "app.jar", now)
+        val artifact = IssueArtifact(ArtifactId("a1"), "build", "binary", "app.jar", now)
         for
           proj   <- freshProjection
           _      <- proj.addArtifact(issueId, artifact, now)
@@ -137,19 +135,19 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
         yield assertTrue(result.get.artifacts == List(artifact))
       },
       test("multiple signals on same issue accumulate correctly") {
-        val stats = DiffStats(2, 10, 5)
+        val stats = IssueDiffStats(2, 10, 5)
         for
           proj   <- freshProjection
           _      <- proj.updateWalkthrough(issueId, "Summary.", now)
           _      <- proj.updateDiffStats(issueId, stats, now.plusSeconds(1))
-          _      <- proj.updatePrLink(issueId, "https://github.com/pr/1", PrStatus.Open, now.plusSeconds(2))
-          _      <- proj.updateCiStatus(issueId, CiStatus.Passed, now.plusSeconds(3))
+          _      <- proj.updatePrLink(issueId, "https://github.com/pr/1", IssuePrStatus.Open, now.plusSeconds(2))
+          _      <- proj.updateCiStatus(issueId, IssueCiStatus.Passed, now.plusSeconds(3))
           result <- proj.get(issueId)
         yield assertTrue(
           result.get.walkthrough == Some("Summary."),
           result.get.diffStats == Some(stats),
           result.get.prLink == Some("https://github.com/pr/1"),
-          result.get.ciStatus == Some(CiStatus.Passed),
+          result.get.ciStatus == Some(IssueCiStatus.Passed),
         )
       },
       test("signals on different issues are independent") {
@@ -184,7 +182,7 @@ object IssueWorkReportProjectionSpec extends ZIOSpecDefault:
         for
           proj   <- freshProjection
           _      <- proj.updateWalkthrough(issueId, "Summary.", now)
-          _      <- proj.updateCiStatus(issueId, CiStatus.Passed, later)
+          _      <- proj.updateCiStatus(issueId, IssueCiStatus.Passed, later)
           result <- proj.get(issueId)
         yield assertTrue(result.get.lastUpdated == later)
       },

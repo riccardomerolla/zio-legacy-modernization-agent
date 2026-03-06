@@ -1,7 +1,20 @@
-package issues.entity
+package issues.control
 
 import zio.*
 
+import issues.entity.{
+  AgentIssue,
+  IssueArtifact,
+  IssueCiStatus,
+  IssueDiffStats,
+  IssueEvent,
+  IssueFilter,
+  IssueReport,
+  IssuePrStatus,
+  IssueRepository,
+  IssueWorkReportProjection,
+  TokenUsage,
+}
 import orchestration.control.{ ParallelSessionEvent, WorkReportEventBus }
 import shared.ids.Ids.{ IssueId, TaskRunId }
 import taskrun.entity.*
@@ -16,12 +29,17 @@ final class IssueWorkReportSubscriber(
   issueRepo: IssueRepository,
 ):
 
-  /** Fork all subscriber fibers. Must be called inside a Scope. */
+  /** Subscribe to all hubs and fork consumer fibers. Subscriptions are registered synchronously before any fibers are
+    * forked, so events published after `start` returns are guaranteed to be received.
+    */
   def start: URIO[Scope, Unit] =
     for
-      _ <- ZIO.scoped(subscribeTaskRun).forkScoped.unit
-      _ <- ZIO.scoped(subscribeIssueEvents).forkScoped.unit
-      _ <- ZIO.scoped(subscribeParallelSessions).forkScoped.unit
+      taskRunQueue         <- bus.subscribeTaskRun
+      issueQueue           <- bus.subscribeIssue
+      parallelSessionQueue <- bus.subscribeParallelSession
+      _                    <- taskRunQueue.take.flatMap(handleTaskRunEvent).forever.forkScoped.unit
+      _                    <- issueQueue.take.flatMap(handleIssueEvent).forever.forkScoped.unit
+      _                    <- parallelSessionQueue.take.flatMap(handleParallelSessionEvent).forever.forkScoped.unit
     yield ()
 
   private def resolveIssueId(runId: TaskRunId): UIO[Option[IssueId]] =
@@ -29,21 +47,6 @@ final class IssueWorkReportSubscriber(
       .list(IssueFilter(runId = Some(runId), limit = 1))
       .map(_.headOption.map(_.id))
       .orElseSucceed(None)
-
-  private def subscribeTaskRun: URIO[Scope, Unit] =
-    bus.subscribeTaskRun.flatMap { queue =>
-      queue.take.flatMap(handleTaskRunEvent).forever
-    }
-
-  private def subscribeIssueEvents: URIO[Scope, Unit] =
-    bus.subscribeIssue.flatMap { queue =>
-      queue.take.flatMap(handleIssueEvent).forever
-    }
-
-  private def subscribeParallelSessions: URIO[Scope, Unit] =
-    bus.subscribeParallelSession.flatMap { queue =>
-      queue.take.flatMap(handleParallelSessionEvent).forever
-    }
 
   private def handleTaskRunEvent(event: TaskRunEvent): UIO[Unit] =
     resolveIssueId(event.runId).flatMap {
@@ -53,9 +56,9 @@ final class IssueWorkReportSubscriber(
           case e: TaskRunEvent.WalkthroughGenerated =>
             projection.updateWalkthrough(issueId, e.summary, e.occurredAt)
           case e: TaskRunEvent.PrLinked             =>
-            projection.updatePrLink(issueId, e.prUrl, e.prStatus, e.occurredAt)
+            projection.updatePrLink(issueId, e.prUrl, mapPrStatus(e.prStatus), e.occurredAt)
           case e: TaskRunEvent.CiStatusUpdated      =>
-            projection.updateCiStatus(issueId, e.ciStatus, e.occurredAt)
+            projection.updateCiStatus(issueId, mapCiStatus(e.ciStatus), e.occurredAt)
           case e: TaskRunEvent.TokenUsageRecorded   =>
             projection.updateTokenUsage(
               issueId,
@@ -64,9 +67,9 @@ final class IssueWorkReportSubscriber(
               e.occurredAt,
             )
           case e: TaskRunEvent.ReportAdded          =>
-            projection.addReport(issueId, e.report, e.occurredAt)
+            projection.addReport(issueId, mapReport(e.report), e.occurredAt)
           case e: TaskRunEvent.ArtifactAdded        =>
-            projection.addArtifact(issueId, e.artifact, e.occurredAt)
+            projection.addArtifact(issueId, mapArtifact(e.artifact), e.occurredAt)
           case _                                    => ZIO.unit
     }
 
@@ -95,10 +98,32 @@ final class IssueWorkReportSubscriber(
             issues.headOption match
               case None        => ZIO.unit
               case Some(issue) =>
-                projection.updateDiffStats(issue.id, e.diffStats, e.occurredAt) *>
+                projection.updateDiffStats(
+                  issue.id,
+                  IssueDiffStats(e.diffStats.filesChanged, e.diffStats.linesAdded, e.diffStats.linesRemoved),
+                  e.occurredAt,
+                ) *>
                   projection.updateAgentSummary(issue.id, e.summary, e.occurredAt)
           }
       case _                                              => ZIO.unit
+
+  private def mapPrStatus(s: taskrun.entity.PrStatus): IssuePrStatus = s match
+    case taskrun.entity.PrStatus.Open   => IssuePrStatus.Open
+    case taskrun.entity.PrStatus.Merged => IssuePrStatus.Merged
+    case taskrun.entity.PrStatus.Closed => IssuePrStatus.Closed
+    case taskrun.entity.PrStatus.Draft  => IssuePrStatus.Draft
+
+  private def mapCiStatus(s: taskrun.entity.CiStatus): IssueCiStatus = s match
+    case taskrun.entity.CiStatus.Pending => IssueCiStatus.Pending
+    case taskrun.entity.CiStatus.Running => IssueCiStatus.Running
+    case taskrun.entity.CiStatus.Passed  => IssueCiStatus.Passed
+    case taskrun.entity.CiStatus.Failed  => IssueCiStatus.Failed
+
+  private def mapReport(r: taskrun.entity.TaskReport): IssueReport =
+    IssueReport(r.id, r.stepName, r.reportType, r.content, r.createdAt)
+
+  private def mapArtifact(a: taskrun.entity.TaskArtifact): IssueArtifact =
+    IssueArtifact(a.id, a.stepName, a.key, a.value, a.createdAt)
 
 object IssueWorkReportSubscriber:
 

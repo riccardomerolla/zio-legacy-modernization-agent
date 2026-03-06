@@ -4,11 +4,9 @@ import java.time.Instant
 
 import zio.test.*
 
-import issues.entity.IssueWorkReport
+import issues.entity.{ IssueWorkReport, TokenUsage }
 import issues.entity.api.{ AgentIssueView, IssuePriority, IssueStatus }
-import orchestration.entity.DiffStats
 import shared.ids.Ids.IssueId
-import taskrun.entity.TokenUsage
 
 object BoardStatsSpec extends ZIOSpecDefault:
 

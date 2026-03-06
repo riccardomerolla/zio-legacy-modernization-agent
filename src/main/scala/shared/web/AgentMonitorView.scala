@@ -1,8 +1,7 @@
 package shared.web
 
-import scalatags.Text.all.*
-
 import orchestration.control.{ AgentExecutionInfo, AgentExecutionState, AgentMonitorSnapshot }
+import scalatags.Text.all.*
 
 /** Renders the Agent Monitor as a Symphony-style dark terminal table.
   *
@@ -27,12 +26,12 @@ object AgentMonitorView:
       )
       val total  = snapshot.agents.map(_.tokensUsed).sum
       AgentGlobalStats(
-        activeAgents   = active,
-        maxAgents      = snapshot.agents.size max active,
+        activeAgents = active,
+        maxAgents = snapshot.agents.size max active,
         runtimeSeconds = 0L,
-        tokensIn       = total / 2,
-        tokensOut      = total - total / 2,
-        tokensTotal    = total,
+        tokensIn = total / 2,
+        tokensOut = total - total / 2,
+        tokensTotal = total,
       )
 
     val empty: AgentGlobalStats = AgentGlobalStats(0, 0, 0L, 0L, 0L, 0L)
@@ -54,14 +53,14 @@ object AgentMonitorView:
 
   def fromInfo(info: AgentExecutionInfo): AgentRunView =
     AgentRunView(
-      issueId    = info.runId.getOrElse("—"),
-      stage      = stageName(info.state),
-      pid        = None,
+      issueId = info.runId.getOrElse("—"),
+      stage = stageName(info.state),
+      pid = None,
       ageSeconds = 0L,
-      turnCount  = info.tokensUsed,
+      turnCount = info.tokensUsed,
       tokensTotal = info.tokensUsed,
-      sessionId  = info.conversationId,
-      lastEvent  = info.message.getOrElse("—"),
+      sessionId = info.conversationId,
+      lastEvent = info.message.getOrElse("—"),
     )
 
   private def stageName(state: AgentExecutionState): String = state match
@@ -103,7 +102,7 @@ object AgentMonitorView:
         frag(rows.map(row)*)
 
     val rendered = div(
-      cls                     := "overflow-x-auto rounded-lg",
+      cls                      := "overflow-x-auto rounded-lg",
       attr("data-agent-table") := "true",
     )(
       tag("table")(cls := "w-full border-collapse bg-black/80 font-mono text-xs")(
@@ -173,11 +172,11 @@ object AgentMonitorView:
       attr("data-agent-stats") := "true",
     )(
       div(cls := "grid grid-cols-2 gap-x-8 gap-y-1 sm:grid-cols-3")(
-        metricLine("Agents",     s"${stats.activeAgents}/${stats.maxAgents}"),
-        metricLine("Runtime",    formatRuntime(stats.runtimeSeconds)),
-        metricLine("Tokens In",  formatTokens(stats.tokensIn)),
+        metricLine("Agents", s"${stats.activeAgents}/${stats.maxAgents}"),
+        metricLine("Runtime", formatRuntime(stats.runtimeSeconds)),
+        metricLine("Tokens In", formatTokens(stats.tokensIn)),
         metricLine("Tokens Out", formatTokens(stats.tokensOut)),
-        metricLine("Total",      formatTokens(stats.tokensTotal)),
+        metricLine("Total", formatTokens(stats.tokensTotal)),
       )
     ).render
 
