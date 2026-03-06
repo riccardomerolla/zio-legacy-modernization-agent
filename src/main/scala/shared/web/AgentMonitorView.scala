@@ -10,6 +10,33 @@ import orchestration.control.{ AgentExecutionInfo, AgentExecutionState, AgentMon
   */
 object AgentMonitorView:
 
+  /** Aggregated global stats for the header bar. */
+  final case class AgentGlobalStats(
+    activeAgents: Int,
+    maxAgents: Int,
+    runtimeSeconds: Long,
+    tokensIn: Long,
+    tokensOut: Long,
+    tokensTotal: Long,
+  )
+
+  object AgentGlobalStats:
+    def fromSnapshot(snapshot: AgentMonitorSnapshot): AgentGlobalStats =
+      val active = snapshot.agents.count(a =>
+        a.state == AgentExecutionState.Executing || a.state == AgentExecutionState.WaitingForTool
+      )
+      val total  = snapshot.agents.map(_.tokensUsed).sum
+      AgentGlobalStats(
+        activeAgents   = active,
+        maxAgents      = snapshot.agents.size max active,
+        runtimeSeconds = 0L,
+        tokensIn       = total / 2,
+        tokensOut      = total - total / 2,
+        tokensTotal    = total,
+      )
+
+    val empty: AgentGlobalStats = AgentGlobalStats(0, 0, 0L, 0L, 0L, 0L)
+
   /** View model for a single agent run row. */
   final case class AgentRunView(
     issueId: String,
@@ -130,3 +157,32 @@ object AgentMonitorView:
     if seconds < 60 then s"${seconds}s"
     else if seconds < 3600 then s"${seconds / 60}m"
     else s"${seconds / 3600}h"
+
+  private def formatRuntime(seconds: Long): String =
+    val m = seconds / 60
+    val s = seconds % 60
+    if m == 0 then s"${s}s"
+    else s"${m}m ${s}s"
+
+  private val labelCls = "text-xs font-mono text-slate-500 uppercase tracking-widest w-24 flex-shrink-0"
+  private val valueCls = "text-xs font-mono text-white tabular-nums"
+
+  def statsHeader(stats: AgentGlobalStats): String =
+    div(
+      cls                      := "rounded-lg bg-black/60 px-4 py-3 font-mono text-xs",
+      attr("data-agent-stats") := "true",
+    )(
+      div(cls := "grid grid-cols-2 gap-x-8 gap-y-1 sm:grid-cols-3")(
+        metricLine("Agents",     s"${stats.activeAgents}/${stats.maxAgents}"),
+        metricLine("Runtime",    formatRuntime(stats.runtimeSeconds)),
+        metricLine("Tokens In",  formatTokens(stats.tokensIn)),
+        metricLine("Tokens Out", formatTokens(stats.tokensOut)),
+        metricLine("Total",      formatTokens(stats.tokensTotal)),
+      )
+    ).render
+
+  private def metricLine(label: String, value: String): Frag =
+    div(cls := "flex items-baseline gap-2")(
+      span(cls := labelCls)(label),
+      span(cls := valueCls)(value),
+    )

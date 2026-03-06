@@ -5,7 +5,7 @@ import java.time.Instant
 import zio.test.*
 
 import orchestration.control.{ AgentExecutionInfo, AgentExecutionState, AgentMonitorSnapshot }
-import shared.web.AgentMonitorView.AgentRunView
+import shared.web.AgentMonitorView.{ AgentGlobalStats, AgentRunView }
 
 object AgentMonitorViewSpec extends ZIOSpecDefault:
 
@@ -126,5 +126,54 @@ object AgentMonitorViewSpec extends ZIOSpecDefault:
         val row  = AgentRunView("id", "EXEC", None, 0L, 0L, 0L, Some("sess-xyz-99"), "")
         val html = AgentMonitorView.table(List(row))
         assertTrue(html.contains("sess-xyz"))
+      },
+      // -----------------------------------------------------------------------
+      // statsHeader tests
+      // -----------------------------------------------------------------------
+      test("statsHeader renders data-agent-stats attribute") {
+        val html = AgentMonitorView.statsHeader(AgentGlobalStats.empty)
+        assertTrue(html.contains("data-agent-stats"))
+      },
+      test("statsHeader renders all 6 metrics") {
+        val html = AgentMonitorView.statsHeader(AgentGlobalStats.empty)
+        assertTrue(
+          html.contains("Agents"),
+          html.contains("Runtime"),
+          html.contains("Tokens In"),
+          html.contains("Tokens Out"),
+          html.contains("Total"),
+        )
+      },
+      test("statsHeader formats activeAgents/maxAgents as X/Y") {
+        val stats = AgentGlobalStats(activeAgents = 3, maxAgents = 10, runtimeSeconds = 0L, tokensIn = 0L, tokensOut = 0L, tokensTotal = 0L)
+        val html  = AgentMonitorView.statsHeader(stats)
+        assertTrue(html.contains("3/10"))
+      },
+      test("statsHeader formats tokensTotal with comma separators") {
+        val stats = AgentGlobalStats(activeAgents = 0, maxAgents = 0, runtimeSeconds = 0L, tokensIn = 0L, tokensOut = 0L, tokensTotal = 1234567L)
+        val html  = AgentMonitorView.statsHeader(stats)
+        assertTrue(html.contains("1,234,567"))
+      },
+      test("statsHeader formats tokensIn with comma separators") {
+        val stats = AgentGlobalStats(activeAgents = 0, maxAgents = 0, runtimeSeconds = 0L, tokensIn = 98765L, tokensOut = 0L, tokensTotal = 0L)
+        val html  = AgentMonitorView.statsHeader(stats)
+        assertTrue(html.contains("98,765"))
+      },
+      test("statsHeader formats runtime as Xm Ys for values >= 60s") {
+        val stats = AgentGlobalStats(activeAgents = 0, maxAgents = 0, runtimeSeconds = 114L, tokensIn = 0L, tokensOut = 0L, tokensTotal = 0L)
+        val html  = AgentMonitorView.statsHeader(stats)
+        assertTrue(html.contains("1m 54s"))
+      },
+      test("statsHeader formats runtime as Xs for values under 60s") {
+        val stats = AgentGlobalStats(activeAgents = 0, maxAgents = 0, runtimeSeconds = 42L, tokensIn = 0L, tokensOut = 0L, tokensTotal = 0L)
+        val html  = AgentMonitorView.statsHeader(stats)
+        assertTrue(html.contains("42s"))
+      },
+      test("AgentGlobalStats.fromSnapshot counts active agents") {
+        val stats = AgentGlobalStats.fromSnapshot(snapshot)
+        assertTrue(
+          stats.activeAgents == 1,       // sampleInfo is Executing
+          stats.tokensTotal == 12345L,
+        )
       },
     )

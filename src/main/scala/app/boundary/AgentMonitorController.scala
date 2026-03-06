@@ -37,8 +37,11 @@ final case class AgentMonitorControllerLive(
           )
           .collect { case Right(snapshot) => snapshot }
           .map { snapshot =>
-            val tableHtml = AgentMonitorView.table(AgentMonitorView.fromSnapshot(snapshot))
-            s"event: agent-table\ndata: $tableHtml\n\n"
+            val rows      = AgentMonitorView.fromSnapshot(snapshot)
+            val stats     = AgentMonitorView.AgentGlobalStats.fromSnapshot(snapshot)
+            val tableHtml = AgentMonitorView.table(rows)
+            val statsHtml = AgentMonitorView.statsHeader(stats)
+            s"event: agent-stats\ndata: $statsHtml\n\nevent: agent-table\ndata: $tableHtml\n\n"
           }
       ZIO.succeed(
         Response(

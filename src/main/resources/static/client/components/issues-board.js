@@ -143,45 +143,51 @@ class IssuesBoard {
   // ---------------------------------------------------------------------------
 
   bindQuickAdd() {
-    // Outside-click dismissal (registered once; reuse existing handler if present)
-    if (!this._quickAddOutsideHandler) {
-      this._quickAddOutsideHandler = (event) => {
-        if (!event.target.closest('[data-quick-add-form]') && !event.target.closest('[data-quick-add-toggle]')) {
-          this.root.querySelectorAll('[data-quick-add-form]:not(.hidden)').forEach((form) => {
-            form.classList.add('hidden');
-            const titleInput = form.querySelector('[data-quick-add-title]');
-            if (titleInput) titleInput.value = '';
-          });
-        }
-      };
-      document.addEventListener('click', this._quickAddOutsideHandler);
-    }
+    // Use event delegation on this.root so it works after HTMX injects content.
+    // Guard with a flag so we only register once (constructor + refreshBoard both call this).
+    if (this._quickAddBound) return;
+    this._quickAddBound = true;
 
-    this.root.querySelectorAll('[data-quick-add-toggle]').forEach((btn) => {
-      const statusToken = btn.dataset.quickAddToggle;
-      btn.addEventListener('click', (event) => {
+    this.root.addEventListener('click', (event) => {
+      // Toggle button
+      const toggleBtn = event.target.closest('[data-quick-add-toggle]');
+      if (toggleBtn) {
         event.stopPropagation();
-        this._openQuickAdd(statusToken);
-      });
+        this._openQuickAdd(toggleBtn.dataset.quickAddToggle);
+        return;
+      }
+      // Submit button
+      const submitBtn = event.target.closest('[data-quick-add-submit]');
+      if (submitBtn) {
+        this._submitQuickAdd(submitBtn.dataset.quickAddSubmit);
+        return;
+      }
+      // Cancel button
+      const cancelBtn = event.target.closest('[data-quick-add-cancel]');
+      if (cancelBtn) {
+        this._closeQuickAdd(cancelBtn.dataset.quickAddCancel);
+        return;
+      }
     });
 
-    this.root.querySelectorAll('[data-quick-add-submit]').forEach((btn) => {
-      const statusToken = btn.dataset.quickAddSubmit;
-      btn.addEventListener('click', () => this._submitQuickAdd(statusToken));
+    this.root.addEventListener('keydown', (event) => {
+      const input = event.target.closest('[data-quick-add-title]');
+      if (!input) return;
+      if (event.key === 'Enter') this._submitQuickAdd(input.dataset.quickAddTitle);
+      if (event.key === 'Escape') this._closeQuickAdd(input.dataset.quickAddTitle);
     });
 
-    this.root.querySelectorAll('[data-quick-add-cancel]').forEach((btn) => {
-      const statusToken = btn.dataset.quickAddCancel;
-      btn.addEventListener('click', () => this._closeQuickAdd(statusToken));
-    });
-
-    this.root.querySelectorAll('[data-quick-add-title]').forEach((input) => {
-      const statusToken = input.dataset.quickAddTitle;
-      input.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') this._submitQuickAdd(statusToken);
-        if (event.key === 'Escape') this._closeQuickAdd(statusToken);
-      });
-    });
+    // Outside-click dismissal on document
+    this._quickAddOutsideHandler = (event) => {
+      if (!event.target.closest('[data-quick-add-form]') && !event.target.closest('[data-quick-add-toggle]')) {
+        this.root.querySelectorAll('[data-quick-add-form]:not(.hidden)').forEach((form) => {
+          form.classList.add('hidden');
+          const titleInput = form.querySelector('[data-quick-add-title]');
+          if (titleInput) titleInput.value = '';
+        });
+      }
+    };
+    document.addEventListener('click', this._quickAddOutsideHandler);
   }
 
   _openQuickAdd(statusToken) {

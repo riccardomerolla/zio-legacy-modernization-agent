@@ -15,15 +15,22 @@ object AgentMonitor:
         ),
       ),
       div(
-        cls                    := "rounded-lg border border-white/10 bg-black/60",
-        attr("hx-ext")         := "sse",
-        attr("sse-connect")    := "/agent-monitor/stream",
-        attr("sse-swap")       := "agent-table",
-        attr("hx-target")      := "#agent-table-container",
-        attr("hx-swap")        := "innerHTML",
+        cls                 := "space-y-2",
+        attr("hx-ext")      := "sse",
+        attr("sse-connect") := "/agent-monitor/stream",
       )(
-        div(id := "agent-table-container")(
+        div(
+          id                    := "agent-stats-container",
+          attr("sse-swap")      := "agent-stats",
+        )(
+          AgentMonitorView.statsHeader(AgentMonitorView.AgentGlobalStats.empty)
+        ),
+        div(
+          cls                   := "rounded-lg border border-white/10",
+          id                    := "agent-table-container",
+          attr("sse-swap")      := "agent-table",
+        )(
           AgentMonitorView.table(Nil)
-        )
+        ),
       ),
     )

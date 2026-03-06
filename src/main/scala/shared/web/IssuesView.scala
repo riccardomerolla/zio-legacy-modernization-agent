@@ -217,14 +217,14 @@ object IssuesView:
           )(
             input(
               `type`                         := "text",
-              cls                            := "w-full rounded border border-white/15 bg-slate-900/80 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-400 focus:border-indigo-400/50 focus:outline-none",
+              cls                            := "w-full rounded border border-white/20 bg-slate-900/80 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 outline-none focus:border-indigo-400",
               placeholder                    := "Issue title…",
               attr("data-quick-add-title")   := statusToken,
               attr("autocomplete")           := "off",
             ),
-            div(cls := "mt-2 flex items-center gap-2")(
+            div(cls := "mt-2 flex items-center gap-1")(
               select(
-                cls                            := "flex-1 rounded border border-white/15 bg-slate-900/80 px-2 py-1 text-xs text-slate-100 focus:outline-none",
+                cls                             := "min-w-0 w-24 rounded border border-white/15 bg-slate-900/80 px-1.5 py-1 text-xs text-slate-100 focus:outline-none",
                 attr("data-quick-add-priority") := statusToken,
               )(
                 option(value := "Critical")("Critical"),
@@ -234,14 +234,15 @@ object IssuesView:
               ),
               button(
                 `type`                          := "button",
-                cls                             := "rounded border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30",
+                cls                             := "flex-1 rounded border border-emerald-400/30 bg-emerald-500/20 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30",
                 attr("data-quick-add-submit")   := statusToken,
               )("Add"),
               button(
                 `type`                          := "button",
-                cls                             := "rounded border border-white/15 bg-slate-700/40 px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200",
+                cls                             := "rounded border border-white/15 bg-slate-700/40 px-1.5 py-1 text-xs text-slate-400 hover:text-slate-200",
+                title                           := "Cancel",
                 attr("data-quick-add-cancel")   := statusToken,
-              )("Cancel"),
+              )("✕"),
             ),
           ),
           div(cls := "space-y-2 max-h-[65vh] overflow-y-auto", attr("data-role") := "column-cards", attr("data-column-cards") := statusToken)(
