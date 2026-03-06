@@ -34,21 +34,27 @@ object BoardStats:
 
   /** Render a compact stats bar to embed above the board columns. */
   def statsBar(stats: Stats): String =
+    val tokensLabel =
+      if stats.tokensTotal >= 1000 then s"${stats.tokensTotal / 1000}k"
+      else stats.tokensTotal.toString
     div(
-      cls                      := "flex flex-wrap items-center gap-4 rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-xs text-slate-300",
+      cls                      := "flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2",
       attr("data-board-stats") := "true",
     )(
-      span(
-        span(cls := "font-semibold text-emerald-300")(stats.running.toString),
-        " running",
+      div(cls := "flex items-center gap-2 rounded-lg border border-white/10 bg-slate-800/60 px-3 py-1.5")(
+        span(cls := "h-2 w-2 rounded-full bg-amber-400"),
+        span(cls := "text-xs font-semibold text-amber-300")(stats.running.toString),
+        span(cls := "text-xs text-slate-400")("running"),
       ),
-      span(
-        span(cls := "font-semibold text-indigo-300")(stats.completed.toString),
-        " completed",
+      div(cls := "flex items-center gap-2 rounded-lg border border-white/10 bg-slate-800/60 px-3 py-1.5")(
+        span(cls := "text-xs font-semibold text-emerald-300")("✓"),
+        span(cls := "text-xs font-semibold text-emerald-300")(stats.completed.toString),
+        span(cls := "text-xs text-slate-400")("completed"),
       ),
-      span(
-        span(cls := "font-semibold text-slate-200")(s"${stats.tokensTotal / 1000}k"),
-        " tokens",
+      div(cls := "flex items-center gap-2 rounded-lg border border-white/10 bg-slate-800/60 px-3 py-1.5")(
+        span(cls := "text-xs font-semibold text-purple-300")("⚡"),
+        span(cls := "text-xs font-semibold text-purple-300")(tokensLabel),
+        span(cls := "text-xs text-slate-400")("tokens"),
       ),
     ).render
 

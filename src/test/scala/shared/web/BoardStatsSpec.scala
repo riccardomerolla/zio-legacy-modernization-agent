@@ -95,4 +95,29 @@ object BoardStatsSpec extends ZIOSpecDefault:
           html.contains("12"),
         )
       },
+      test("statsBar contains amber class for running tile") {
+        val stats = BoardStats.Stats(running = 2, completed = 5, tokensTotal = 3000L)
+        val html  = BoardStats.statsBar(stats)
+        assertTrue(html.contains("amber"))
+      },
+      test("statsBar contains emerald class for completed tile") {
+        val stats = BoardStats.Stats(running = 0, completed = 4, tokensTotal = 0L)
+        val html  = BoardStats.statsBar(stats)
+        assertTrue(html.contains("emerald"))
+      },
+      test("statsBar contains purple class for tokens tile") {
+        val stats = BoardStats.Stats(running = 0, completed = 0, tokensTotal = 5000L)
+        val html  = BoardStats.statsBar(stats)
+        assertTrue(html.contains("purple"))
+      },
+      test("statsBar formats tokens >= 1000 as Nk") {
+        val stats = BoardStats.Stats(running = 0, completed = 0, tokensTotal = 12500L)
+        val html  = BoardStats.statsBar(stats)
+        assertTrue(html.contains("12k"))
+      },
+      test("statsBar shows raw count when tokens < 1000") {
+        val stats = BoardStats.Stats(running = 0, completed = 0, tokensTotal = 800L)
+        val html  = BoardStats.statsBar(stats)
+        assertTrue(html.contains("800"))
+      },
     )
