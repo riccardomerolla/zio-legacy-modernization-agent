@@ -152,11 +152,30 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
           html.contains("bg-indigo-400"),
         )
       },
-      test("board column header renders + new issue link for each status") {
+      test("board column header renders quick-add toggle button for each status") {
         val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
         assertTrue(
-          html.contains("/issues/new?status=open"),
-          html.contains("/issues/new?status=in_progress"),
+          html.contains("data-quick-add-toggle=\"open\""),
+          html.contains("data-quick-add-toggle=\"in_progress\""),
+        )
+      },
+      test("board column has hidden quick-add form with title input and priority select") {
+        val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
+        assertTrue(
+          html.contains("data-quick-add-form"),
+          html.contains("data-quick-add-title"),
+          html.contains("data-quick-add-priority"),
+          html.contains("data-quick-add-submit"),
+          html.contains("data-quick-add-cancel"),
+        )
+      },
+      test("quick-add form priority select has Critical/High/Medium/Low options") {
+        val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
+        assertTrue(
+          html.contains("Critical"),
+          html.contains("High"),
+          html.contains("Medium"),
+          html.contains("Low"),
         )
       },
       test("board column header renders collapse toggle button") {

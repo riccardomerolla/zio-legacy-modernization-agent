@@ -204,11 +204,45 @@ object IssuesView:
                 attr("data-column-count")    := statusToken,
               )(columnIssues.size.toString),
             ),
-            a(
-              href  := s"/issues/new?status=$statusToken",
-              cls   := "flex-shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-100",
-              title := s"New $label issue",
+            button(
+              `type`                         := "button",
+              cls                            := "flex-shrink-0 rounded p-0.5 text-slate-400 hover:bg-white/10 hover:text-slate-100",
+              title                          := s"Quick-add $label issue",
+              attr("data-quick-add-toggle")  := statusToken,
             )("+"),
+          ),
+          div(
+            cls                            := "mb-2 hidden rounded-lg border border-white/10 bg-slate-800/60 p-2",
+            attr("data-quick-add-form")    := statusToken,
+          )(
+            input(
+              `type`                         := "text",
+              cls                            := "w-full rounded border border-white/15 bg-slate-900/80 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-400 focus:border-indigo-400/50 focus:outline-none",
+              placeholder                    := "Issue title…",
+              attr("data-quick-add-title")   := statusToken,
+              attr("autocomplete")           := "off",
+            ),
+            div(cls := "mt-2 flex items-center gap-2")(
+              select(
+                cls                            := "flex-1 rounded border border-white/15 bg-slate-900/80 px-2 py-1 text-xs text-slate-100 focus:outline-none",
+                attr("data-quick-add-priority") := statusToken,
+              )(
+                option(value := "Critical")("Critical"),
+                option(value := "High")("High"),
+                option(value := "Medium", selected := "selected")("Medium"),
+                option(value := "Low")("Low"),
+              ),
+              button(
+                `type`                          := "button",
+                cls                             := "rounded border border-emerald-400/30 bg-emerald-500/20 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/30",
+                attr("data-quick-add-submit")   := statusToken,
+              )("Add"),
+              button(
+                `type`                          := "button",
+                cls                             := "rounded border border-white/15 bg-slate-700/40 px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200",
+                attr("data-quick-add-cancel")   := statusToken,
+              )("Cancel"),
+            ),
           ),
           div(cls := "space-y-2 max-h-[65vh] overflow-y-auto", attr("data-role") := "column-cards", attr("data-column-cards") := statusToken)(
             if columnIssues.isEmpty then

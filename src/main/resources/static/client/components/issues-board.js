@@ -13,6 +13,7 @@ class IssuesBoard {
     this.bindDragDrop();
     this.bindPointerDrag();
     this.bindCollapse();
+    this.bindQuickAdd();
     this.connectWs();
   }
 
@@ -135,6 +136,107 @@ class IssuesBoard {
     this.root.querySelectorAll('[data-drop-status]').forEach((column) => {
       column.classList.remove('ring-2', 'ring-indigo-400/60', 'bg-indigo-500/5');
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quick-add inline form
+  // ---------------------------------------------------------------------------
+
+  bindQuickAdd() {
+    // Outside-click dismissal (registered once; reuse existing handler if present)
+    if (!this._quickAddOutsideHandler) {
+      this._quickAddOutsideHandler = (event) => {
+        if (!event.target.closest('[data-quick-add-form]') && !event.target.closest('[data-quick-add-toggle]')) {
+          this.root.querySelectorAll('[data-quick-add-form]:not(.hidden)').forEach((form) => {
+            form.classList.add('hidden');
+            const titleInput = form.querySelector('[data-quick-add-title]');
+            if (titleInput) titleInput.value = '';
+          });
+        }
+      };
+      document.addEventListener('click', this._quickAddOutsideHandler);
+    }
+
+    this.root.querySelectorAll('[data-quick-add-toggle]').forEach((btn) => {
+      const statusToken = btn.dataset.quickAddToggle;
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this._openQuickAdd(statusToken);
+      });
+    });
+
+    this.root.querySelectorAll('[data-quick-add-submit]').forEach((btn) => {
+      const statusToken = btn.dataset.quickAddSubmit;
+      btn.addEventListener('click', () => this._submitQuickAdd(statusToken));
+    });
+
+    this.root.querySelectorAll('[data-quick-add-cancel]').forEach((btn) => {
+      const statusToken = btn.dataset.quickAddCancel;
+      btn.addEventListener('click', () => this._closeQuickAdd(statusToken));
+    });
+
+    this.root.querySelectorAll('[data-quick-add-title]').forEach((input) => {
+      const statusToken = input.dataset.quickAddTitle;
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') this._submitQuickAdd(statusToken);
+        if (event.key === 'Escape') this._closeQuickAdd(statusToken);
+      });
+    });
+  }
+
+  _openQuickAdd(statusToken) {
+    // Close any other open forms first
+    this.root.querySelectorAll('[data-quick-add-form]').forEach((form) => {
+      form.classList.add('hidden');
+    });
+    const form = this.root.querySelector(`[data-quick-add-form="${CSS.escape(statusToken)}"]`);
+    if (!form) return;
+    form.classList.remove('hidden');
+    const titleInput = form.querySelector('[data-quick-add-title]');
+    titleInput?.focus();
+  }
+
+  _closeQuickAdd(statusToken) {
+    const form = this.root.querySelector(`[data-quick-add-form="${CSS.escape(statusToken)}"]`);
+    if (!form) return;
+    form.classList.add('hidden');
+    const titleInput = form.querySelector('[data-quick-add-title]');
+    if (titleInput) titleInput.value = '';
+  }
+
+  async _submitQuickAdd(statusToken) {
+    const form = this.root.querySelector(`[data-quick-add-form="${CSS.escape(statusToken)}"]`);
+    if (!form) return;
+
+    const titleInput     = form.querySelector('[data-quick-add-title]');
+    const prioritySelect = form.querySelector('[data-quick-add-priority]');
+    const title    = titleInput?.value?.trim() || '';
+    const priority = prioritySelect?.value || 'Medium';
+
+    if (!title) {
+      titleInput?.focus();
+      return;
+    }
+
+    this._closeQuickAdd(statusToken);
+
+    try {
+      await fetch('/api/issues', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          title,
+          priority,
+          status: this.toIssueStatus(statusToken),
+          description: title,
+          issueType: 'task',
+        }),
+      });
+    } catch (_ignored) {
+      // Best effort; board refresh will show current state
+    }
+
+    this.refreshBoard();
   }
 
   // ---------------------------------------------------------------------------
@@ -375,6 +477,7 @@ class IssuesBoard {
       }).then(() => {
         this.bindDragDrop();
         this.bindCollapse();
+        this.bindQuickAdd();
         this._flashLandedCard(landedIssueId);
       });
       return;
@@ -387,6 +490,7 @@ class IssuesBoard {
         this.root.innerHTML = html; // nosec: trusted server HTML, same origin
         this.bindDragDrop();
         this.bindCollapse();
+        this.bindQuickAdd();
         this._flashLandedCard(landedIssueId);
       })
       .catch(() => {});
