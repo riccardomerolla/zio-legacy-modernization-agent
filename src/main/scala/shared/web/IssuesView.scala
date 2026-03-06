@@ -602,36 +602,43 @@ object IssuesView:
     query: Option[String],
     hasProofFilter: Option[Boolean] = None,
   ): Frag =
-    form(method := "get", action := "/issues/board", cls := "rounded-xl border border-white/10 bg-slate-900/60 p-4")(
-      div(cls := "grid grid-cols-1 gap-3 md:grid-cols-6")(
+    val activeInput =
+      "rounded-full border border-indigo-400/40 bg-slate-800/70 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
+    val idleInput   =
+      "rounded-full border border-white/15 bg-slate-800/70 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
+    form(
+      method := "get",
+      action := "/issues/board",
+      cls    := "rounded-xl border border-white/10 bg-slate-900/60 px-4 py-3",
+    )(
+      div(cls := "flex flex-wrap items-center gap-2")(
         input(
           `type`      := "text",
           name        := "q",
           value       := query.getOrElse(""),
-          placeholder := "Search issue",
-          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500",
+          placeholder := "Search",
+          cls         := (if query.exists(_.nonEmpty) then activeInput else idleInput),
         ),
         select(
           name := "workspace",
-          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+          cls  := (if workspaceFilter.exists(_.nonEmpty) then s"$activeInput border-indigo-400"
+                  else idleInput),
         )(
           option(value := "")("Any workspace"),
           workspaces.sortBy(_._2.toLowerCase).map { (id, name) =>
-            option(value := id, if workspaceFilter.contains(id) then selected := "selected" else ())(
-              s"$name ($id)"
-            )
+            option(value := id, if workspaceFilter.contains(id) then selected := "selected" else ())(name)
           },
         ),
         input(
           `type`      := "text",
           name        := "agent",
           value       := agentFilter.getOrElse(""),
-          placeholder := "Assigned agent",
-          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500",
+          placeholder := "Agent",
+          cls         := (if agentFilter.exists(_.nonEmpty) then activeInput else idleInput),
         ),
         select(
           name := "priority",
-          cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
+          cls  := (if priorityFilter.exists(_.nonEmpty) then activeInput else idleInput),
         )(
           option(value := "")("Any priority"),
           option(value := "critical", if priorityFilter.contains("critical") then selected := "selected" else ())(
@@ -646,28 +653,31 @@ object IssuesView:
           name        := "tag",
           value       := tagFilter.getOrElse(""),
           placeholder := "Tag",
-          cls         := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500",
+          cls         := (if tagFilter.exists(_.nonEmpty) then activeInput else idleInput),
         ),
-        div(cls := "flex flex-wrap items-center gap-2")(
-          label(cls := "flex items-center gap-1.5 text-xs text-slate-300")(
-            input(
-              `type` := "checkbox",
-              name   := "hasProof",
-              value  := "true",
-              cls    := "h-4 w-4 rounded border-white/30 bg-slate-800 text-indigo-500",
-              if hasProofFilter.contains(true) then checked := "checked" else (),
-            ),
-            span("Has proof"),
+        label(
+          cls := s"flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${
+              if hasProofFilter.contains(true) then "border-indigo-400/60 bg-indigo-500/20 text-indigo-200"
+              else "border-white/15 bg-slate-800/70 text-slate-300"
+            }"
+        )(
+          input(
+            `type` := "checkbox",
+            name   := "hasProof",
+            value  := "true",
+            cls    := "sr-only",
+            if hasProofFilter.contains(true) then checked := "checked" else (),
           ),
-          button(
-            `type` := "submit",
-            cls    := "rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-400",
-          )("Apply"),
-          a(
-            href := "/issues/board",
-            cls  := "rounded-md border border-white/20 px-3 py-2 text-sm text-slate-200 hover:bg-white/5",
-          )("Reset"),
+          span("Has proof"),
         ),
+        button(
+          `type` := "submit",
+          cls    := "rounded-full bg-indigo-500 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400",
+        )("Apply"),
+        a(
+          href := "/issues/board",
+          cls  := "rounded-full border border-white/20 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5",
+        )("Reset"),
       )
     )
 
