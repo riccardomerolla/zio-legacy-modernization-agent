@@ -27,7 +27,7 @@ final case class ActivityControllerLive(
     Method.GET / "activity"                                    -> handler {
       ZIO.succeed(
         Response(
-          status = Status.Found,
+          status = Status.MovedPermanently,
           headers = Headers(Header.Location(URL.decode("/").getOrElse(URL.root))),
         )
       )
