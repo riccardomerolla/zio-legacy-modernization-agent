@@ -25,11 +25,12 @@ final case class ActivityControllerLive(
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "activity"                                    -> handler {
-      ErrorHandlingMiddleware.fromPersistence {
-        activityRepository.listEvents(limit = 50).map { events =>
-          htmlResponse(ActivityView.timeline(events))
-        }
-      }
+      ZIO.succeed(
+        Response(
+          status = Status.Found,
+          headers = Headers(Header.Location(URL.decode("/").getOrElse(URL.root))),
+        )
+      )
     },
     Method.GET / "api" / "activity" / "events"                 -> handler { (req: Request) =>
       ErrorHandlingMiddleware.fromPersistence {

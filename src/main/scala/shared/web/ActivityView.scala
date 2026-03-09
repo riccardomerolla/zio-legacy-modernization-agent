@@ -64,7 +64,7 @@ object ActivityView:
       attr("onclick")     := "window.__activityFilterClick && window.__activityFilterClick(this)",
     )(label)
 
-  private def eventCard(event: ActivityEvent): Frag =
+  def eventCard(event: ActivityEvent): Frag =
     val (iconColor, iconPath) = eventIcon(event.eventType)
     val safeAgentName         = sanitizeOptional(event.agentName)
     val safeRunId             = sanitizeTaskRunId(event.runId)

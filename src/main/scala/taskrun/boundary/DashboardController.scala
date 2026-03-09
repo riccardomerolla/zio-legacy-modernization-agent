@@ -3,6 +3,7 @@ package taskrun.boundary
 import zio.*
 import zio.http.*
 
+import activity.entity.ActivityRepository
 import db.{ PersistenceError, TaskRepository }
 import issues.entity.{ IssueFilter, IssueRepository, IssueStateTag }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
@@ -15,20 +16,23 @@ object DashboardController:
   def routes: ZIO[DashboardController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[DashboardController](_.routes)
 
-  val live: ZLayer[TaskRepository & IssueRepository, Nothing, DashboardController] =
+  val live: ZLayer[TaskRepository & IssueRepository & ActivityRepository, Nothing, DashboardController] =
     ZLayer {
       for
         repository      <- ZIO.service[TaskRepository]
         issueRepository <- ZIO.service[IssueRepository]
+        activityRepo    <- ZIO.service[ActivityRepository]
       yield DashboardControllerLive(
         repository = repository,
         issueRepository = issueRepository,
+        activityRepository = activityRepo,
       )
     }
 
 final case class DashboardControllerLive(
   repository: TaskRepository,
   issueRepository: IssueRepository,
+  activityRepository: ActivityRepository,
 ) extends DashboardController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -36,6 +40,7 @@ final case class DashboardControllerLive(
       ErrorHandlingMiddleware.fromPersistence {
         for
           issues          <- issueRepository.list(IssueFilter(limit = Int.MaxValue)).mapError(mapIssueRepoError)
+          recentEvents    <- activityRepository.listEvents(limit = 5)
           stateCountByType = issues
                                .groupBy(issue => IssueStateTag.fromState(issue.state))
                                .view
@@ -48,7 +53,7 @@ final case class DashboardControllerLive(
                                completed = stateCountByType.getOrElse(IssueStateTag.Completed, 0),
                                failed = stateCountByType.getOrElse(IssueStateTag.Failed, 0),
                              )
-        yield html(HtmlViews.dashboard(summary))
+        yield html(HtmlViews.dashboard(summary, recentEvents))
       }
     },
     Method.GET / "api" / "tasks" / "recent" -> handler {

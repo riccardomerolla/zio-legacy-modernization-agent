@@ -1,5 +1,6 @@
 package shared.web
 
+import activity.entity.ActivityEvent
 import agent.entity.Agent
 import agent.entity.api.{ AgentActiveRun, AgentMetricsHistoryPoint, AgentMetricsSummary, AgentRunHistoryItem }
 import config.control.{ ModelRegistryResponse, ProviderProbeStatus }
@@ -11,8 +12,8 @@ import issues.entity.api.{ AgentAssignmentView, AgentIssueView, IssueTemplate }
 
 object HtmlViews:
 
-  def dashboard(summary: CommandCenterView.PipelineSummary): String =
-    CommandCenterView.page(summary)
+  def dashboard(summary: CommandCenterView.PipelineSummary, recentEvents: List[ActivityEvent]): String =
+    CommandCenterView.page(summary, recentEvents)
 
   def channelsPage(cards: List[ChannelCardData], nowMs: Long): String =
     ChannelView.page(cards, nowMs)

@@ -6,6 +6,7 @@ import zio.*
 import zio.http.*
 import zio.test.*
 
+import activity.entity.{ ActivityEvent, ActivityEventType, ActivityRepository }
 import db.*
 import issues.entity.*
 import shared.ids.Ids.{ AgentId, IssueId }
@@ -32,7 +33,8 @@ object DashboardControllerSpec extends ZIOSpecDefault:
       for
         repo      <- TestRepository.make
         issueRepo <- TestIssueRepository.make
-        controller = DashboardControllerLive(repo, issueRepo)
+        activity  <- TestActivityRepository.make
+        controller = DashboardControllerLive(repo, issueRepo, activity)
         response  <- controller.routes.runZIO(Request.get("/"))
         body      <- response.body.asString
       yield assertTrue(
@@ -50,7 +52,8 @@ object DashboardControllerSpec extends ZIOSpecDefault:
       for
         repo      <- TestRepository.make
         issueRepo <- TestIssueRepository.make
-        controller = DashboardControllerLive(repo, issueRepo)
+        activity  <- TestActivityRepository.make
+        controller = DashboardControllerLive(repo, issueRepo, activity)
         response  <- controller.routes.runZIO(Request.get("/api/tasks/recent"))
         body      <- response.body.asString
       yield assertTrue(
@@ -131,3 +134,31 @@ object DashboardControllerSpec extends ZIOSpecDefault:
 
   private object TestIssueRepository:
     def make: UIO[TestIssueRepository] = ZIO.succeed(TestIssueRepository())
+
+  final private case class TestActivityRepository() extends ActivityRepository:
+    override def createEvent(event: ActivityEvent): IO[PersistenceError, shared.ids.Ids.EventId] =
+      ZIO.dieMessage("unused in DashboardControllerSpec")
+
+    override def listEvents(
+      eventType: Option[ActivityEventType],
+      since: Option[Instant],
+      limit: Int,
+    ): IO[PersistenceError, List[ActivityEvent]] =
+      ZIO.succeed(
+        List(
+          ActivityEvent(
+            id = shared.ids.Ids.EventId("evt-1"),
+            eventType = ActivityEventType.RunCompleted,
+            source = "test-suite",
+            runId = Some(shared.ids.Ids.TaskRunId("2")),
+            conversationId = None,
+            agentName = None,
+            summary = "Run #2 completed",
+            payload = None,
+            createdAt = Instant.parse("2026-02-08T10:00:00Z"),
+          )
+        ).take(limit.max(0))
+      )
+
+  private object TestActivityRepository:
+    def make: UIO[TestActivityRepository] = ZIO.succeed(TestActivityRepository())

@@ -1,5 +1,6 @@
 package shared.web
 
+import activity.entity.ActivityEvent
 import db.TaskRunRow
 import scalatags.Text.all.*
 
@@ -14,13 +15,13 @@ object CommandCenterView:
   ):
     val total: Int = open + claimed + running + completed + failed
 
-  def page(summary: PipelineSummary): String =
+  def page(summary: PipelineSummary, recentEvents: List[ActivityEvent]): String =
     Layout.page("Command Center", "/")(
       div(cls := "space-y-4")(
         pipelineSummaryCard(summary),
         activeRunsCard(),
         liveAgentOpsCard(),
-        recentActivityCard(),
+        recentActivityCard(recentEvents),
       ),
       JsResources.inlineModuleScript("/static/client/components/run-dashboard.js"),
     )
@@ -113,7 +114,7 @@ object CommandCenterView:
       WorkspacesView.runsDashboardCollapsibleSection(fragmentUrl)
     )
 
-  private def recentActivityCard(): Frag                                  =
+  private def recentActivityCard(recentEvents: List[ActivityEvent]): Frag =
     panel("Recent Activity", "Last 5 events")(
       div(
         attr("hx-get")     := "/api/activity/events?limit=5",
@@ -121,9 +122,14 @@ object CommandCenterView:
         attr("hx-trigger") := "load, every 10s",
         cls                := "max-h-[36rem] overflow-auto",
       )(
-        div(
-          cls := "rounded-lg border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-400"
-        )("Loading activity...")
+        if recentEvents.isEmpty then
+          div(
+            cls := "rounded-lg border border-white/10 bg-slate-950/60 p-4 text-sm text-slate-400"
+          )("No activity events yet.")
+        else
+          div(id := "activity-events", cls := "space-y-3")(
+            recentEvents.map(ActivityView.eventCard)
+          )
       )
     )
   private def panel(title: String, subtitle: String)(content: Frag): Frag =
