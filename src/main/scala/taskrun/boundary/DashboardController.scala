@@ -39,19 +39,38 @@ final case class DashboardControllerLive(
     Method.GET / Root                       -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         for
-          issues          <- issueRepository.list(IssueFilter(limit = Int.MaxValue)).mapError(mapIssueRepoError)
+          now             <- Clock.instant
+          allIssues       <- issueRepository.list(IssueFilter(limit = Int.MaxValue)).mapError(mapIssueRepoError)
           recentEvents    <- activityRepository.listEvents(limit = 5)
-          stateCountByType = issues
+          stateCountByType = allIssues
                                .groupBy(issue => IssueStateTag.fromState(issue.state))
                                .view
                                .mapValues(_.size)
                                .toMap
+          completedLast24h = allIssues.count {
+                               case issue if IssueStateTag.fromState(issue.state) == IssueStateTag.Completed =>
+                                 issue.state match
+                                   case issues.entity.IssueState.Completed(_, completedAt, _) =>
+                                     completedAt.isAfter(now.minus(24.hours))
+                                   case _                                                     => false
+                               case _                                                                        => false
+                             }
+          failedLast24h    = allIssues.count {
+                               case issue if IssueStateTag.fromState(issue.state) == IssueStateTag.Failed =>
+                                 issue.state match
+                                   case issues.entity.IssueState.Failed(_, failedAt, _) =>
+                                     failedAt.isAfter(now.minus(24.hours))
+                                   case _                                               => false
+                               case _                                                                     => false
+                             }
+          throughputPerDay = (completedLast24h + failedLast24h).toDouble
           summary          = shared.web.CommandCenterView.PipelineSummary(
                                open = stateCountByType.getOrElse(IssueStateTag.Open, 0),
                                claimed = stateCountByType.getOrElse(IssueStateTag.Assigned, 0),
                                running = stateCountByType.getOrElse(IssueStateTag.InProgress, 0),
                                completed = stateCountByType.getOrElse(IssueStateTag.Completed, 0),
                                failed = stateCountByType.getOrElse(IssueStateTag.Failed, 0),
+                               throughputPerDay = throughputPerDay,
                              )
         yield html(HtmlViews.dashboard(summary, recentEvents))
       }

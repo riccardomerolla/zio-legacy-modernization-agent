@@ -743,10 +743,11 @@ final case class IssueControllerLive(
     val workspaceFilter = req.queryParam("workspace").map(_.trim).filter(_.nonEmpty)
     val agentFilter     = req.queryParam("agent").map(_.trim).filter(_.nonEmpty)
     val priorityFilter  = req.queryParam("priority").map(_.trim.toLowerCase).filter(_.nonEmpty)
+    val statusFilter    = req.queryParam("status").map(_.trim.toLowerCase).filter(_.nonEmpty)
     ErrorHandlingMiddleware.fromPersistence {
       for
         workspaces <- workspaceRepository.list.mapError(mapIssueRepoError)
-        issues     <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter)
+        issues     <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter, statusFilter)
       yield html(
         HtmlViews.issuesBoard(
           issues = issues,
@@ -766,10 +767,11 @@ final case class IssueControllerLive(
     val workspaceFilter = req.queryParam("workspace").map(_.trim).filter(_.nonEmpty)
     val agentFilter     = req.queryParam("agent").map(_.trim).filter(_.nonEmpty)
     val priorityFilter  = req.queryParam("priority").map(_.trim.toLowerCase).filter(_.nonEmpty)
+    val statusFilter    = req.queryParam("status").map(_.trim.toLowerCase).filter(_.nonEmpty)
     ErrorHandlingMiddleware.fromPersistence {
       for
         workspaces <- workspaceRepository.list.mapError(mapIssueRepoError)
-        issues     <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter)
+        issues     <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter, statusFilter)
       yield html(
         HtmlViews.issuesBoardColumns(
           issues = issues,
@@ -861,6 +863,7 @@ final case class IssueControllerLive(
     workspaceFilter: Option[String],
     agentFilter: Option[String],
     priorityFilter: Option[String],
+    statusFilter: Option[String],
   ): IO[PersistenceError, List[AgentIssueView]] =
     issueRepository
       .list(IssueFilter())
@@ -874,6 +877,7 @@ final case class IssueControllerLive(
             _.equalsIgnoreCase(agent)
           )
         ) &&
+        statusFilter.forall(status => statusMatches(issue.status, status)) &&
         priorityFilter.forall(p => issue.priority.toString.equalsIgnoreCase(p))
       ))
       .map(_.filter(issue =>
@@ -883,6 +887,17 @@ final case class IssueControllerLive(
         issue.status == IssueStatus.Completed ||
         issue.status == IssueStatus.Failed
       ))
+
+  private def statusMatches(status: IssueStatus, token: String): Boolean =
+    (status, token.trim.toLowerCase) match
+      case (IssueStatus.Open, "open")              => true
+      case (IssueStatus.Assigned, "assigned")      => true
+      case (IssueStatus.InProgress, "in_progress") => true
+      case (IssueStatus.InProgress, "inprogress")  => true
+      case (IssueStatus.Completed, "completed")    => true
+      case (IssueStatus.Failed, "failed")          => true
+      case (IssueStatus.Skipped, "skipped")        => true
+      case _                                       => false
 
   private def parseIssueStateTag(raw: String): Option[IssueStateTag] =
     raw.trim.toLowerCase match

@@ -12,6 +12,7 @@ object CommandCenterView:
     running: Int,
     completed: Int,
     failed: Int,
+    throughputPerDay: Double,
   ):
     val total: Int = open + claimed + running + completed + failed
 
@@ -45,26 +46,39 @@ object CommandCenterView:
 
   private def pipelineSummaryCard(summary: PipelineSummary): Frag =
     val segments = List(
-      ("Open", summary.open, "bg-sky-400/90"),
-      ("Claimed", summary.claimed, "bg-violet-400/90"),
-      ("Running", summary.running, "bg-amber-400/90"),
-      ("Completed", summary.completed, "bg-emerald-400/90"),
-      ("Failed", summary.failed, "bg-rose-400/90"),
+      ("Open", "open", summary.open, "bg-sky-400/90"),
+      ("Assigned", "assigned", summary.claimed, "bg-violet-400/90"),
+      ("InProgress", "in_progress", summary.running, "bg-amber-400/90"),
+      ("Completed", "completed", summary.completed, "bg-emerald-400/90"),
+      ("Failed", "failed", summary.failed, "bg-rose-400/90"),
     )
     val total    = summary.total.max(1)
-    panel("Pipeline Summary", "Issue flow: Open/Claimed/Running/Completed/Failed")(
+    panel("Pipeline Summary", "Open \u2192 Assigned \u2192 InProgress \u2192 Completed \u2192 Failed")(
       div(cls := "rounded-lg border border-white/10 bg-slate-950/60 p-4")(
+        div(cls := "mb-3 flex items-center justify-between gap-2")(
+          span(cls := "text-xs text-slate-400")("Throughput"),
+          span(
+            cls := "rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-200"
+          )(
+            s"${formatThroughput(summary.throughputPerDay)} issues/day"
+          ),
+        ),
         div(cls := "flex h-3 overflow-hidden rounded-full ring-1 ring-white/10")(
-          segments.map { (_, count, color) =>
-            div(
+          segments.map { (_, statusToken, count, color) =>
+            a(
+              href  := s"/issues/board?status=$statusToken",
               cls   := color,
               style := f"width: ${count.toDouble / total.toDouble * 100.0}%.2f%%;",
-            )
+              title := s"Filter board by $statusToken",
+            )()
           }
         ),
         div(cls := "mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5")(
-          segments.map { (label, count, color) =>
-            div(cls := "rounded-md border border-white/10 bg-slate-900/70 px-2 py-2")(
+          segments.map { (label, statusToken, count, color) =>
+            a(
+              href := s"/issues/board?status=$statusToken",
+              cls  := "rounded-md border border-white/10 bg-slate-900/70 px-2 py-2 transition-colors hover:bg-slate-900",
+            )(
               div(cls := "flex items-center gap-2")(
                 span(cls := s"inline-block h-2.5 w-2.5 rounded-full $color"),
                 span(cls := "text-xs text-slate-400")(label),
@@ -75,6 +89,9 @@ object CommandCenterView:
         ),
       )
     )
+
+  private def formatThroughput(rate: Double): String =
+    f"$rate%.1f"
 
   private def liveAgentOpsCard(): Frag =
     panel("Live Agent Ops", "Embedded Agent Monitor stream")(
