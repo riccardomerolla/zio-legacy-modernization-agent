@@ -6,16 +6,13 @@ import zio.*
 import zio.http.*
 import zio.test.*
 
-import _root_.config.entity.WorkflowDefinition
+import activity.entity.{ ActivityEvent, ActivityEventType, ActivityRepository }
 import db.*
-import orchestration.control.*
+import issues.entity.*
+import shared.ids.Ids.{ AgentId, IssueId }
 import taskrun.boundary.DashboardControllerLive
-import taskrun.entity.TaskStep
 
 object DashboardControllerSpec extends ZIOSpecDefault:
-  private object Steps:
-    val Discovery: TaskStep = "Discovery"
-
   private val sampleRun = TaskRunRow(
     id = 2L,
     sourceDir = "/src",
@@ -35,21 +32,28 @@ object DashboardControllerSpec extends ZIOSpecDefault:
     test("GET / renders dashboard") {
       for
         repo      <- TestRepository.make
-        controller = DashboardControllerLive(repo, TestWorkflowService.withCount(3))
+        issueRepo <- TestIssueRepository.make
+        activity  <- TestActivityRepository.make
+        controller = DashboardControllerLive(repo, issueRepo, activity)
         response  <- controller.routes.runZIO(Request.get("/"))
         body      <- response.body.asString
       yield assertTrue(
         response.status == Status.Ok,
-        body.contains("Dashboard"),
-        body.contains("/tasks/2"),
-        body.contains("Workflows"),
-        body.contains(">3<"),
+        body.contains("Command Center"),
+        body.contains("Pipeline Summary"),
+        body.contains("Live Agent Ops"),
+        body.contains("Active Runs"),
+        body.contains("Recent Activity"),
+        body.contains(">2<"), // open
+        body.contains(">1<"), // claimed / running / completed / failed
       )
     },
     test("GET /api/tasks/recent returns runs fragment") {
       for
         repo      <- TestRepository.make
-        controller = DashboardControllerLive(repo, TestWorkflowService.withCount(1))
+        issueRepo <- TestIssueRepository.make
+        activity  <- TestActivityRepository.make
+        controller = DashboardControllerLive(repo, issueRepo, activity)
         response  <- controller.routes.runZIO(Request.get("/api/tasks/recent"))
         body      <- response.body.asString
       yield assertTrue(
@@ -89,32 +93,72 @@ object DashboardControllerSpec extends ZIOSpecDefault:
   private object TestRepository:
     def make: UIO[TestRepository] = ZIO.succeed(TestRepository())
 
-  private object TestWorkflowService:
-    def withCount(count: Int): WorkflowService =
-      new WorkflowService:
-        private val workflows = List.tabulate(count)(index =>
-          WorkflowDefinition(
-            id = Some((index.toLong + 1L).toString),
-            name = s"wf-$index",
-            steps = List(Steps.Discovery),
-            isBuiltin = false,
-          )
+  final private case class TestIssueRepository() extends IssueRepository:
+    private val now = Instant.parse("2026-02-08T10:00:00Z")
+
+    override def list(filter: IssueFilter): IO[shared.errors.PersistenceError, List[AgentIssue]] =
+      ZIO.succeed(
+        List(
+          mkIssue("1", IssueState.Open(now)),
+          mkIssue("2", IssueState.Open(now)),
+          mkIssue("3", IssueState.Assigned(AgentId("agent-a"), now)),
+          mkIssue("4", IssueState.InProgress(AgentId("agent-b"), now)),
+          mkIssue("5", IssueState.Completed(AgentId("agent-c"), now, "ok")),
+          mkIssue("6", IssueState.Failed(AgentId("agent-d"), now, "boom")),
+          mkIssue("7", IssueState.Skipped(now, "not needed")),
         )
+      )
 
-        override def createWorkflow(workflow: WorkflowDefinition): IO[WorkflowServiceError, Long] =
-          ZIO.fail(WorkflowServiceError.ValidationFailed(List("unsupported in test")))
+    override def append(event: IssueEvent): IO[shared.errors.PersistenceError, Unit] =
+      ZIO.dieMessage("unused in DashboardControllerSpec")
+    override def get(id: IssueId): IO[shared.errors.PersistenceError, AgentIssue]    =
+      ZIO.dieMessage("unused in DashboardControllerSpec")
+    override def delete(id: IssueId): IO[shared.errors.PersistenceError, Unit]       =
+      ZIO.dieMessage("unused in DashboardControllerSpec")
 
-        override def getWorkflow(id: Long): IO[WorkflowServiceError, Option[WorkflowDefinition]] =
-          ZIO.succeed(workflows.find(_.id.contains(id.toString)))
+    private def mkIssue(id: String, state: IssueState): AgentIssue =
+      AgentIssue(
+        id = IssueId(id),
+        runId = None,
+        conversationId = None,
+        title = s"Issue $id",
+        description = "desc",
+        issueType = "task",
+        priority = "medium",
+        requiredCapabilities = Nil,
+        state = state,
+        tags = Nil,
+        contextPath = "",
+        sourceFolder = "",
+      )
 
-        override def getWorkflowByName(name: String): IO[WorkflowServiceError, Option[WorkflowDefinition]] =
-          ZIO.succeed(workflows.find(_.name == name))
+  private object TestIssueRepository:
+    def make: UIO[TestIssueRepository] = ZIO.succeed(TestIssueRepository())
 
-        override def listWorkflows: IO[WorkflowServiceError, List[WorkflowDefinition]] =
-          ZIO.succeed(workflows)
+  final private case class TestActivityRepository() extends ActivityRepository:
+    override def createEvent(event: ActivityEvent): IO[PersistenceError, shared.ids.Ids.EventId] =
+      ZIO.dieMessage("unused in DashboardControllerSpec")
 
-        override def updateWorkflow(workflow: WorkflowDefinition): IO[WorkflowServiceError, Unit] =
-          ZIO.fail(WorkflowServiceError.ValidationFailed(List("unsupported in test")))
+    override def listEvents(
+      eventType: Option[ActivityEventType],
+      since: Option[Instant],
+      limit: Int,
+    ): IO[PersistenceError, List[ActivityEvent]] =
+      ZIO.succeed(
+        List(
+          ActivityEvent(
+            id = shared.ids.Ids.EventId("evt-1"),
+            eventType = ActivityEventType.RunCompleted,
+            source = "test-suite",
+            runId = Some(shared.ids.Ids.TaskRunId("2")),
+            conversationId = None,
+            agentName = None,
+            summary = "Run #2 completed",
+            payload = None,
+            createdAt = Instant.parse("2026-02-08T10:00:00Z"),
+          )
+        ).take(limit.max(0))
+      )
 
-        override def deleteWorkflow(id: Long): IO[WorkflowServiceError, Unit] =
-          ZIO.fail(WorkflowServiceError.ValidationFailed(List("unsupported in test")))
+  private object TestActivityRepository:
+    def make: UIO[TestActivityRepository] = ZIO.succeed(TestActivityRepository())

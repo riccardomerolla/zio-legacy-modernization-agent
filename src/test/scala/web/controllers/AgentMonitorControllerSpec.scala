@@ -78,13 +78,13 @@ object AgentMonitorControllerSpec extends ZIOSpecDefault:
       actionRef.update("abort:" + agentName :: _).unit
 
   def spec: Spec[TestEnvironment & Scope, Any] = suite("AgentMonitorControllerSpec")(
-    test("GET /agent-monitor renders dashboard page") {
+    test("GET /agent-monitor redirects to command center") {
       for
         actions   <- Ref.make(List.empty[String])
         controller = AgentMonitorControllerLive(StubControlPlane(actions))
         response  <- controller.routes.runZIO(Request.get("/agent-monitor"))
-        body      <- response.body.asString
-      yield assertTrue(response.status == Status.Ok, body.contains("Agent Activity Monitor"))
+        location   = response.headers.header(Header.Location).map(_.renderedValue)
+      yield assertTrue(response.status == Status.MovedPermanently, location.contains("/"))
     },
     test("GET /api/agent-monitor/snapshot returns JSON snapshot") {
       for

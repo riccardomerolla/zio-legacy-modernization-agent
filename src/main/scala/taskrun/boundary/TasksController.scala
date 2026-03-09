@@ -39,15 +39,13 @@ final case class TasksControllerLive(
 ) extends TasksController:
 
   override val routes: Routes[Any, Response] = Routes(
-    Method.GET / "tasks"                                   -> handler { (req: Request) =>
-      handle {
-        for
-          runs      <- repository.listRuns(offset = 0, limit = 50)
-          workflows <- loadWorkflowsWithDefault
-          taskItems <- toTaskListItems(runs, workflows)
-          flash      = req.queryParam("flash").map(urlDecode).filter(_.nonEmpty)
-        yield html(TasksView.tasksList(taskItems, workflows, flash))
-      }
+    Method.GET / "tasks"                                   -> handler { (_: Request) =>
+      ZIO.succeed(
+        Response(
+          status = Status.MovedPermanently,
+          headers = Headers(Header.Location(URL.decode("/").getOrElse(URL.root))),
+        )
+      )
     },
     Method.GET / "tasks" / "new"                           -> handler {
       ZIO.succeed(redirect("/tasks"))
@@ -195,15 +193,6 @@ final case class TasksControllerLive(
     },
   )
 
-  private def toTaskListItems(
-    runs: List[TaskRunRow],
-    workflows: List[WorkflowDefinition],
-  ): IO[PersistenceError, List[TaskListItem]] =
-    val workflowsById = workflows.flatMap(w => w.id.map(_ -> w)).toMap
-    ZIO.foreach(runs) { run =>
-      toTaskItem(run, run.workflowId.map(_.toString).flatMap(workflowsById.get))
-    }
-
   private def toTaskItem(
     run: TaskRunRow,
     workflow: Option[WorkflowDefinition],
@@ -258,27 +247,6 @@ final case class TasksControllerLive(
   private def ensureWorkflowHasSteps(workflow: WorkflowDefinition): IO[PersistenceError, Unit] =
     if workflow.steps.nonEmpty then ZIO.unit
     else ZIO.fail(PersistenceError.QueryFailed("createTask", "Selected workflow has no steps"))
-
-  private def loadWorkflowsWithDefault: IO[PersistenceError, List[WorkflowDefinition]] =
-    val defaultName = WorkflowDefinition.default.name
-    for
-      maybeDefault <-
-        workflowService.getWorkflowByName(defaultName).mapError(workflowAsPersistence("getWorkflowByName"))
-      _            <-
-        maybeDefault match
-          case Some(_) =>
-            ZIO.unit
-          case None    =>
-            workflowService
-              .createWorkflow(WorkflowDefinition.default)
-              .mapError(workflowAsPersistence("createWorkflow"))
-              .unit
-              .catchAll {
-                case PersistenceError.QueryFailed(_, _) => ZIO.unit
-                case other                              => ZIO.fail(other)
-              }
-      workflows    <- workflowService.listWorkflows.mapError(workflowAsPersistence("listWorkflows"))
-    yield workflows.sortBy(w => (!w.isBuiltin, w.name.toLowerCase))
 
   private def parseLongField(field: String, raw: String): IO[PersistenceError, Long] =
     ZIO

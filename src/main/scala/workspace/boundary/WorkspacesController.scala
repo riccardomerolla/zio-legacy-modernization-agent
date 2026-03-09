@@ -35,29 +35,12 @@ object WorkspacesController:
 
       // Runs dashboard page (across all workspaces)
       Method.GET / "runs" -> handler { (req: Request) =>
-        val query = parseRunsDashboardQuery(req)
-        (for
-          workspaces <- repo.list.mapError(persistErr)
-          allRuns    <- listAllRuns(repo, workspaces).mapError(persistErr)
-          filtered    = filterRuns(allRuns, query)
-          sorted      = sortRuns(filtered, query.sortBy)
-          scoped      = applyScope(sorted, query.scope)
-          limited     = scoped.take(query.limit)
-          byId        = workspaces.map(ws => ws.id -> ws.name).toMap
-        yield html(
-          WorkspacesView.runsDashboardPage(
-            runs = limited,
-            workspaceNameById = byId,
-            workspaceFilter = query.workspace,
-            agentFilter = query.agent,
-            statusFilter = query.status,
-            scopeFilter = query.scope,
-            sortBy = query.sortBy,
-            dateFrom = query.dateFrom,
-            dateTo = query.dateTo,
-            limit = query.limit,
+        ZIO.succeed(
+          Response(
+            status = Status.MovedPermanently,
+            headers = Headers(Header.Location(URL.decode("/").getOrElse(URL.root))),
           )
-        )).catchAll(ZIO.succeed)
+        )
       },
 
       // Runs dashboard HTMX fragment

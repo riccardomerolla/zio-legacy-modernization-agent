@@ -7,7 +7,7 @@ import zio.stream.ZStream
 
 import orchestration.control.OrchestratorControlPlane
 import shared.errors.ControlPlaneError
-import shared.web.{ AgentMonitor, AgentMonitorView }
+import shared.web.AgentMonitorView
 
 trait AgentMonitorController:
   def routes: Routes[Any, Response]
@@ -26,7 +26,12 @@ final case class AgentMonitorControllerLive(
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / "agent-monitor"                                                 -> handler {
-      ZIO.succeed(html(AgentMonitor.page))
+      ZIO.succeed(
+        Response(
+          status = Status.MovedPermanently,
+          headers = Headers(Header.Location(URL.decode("/").getOrElse(URL.root))),
+        )
+      )
     },
     Method.GET / "agent-monitor" / "stream"                                      -> handler {
       val stream: ZStream[Any, Nothing, String] =
@@ -90,9 +95,6 @@ final case class AgentMonitorControllerLive(
           .catchAll(err => ZIO.succeed(controlPlaneErrorResponse(err)))
     },
   )
-
-  private def html(content: String): Response =
-    Response.text(content).contentType(MediaType.text.html)
 
   private def controlPlaneErrorResponse(error: ControlPlaneError): Response =
     error match

@@ -190,15 +190,15 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
         resp   <- routes.runZIO(req)
       yield assertTrue(resp.status == Status.Ok)
     },
-    test("GET /runs returns dashboard html") {
+    test("GET /runs redirects to command center") {
       for
-        wsRef  <- Ref.make(Map("ws-1" -> sampleWs))
-        runRef <- Ref.make(Map("run-1" -> sampleRun))
-        routes  = makeRoutes(wsRef, runRef)
-        req     = Request.get(URL(Path.decode("/runs")))
-        resp   <- routes.runZIO(req)
-        body   <- resp.body.asString
-      yield assertTrue(resp.status == Status.Ok && body.contains("Run Status Dashboard") && body.contains("#1"))
+        wsRef   <- Ref.make(Map("ws-1" -> sampleWs))
+        runRef  <- Ref.make(Map("run-1" -> sampleRun))
+        routes   = makeRoutes(wsRef, runRef)
+        req      = Request.get(URL(Path.decode("/runs")))
+        resp    <- routes.runZIO(req)
+        location = resp.headers.header(Header.Location).map(_.renderedValue)
+      yield assertTrue(resp.status == Status.MovedPermanently && location.contains("/"))
     },
     test("GET /api/runs filters by status") {
       val completedRun = sampleRun.copy(id = "run-2", status = RunStatus.Completed)
