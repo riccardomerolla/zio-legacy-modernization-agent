@@ -3,8 +3,8 @@ package taskrun.boundary
 import zio.*
 import zio.http.*
 
-import db.{ ChatRepository, PersistenceError, TaskRepository }
-import orchestration.control.{ WorkflowService, WorkflowServiceError }
+import db.{ PersistenceError, TaskRepository }
+import issues.entity.{ IssueFilter, IssueRepository, IssueStateTag }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
 
 trait DashboardController:
@@ -15,36 +15,40 @@ object DashboardController:
   def routes: ZIO[DashboardController, Nothing, Routes[Any, Response]] =
     ZIO.serviceWith[DashboardController](_.routes)
 
-  val live: ZLayer[TaskRepository & WorkflowService & ChatRepository, Nothing, DashboardController] =
+  val live: ZLayer[TaskRepository & IssueRepository, Nothing, DashboardController] =
     ZLayer {
       for
         repository      <- ZIO.service[TaskRepository]
-        workflowService <- ZIO.service[WorkflowService]
-        chatRepository  <- ZIO.service[ChatRepository]
+        issueRepository <- ZIO.service[IssueRepository]
       yield DashboardControllerLive(
         repository = repository,
-        workflowService = workflowService,
-        activeSessionCount = chatRepository.listSessionContexts.map(_.length).orElseSucceed(0),
+        issueRepository = issueRepository,
       )
     }
 
 final case class DashboardControllerLive(
   repository: TaskRepository,
-  workflowService: WorkflowService,
-  activeSessionCount: UIO[Int] = ZIO.succeed(0),
+  issueRepository: IssueRepository,
 ) extends DashboardController:
 
   override val routes: Routes[Any, Response] = Routes(
     Method.GET / Root                       -> handler {
       ErrorHandlingMiddleware.fromPersistence {
         for
-          runs          <- repository.listRuns(offset = 0, limit = 20)
-          workflowCount <- workflowService
-                             .listWorkflows
-                             .map(_.length)
-                             .mapError(workflowAsPersistence("listWorkflows"))
-          sessionsCount <- activeSessionCount
-        yield html(HtmlViews.dashboard(runs, workflowCount, sessionsCount))
+          issues          <- issueRepository.list(IssueFilter(limit = Int.MaxValue)).mapError(mapIssueRepoError)
+          stateCountByType = issues
+                               .groupBy(issue => IssueStateTag.fromState(issue.state))
+                               .view
+                               .mapValues(_.size)
+                               .toMap
+          summary          = shared.web.CommandCenterView.PipelineSummary(
+                               open = stateCountByType.getOrElse(IssueStateTag.Open, 0),
+                               claimed = stateCountByType.getOrElse(IssueStateTag.Assigned, 0),
+                               running = stateCountByType.getOrElse(IssueStateTag.InProgress, 0),
+                               completed = stateCountByType.getOrElse(IssueStateTag.Completed, 0),
+                               failed = stateCountByType.getOrElse(IssueStateTag.Failed, 0),
+                             )
+        yield html(HtmlViews.dashboard(summary))
       }
     },
     Method.GET / "api" / "tasks" / "recent" -> handler {
@@ -57,10 +61,13 @@ final case class DashboardControllerLive(
   private def html(content: String): Response =
     Response.text(content).contentType(MediaType.text.html)
 
-  private def workflowAsPersistence(action: String)(error: WorkflowServiceError): PersistenceError =
+  private def mapIssueRepoError(error: shared.errors.PersistenceError): PersistenceError =
     error match
-      case WorkflowServiceError.PersistenceFailed(err)             => err
-      case WorkflowServiceError.ValidationFailed(errors)           =>
-        PersistenceError.QueryFailed(action, errors.mkString("; "))
-      case WorkflowServiceError.StepsDecodingFailed(workflow, why) =>
-        PersistenceError.QueryFailed(action, s"Invalid workflow '$workflow': $why")
+      case shared.errors.PersistenceError.NotFound(entity, id)             =>
+        PersistenceError.QueryFailed(entity, s"Not found: $id")
+      case shared.errors.PersistenceError.QueryFailed(op, cause)           =>
+        PersistenceError.QueryFailed(op, cause)
+      case shared.errors.PersistenceError.SerializationFailed(entity, err) =>
+        PersistenceError.QueryFailed(entity, err)
+      case shared.errors.PersistenceError.StoreUnavailable(msg)            =>
+        PersistenceError.QueryFailed("issue_store", msg)

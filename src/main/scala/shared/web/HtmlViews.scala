@@ -11,14 +11,14 @@ import issues.entity.api.{ AgentAssignmentView, AgentIssueView, IssueTemplate }
 
 object HtmlViews:
 
-  def dashboard(runs: List[TaskRunRow], workflowCount: Int, activeSessionCount: Int): String =
-    DashboardView.dashboard(runs, workflowCount, activeSessionCount)
+  def dashboard(summary: CommandCenterView.PipelineSummary): String =
+    CommandCenterView.page(summary)
 
   def channelsPage(cards: List[ChannelCardData], nowMs: Long): String =
     ChannelView.page(cards, nowMs)
 
   def recentRunsFragment(runs: List[TaskRunRow]): String =
-    DashboardView.recentRunsContent(runs).render
+    CommandCenterView.recentRunsFragment(runs)
 
   def tasksList(
     tasks: List[TaskListItem],
