@@ -86,7 +86,7 @@ object CommandCenterView:
           id               := "agent-stats-container",
           attr("sse-swap") := "agent-stats",
         )(
-          AgentMonitorView.statsHeader(AgentMonitorView.AgentGlobalStats.empty)
+          AgentMonitorView.statsHeaderFragment(AgentMonitorView.AgentGlobalStats.empty)
         ),
         tag("details")(
           cls := "rounded-lg border border-white/10 bg-slate-950/50"
@@ -101,7 +101,7 @@ object CommandCenterView:
             id               := "agent-table-container",
             attr("sse-swap") := "agent-table",
           )(
-            AgentMonitorView.table(Nil)
+            AgentMonitorView.tableFragment(Nil)
           ),
         ),
       )

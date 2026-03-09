@@ -89,7 +89,7 @@ object AgentMonitorView:
   private val headerCls = "px-3 py-2 text-left text-xs font-semibold tracking-widest text-slate-400 uppercase"
   private val cellCls   = "px-3 py-2 text-xs font-mono text-slate-300 align-top"
 
-  def table(rows: List[AgentRunView]): String =
+  def tableFragment(rows: List[AgentRunView]): Frag =
     val content: Frag =
       if rows.isEmpty then
         tr(
@@ -101,7 +101,7 @@ object AgentMonitorView:
       else
         frag(rows.map(row)*)
 
-    val rendered = div(
+    div(
       cls                      := "overflow-x-auto rounded-lg",
       attr("data-agent-table") := "true",
     )(
@@ -121,7 +121,8 @@ object AgentMonitorView:
       )
     )
 
-    rendered.render
+  def table(rows: List[AgentRunView]): String =
+    tableFragment(rows).render
 
   private def row(r: AgentRunView): Frag =
     val dotCls = stageDotCls(r.stage)
@@ -166,7 +167,7 @@ object AgentMonitorView:
   private val labelCls = "text-xs font-mono text-slate-500 uppercase tracking-widest w-24 flex-shrink-0"
   private val valueCls = "text-xs font-mono text-white tabular-nums"
 
-  def statsHeader(stats: AgentGlobalStats): String =
+  def statsHeaderFragment(stats: AgentGlobalStats): Frag =
     div(
       cls                      := "rounded-lg bg-black/60 px-4 py-3 font-mono text-xs",
       attr("data-agent-stats") := "true",
@@ -178,7 +179,10 @@ object AgentMonitorView:
         metricLine("Tokens Out", formatTokens(stats.tokensOut)),
         metricLine("Total", formatTokens(stats.tokensTotal)),
       )
-    ).render
+    )
+
+  def statsHeader(stats: AgentGlobalStats): String =
+    statsHeaderFragment(stats).render
 
   private def metricLine(label: String, value: String): Frag =
     div(cls := "flex items-baseline gap-2")(
