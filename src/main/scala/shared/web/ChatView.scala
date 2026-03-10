@@ -145,6 +145,12 @@ object ChatView:
           ),
           div(cls := "flex items-center gap-0.5 flex-shrink-0")(
             tag("ab-icon-button")(
+              attr("icon")    := "M21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.197 5.197a7.5 7.5 0 0 0 10.606 10.606Z",
+              attr("tooltip") := "Search messages",
+              attr("size")    := "sm",
+              attr("onclick") := """(function(){window.dispatchEvent(new CustomEvent('ab-panel-open',{detail:{panelId:'context-panel',title:'Search Messages'}}));setTimeout(function(){var c=document.getElementById('panel-context-panel-content');if(c&&!c.querySelector('ab-message-search')){var el=document.createElement('ab-message-search');c.replaceChildren(el);}setTimeout(function(){var i=document.querySelector('ab-message-search input');if(i)i.focus();},50);},50);})()""",
+            )(),
+            tag("ab-icon-button")(
               attr("icon")    := "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z",
               attr("tooltip") := "Memory & Context",
               attr("size")    := "sm",
@@ -263,6 +269,7 @@ object ChatView:
         attr("href") := "https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github-dark.min.css",
       ),
       JsResources.inlineModuleScript("/static/client/components/ab-side-panel.js"),
+      JsResources.inlineModuleScript("/static/client/components/ab-message-search.js"),
       JsResources.inlineModuleScript("/static/client/components/ab-icon-button.js"),
       JsResources.inlineModuleScript("/static/client/components/ab-tool-waterfall.js"),
       JsResources.inlineModuleScript("/static/client/components/chat-message-stream.js"),
