@@ -145,6 +145,24 @@ object ChatView:
           ),
           div(cls := "flex items-center gap-0.5 flex-shrink-0")(
             tag("ab-icon-button")(
+              attr("icon")    := "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z",
+              attr("tooltip") := "Memory & Context",
+              attr("size")    := "sm",
+              attr("onclick") := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Memory & Context'}}))""",
+            )(),
+            tag("ab-icon-button")(
+              attr("icon")    := "M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z",
+              attr("tooltip") := "Reports",
+              attr("size")    := "sm",
+              attr("onclick") := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Reports'}}))""",
+            )(),
+            tag("ab-icon-button")(
+              attr("icon")    := "M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5",
+              attr("tooltip") := "Git changes",
+              attr("size")    := "sm",
+              attr("onclick") := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Git Changes'}}))""",
+            )(),
+            tag("ab-icon-button")(
               attr("icon")    := "M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0 1 18 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3 1.5 1.5 3-3.75",
               attr("tooltip") := "View issues",
               attr("href")    := issuesHref,
@@ -179,45 +197,40 @@ object ChatView:
             )
           },
         ),
-        sessionContextPanel(sessionMeta),
-        runSessionMeta.fold[Frag](frag())(meta => runChainPanel(meta)),
-        detailContext.proofOfWork.fold[Frag](frag())(report => raw(ProofOfWorkView.panel(report, collapsed = false))),
-        reportsPanel(detailContext.reports),
-        graphPanel(detailContext.graphReports, conversationId),
-        div(cls := "mt-1 flex flex-1 min-h-0 flex-col gap-3 lg:flex-row")(
-          div(cls := "flex-1 min-h-0 flex flex-col gap-3")(
-            div(
-              cls := "relative flex-1 min-h-0 rounded border border-white/10 bg-black/20 overflow-hidden flex flex-col"
+        runSessionMeta.fold[Frag](frag())(meta => runBreadcrumb(meta, conversationId)),
+        div(cls := "mt-1 flex flex-1 min-h-0 flex-col gap-3")(
+          div(
+            cls := "relative flex-1 min-h-0 rounded border border-white/10 bg-black/20 overflow-hidden flex flex-col"
+          )(
+            tag("chat-message-stream")(
+              id                      := s"messages-$conversationId",
+              cls                     := "flex-1 min-h-0 overflow-y-auto p-3 space-y-3 block",
+              attr("conversation-id") := conversationId,
+              attr("ws-url")          := "/ws/console",
             )(
-              tag("chat-message-stream")(
-                id                      := s"messages-$conversationId",
-                cls                     := "flex-1 min-h-0 overflow-y-auto p-3 space-y-3 block",
-                attr("conversation-id") := conversationId,
-                attr("ws-url")          := "/ws/console",
-              )(
-                raw(messagesFragment(conversation.messages))
-              ),
-              button(
-                id              := s"scroll-bottom-$conversationId",
-                `type`          := "button",
-                cls             := "hidden absolute bottom-3 right-3 rounded bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 text-[11px] font-semibold",
-                attr("onclick") := s"document.getElementById('messages-$conversationId')?.scrollToLatest?.()",
-              )("Bottom"),
+              raw(messagesFragment(conversation.messages))
             ),
-            runSessionMeta.fold[Frag](frag())(meta => runGitPanel(meta, conversationId)),
-            runSessionMeta.fold[Frag](standardChatComposer(conversationId))(meta =>
-              runInteractionComposer(
-                conversationId = conversationId,
-                runControlId = runControlId,
-                meta = meta,
-              )
-            ),
+            button(
+              id              := s"scroll-bottom-$conversationId",
+              `type`          := "button",
+              cls             := "hidden absolute bottom-3 right-3 rounded bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 text-[11px] font-semibold",
+              attr("onclick") := s"document.getElementById('messages-$conversationId')?.scrollToLatest?.()",
+            )("Bottom"),
           ),
-          memorySidebar(
-            conversationId = conversationId,
-            memorySessionId = detailContext.memorySessionId,
+          inlineTimelineEvents(detailContext, runSessionMeta),
+          runSessionMeta.fold[Frag](standardChatComposer(conversationId))(meta =>
+            runInteractionComposer(
+              conversationId = conversationId,
+              runControlId = runControlId,
+              meta = meta,
+            )
           ),
         ),
+        tag("ab-side-panel")(
+          attr("panel-id") := "context-panel",
+          attr("title")    := "Context",
+          attr("width")    := "400px",
+        )(),
       ),
       runSessionMeta.fold[Frag](frag())(_ => gitPanelStyles),
       JsResources.markedScript,
@@ -226,6 +239,8 @@ object ChatView:
         attr("rel")  := "stylesheet",
         attr("href") := "https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github-dark.min.css",
       ),
+      JsResources.inlineModuleScript("/static/client/components/ab-side-panel.js"),
+      JsResources.inlineModuleScript("/static/client/components/ab-icon-button.js"),
       JsResources.inlineModuleScript("/static/client/components/chat-message-stream.js"),
       runSessionMeta.fold[Frag](JsResources.inlineModuleScript("/static/client/components/message-composer.js"))(_ =>
         frag(
@@ -352,6 +367,92 @@ object ChatView:
       )()
     )
 
+  private def runBreadcrumb(meta: RunSessionUiMeta, conversationId: String): Frag =
+    div(cls := "flex items-center gap-2 text-[11px] text-gray-400 mb-1 px-1")(
+      span(cls := "text-gray-500")("Run:"),
+      span(
+        cls := s"font-mono font-semibold ${runModeBadgeClass(meta.status).replace("rounded-full border", "").trim}"
+      )(
+        runModeLabel(meta.status)
+      ),
+      if meta.breadcrumb.nonEmpty then
+        frag(
+          meta.breadcrumb.take(3).zipWithIndex.map {
+            case (item, idx) =>
+              frag(
+                if idx > 0 then span(cls := "text-gray-600")("→") else frag(),
+                a(
+                  href := s"/chat/${item.conversationId}",
+                  cls  := (
+                    if item.runId == meta.runId then
+                      "font-mono text-indigo-300 hover:text-indigo-200"
+                    else "font-mono text-gray-400 hover:text-gray-200"
+                  ),
+                )(item.runId.take(8)),
+              )
+          }*
+        )
+      else
+        span(cls := "font-mono text-gray-500")(meta.runId.take(8)),
+      span(cls := "ml-auto")(
+        tag("ab-icon-button")(
+          attr("icon")    := "M3.75 9h16.5m-16.5 6.75h16.5",
+          attr("tooltip") := "Run chain details",
+          attr("size")    := "sm",
+          attr("onclick") := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Run Chain'}}))""",
+        )()
+      ),
+    )
+
+  private def inlineTimelineEvents(
+    detailContext: ChatDetailContext,
+    runSessionMeta: Option[RunSessionUiMeta],
+  ): Frag =
+    val hasContent = detailContext.proofOfWork.isDefined ||
+      detailContext.reports.nonEmpty ||
+      detailContext.graphReports.nonEmpty ||
+      runSessionMeta.isDefined
+    if !hasContent then frag()
+    else
+      div(cls := "space-y-1")(
+        runSessionMeta.map { meta =>
+          tag("ab-timeline-event")(
+            attr("event-type") := "git",
+            attr("title")      := "Git changes",
+            attr("subtitle")   := "Click to view diff",
+            attr("expandable") := "true",
+            attr("onclick")    := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Git Changes'}}))""",
+          )()
+        }.getOrElse(frag()),
+        if detailContext.reports.nonEmpty then
+          tag("ab-timeline-event")(
+            attr("event-type") := "tool",
+            attr("title")      := s"Run Reports (${detailContext.reports.size})",
+            attr("subtitle")   := "Click to view reports",
+            attr("expandable") := "true",
+            attr("onclick")    := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Reports'}}))""",
+          )()
+        else frag(),
+        if detailContext.graphReports.nonEmpty then
+          tag("ab-timeline-event")(
+            attr("event-type") := "tool",
+            attr("title")      := s"Run Graphs (${detailContext.graphReports.size})",
+            attr("subtitle")   := "Click to view graphs",
+            attr("expandable") := "true",
+            attr("onclick")    := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Graphs'}}))""",
+          )()
+        else frag(),
+        detailContext.proofOfWork.map { _ =>
+          tag("ab-timeline-event")(
+            attr("event-type") := "tool",
+            attr("title")      := "Proof of Work",
+            attr("subtitle")   := "Click to view proof of work report",
+            attr("expandable") := "true",
+            attr("onclick")    := """window.dispatchEvent(new CustomEvent('ab-panel-open', {detail:{panelId:'context-panel', title:'Proof of Work'}}))""",
+          )()
+        }.getOrElse(frag()),
+      )
+
   private def runChainPanel(meta: RunSessionUiMeta): Frag =
     div(cls := "mt-3 flex flex-wrap items-center gap-2 text-xs")(
       span(cls := "text-gray-400 font-semibold")("Run chain:"),
@@ -439,46 +540,7 @@ object ChatView:
       )
 
   private def memorySidebar(conversationId: String, memorySessionId: Option[String]): Frag =
-    tag("details")(cls := "w-full lg:w-80 lg:flex-shrink-0 rounded-lg border border-white/10 bg-slate-900/70 p-3")(
-      tag("summary")(cls := "cursor-pointer select-none text-sm font-semibold text-slate-200")("Memory Search"),
-      div(id := s"chat-memory-filters-$conversationId", cls := "mt-3 space-y-2")(
-        input(
-          `type`             := "text",
-          name               := "q",
-          placeholder        := "Search memory...",
-          cls                := "w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-100",
-          attr("hx-get")     := "/api/memory/search",
-          attr("hx-trigger") := "input changed delay:300ms, search",
-          attr("hx-target")  := s"#chat-memory-results-$conversationId",
-          attr("hx-include") := s"#chat-memory-filters-$conversationId",
-          attr("hx-vals")    := "{\"format\":\"html\",\"limit\":\"8\"}",
-          attr("hx-swap")    := "innerHTML",
-        ),
-        input(`type`         := "hidden", name := "sessionId", value := memorySessionId.getOrElse("")),
-        select(
-          name               := "kind",
-          cls                := "w-full rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-100",
-          attr("hx-get")     := "/api/memory/search",
-          attr("hx-trigger") := "change",
-          attr("hx-target")  := s"#chat-memory-results-$conversationId",
-          attr("hx-include") := s"#chat-memory-filters-$conversationId",
-          attr("hx-vals")    := "{\"format\":\"html\",\"limit\":\"8\"}",
-          attr("hx-swap")    := "innerHTML",
-        )(
-          option(value := "")("All kinds"),
-          option(value := "Preference")("Preference"),
-          option(value := "Fact")("Fact"),
-          option(value := "Context")("Context"),
-          option(value := "Summary")("Summary"),
-        ),
-      ),
-      div(
-        id  := s"chat-memory-results-$conversationId",
-        cls := "mt-3 max-h-[60vh] overflow-y-auto space-y-2",
-      )(
-        p(cls := "text-xs text-slate-400")("Type to search memory entries.")
-      ),
-    )
+    frag()
 
   private def graphPanelScript(conversationId: String): Frag =
     script(
