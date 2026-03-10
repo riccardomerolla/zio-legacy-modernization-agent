@@ -240,6 +240,7 @@ object ChatView:
             )("Bottom"),
           ),
           inlineTimelineEvents(detailContext, runSessionMeta),
+          activityIndicator(conversationId),
           runSessionMeta.fold[Frag](standardChatComposer(conversationId))(meta =>
             runInteractionComposer(
               conversationId = conversationId,
@@ -628,6 +629,16 @@ object ChatView:
            |});
            |""".stripMargin
       )
+    )
+
+  private def activityIndicator(conversationId: String): Frag =
+    div(
+      id  := s"activity-indicator-$conversationId",
+      cls := "hidden px-4 py-2 flex items-center gap-2 text-[11px] text-gray-400 border-t border-white/5 bg-slate-950/70 transition-all",
+    )(
+      span(id := s"activity-icon-$conversationId", cls := "text-indigo-400")("\u2699"),
+      span(id := s"activity-text-$conversationId", cls := "truncate")("Thinking..."),
+      span(cls := "ml-auto animate-pulse text-gray-600")("\u25cf"),
     )
 
   private def standardChatComposer(conversationId: String): Frag =

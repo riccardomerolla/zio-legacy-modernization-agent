@@ -103,16 +103,29 @@ class ChatMessageStream extends LitElement {
         this._streamBuffer = '';
         this._appendStreamBubble();
         this._toggleAbortButton(true);
+        window.updateActivityIndicator(this.conversationId, 'Thinking', '');
         break;
-      case 'chat-chunk':
-        this._streamBuffer += parsed.delta || '';
+      case 'chat-chunk': {
+        const delta = parsed.delta || '';
+        this._streamBuffer += delta;
         this._updateStreamBubble();
+        // Detect tool name in streaming JSON chunks (look for "name": "<toolName>" pattern)
+        const toolMatch = delta.match(/"name"\s*:\s*"([^"]+)"/);
+        if (toolMatch) {
+          const toolName = toolMatch[1];
+          // Also try to extract a primary argument from common fields
+          const argMatch = delta.match(/"(?:file_path|path|command|pattern|query|url)"\s*:\s*"([^"]+)"/);
+          const toolArg = argMatch ? argMatch[1] : '';
+          window.updateActivityIndicator(this.conversationId, toolName, toolArg);
+        }
         break;
+      }
       case 'chat-stream-end':
       case 'chat-aborted':
         this._streaming = false;
         this._removeStreamBubble();
         this._toggleAbortButton(false);
+        window.hideActivityIndicator(this.conversationId);
         this._refreshMessages();
         break;
       case 'chat-message':
@@ -384,4 +397,85 @@ window.updateTokenGauge = function updateTokenGauge(conversationId, used, max = 
     const pctFmt  = pct.toFixed(0);
     label.textContent = usedFmt + ' / ' + maxFmt + ' tokens (' + pctFmt + '%)';
   }
+};
+
+/**
+ * Module-level timer map to track pending activity indicator timers.
+ * Keyed by conversationId (for update timers) or conversationId + '-hide' (for hide timers).
+ */
+const _activityTimers = {};
+
+/**
+ * Map a tool name (or recognizable prefix) to a display emoji/symbol.
+ */
+function _activityIconForTool(toolName) {
+  const n = (toolName || '').toLowerCase();
+  if (/^read|^cat|^open/i.test(n))   return '\uD83D\uDCC4'; // 📄
+  if (/^write|^creat/i.test(n))     return '\u270F\uFE0F'; // ✏️
+  if (/^grep|^search|^find/i.test(n)) return '\uD83D\uDD0D'; // 🔍
+  if (/^bash|^run|^exec/i.test(n))   return '\u26A1';       // ⚡
+  if (/^glob|^list/i.test(n))       return '\uD83D\uDCC1'; // 📁
+  return '\u2699';                                        // ⚙
+}
+
+/**
+ * Show the activity indicator for the given conversation and display tool info.
+ *
+ * @param {string|number} conversationId
+ * @param {string} toolName  - e.g. "Read", "Bash", "Thinking"
+ * @param {string} toolArg   - primary argument (file path, command, …)
+ */
+window.updateActivityIndicator = function updateActivityIndicator(conversationId, toolName, toolArg) {
+  const indicator = document.getElementById('activity-indicator-' + conversationId);
+  const iconEl    = document.getElementById('activity-icon-' + conversationId);
+  const textEl    = document.getElementById('activity-text-' + conversationId);
+  if (!indicator) return;
+
+  // Cancel any pending timer for this conversation
+  if (_activityTimers[conversationId]) {
+    clearTimeout(_activityTimers[conversationId]);
+  }
+
+  // Brief fade-out then fade-in to signal content change
+  indicator.style.opacity = '0';
+  _activityTimers[conversationId] = setTimeout(() => {
+    if (iconEl) iconEl.textContent = _activityIconForTool(toolName);
+    if (textEl) {
+      const label = toolArg ? toolName + ' ' + toolArg + '...' : toolName + '...';
+      textEl.textContent = label;
+    }
+    indicator.classList.remove('hidden');
+    indicator.style.opacity = '1';
+    delete _activityTimers[conversationId];
+  }, 80);
+};
+
+/**
+ * Hide the activity indicator for the given conversation.
+ *
+ * @param {string|number} conversationId
+ */
+window.hideActivityIndicator = function hideActivityIndicator(conversationId) {
+  const indicator = document.getElementById('activity-indicator-' + conversationId);
+  if (!indicator) return;
+
+  // Cancel any pending update timer
+  if (_activityTimers[conversationId]) {
+    clearTimeout(_activityTimers[conversationId]);
+    delete _activityTimers[conversationId];
+  }
+
+  indicator.style.opacity = '0';
+
+  // Use a separate key for the hide timer
+  const hideTimerKey = conversationId + '-hide';
+  if (_activityTimers[hideTimerKey]) {
+    clearTimeout(_activityTimers[hideTimerKey]);
+  }
+
+  _activityTimers[hideTimerKey] = setTimeout(() => {
+    indicator.classList.add('hidden');
+    indicator.style.opacity = '';
+    delete _activityTimers[hideTimerKey];
+  }, 200);
 };
