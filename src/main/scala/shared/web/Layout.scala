@@ -57,6 +57,8 @@ object Layout:
             div(cls := "px-4 sm:px-6 lg:px-8")(bodyContent)
           )
         ),
+        tag("ab-command-palette")(),
+        JsResources.inlineModuleScript("/static/client/components/ab-command-palette.js"),
         script(raw(
           """(function () {
             |  const sidebar = document.getElementById("mobile-sidebar");
@@ -276,12 +278,13 @@ object Layout:
               group.chats.map(chat =>
                 li(
                   a(
-                    href          := chat.href,
-                    cls           := s"mx-1 block truncate rounded-md px-2 py-1 text-[11px] ${
+                    href                          := chat.href,
+                    cls                           := s"mx-1 block truncate rounded-md px-2 py-1 text-[11px] ${
                         if chat.active then "bg-white/10 text-white"
                         else "text-gray-400 hover:bg-white/5 hover:text-white"
                       }",
-                    attr("title") := chat.title,
+                    attr("title")                 := chat.title,
+                    attr("data-palette-chat")     := "true",
                   )(chat.title)
                 )
               )
