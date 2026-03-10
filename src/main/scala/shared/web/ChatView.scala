@@ -130,48 +130,52 @@ object ChatView:
       chatWorkspaceNav = Some(buildWorkspaceNav(workspaceFolders, Some(conversationId), showNewChat = true)),
     )(
       div(cls := "flex flex-col min-h-[calc(100vh-8rem)] gap-3 rounded-lg border border-white/10 bg-slate-950/70 p-3")(
-        div(cls := "mb-1 flex items-center justify-between gap-3")(
-          div(cls := "min-w-0")(
+        div(cls := "mb-1 flex items-center gap-2")(
+          tag("ab-icon-button")(
+            attr("icon")    := "M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18",
+            attr("tooltip") := "Back to chats",
+            attr("href")    := "/chat",
+            attr("size")    := "sm",
+          )(),
+          div(cls := "min-w-0 flex-1")(
             h1(cls := "truncate text-sm font-semibold text-white")(conversation.title),
-            description.fold[Frag](frag())(text => p(cls := "mt-0.5 text-[11px] text-gray-400")(text)),
+            description.fold[Frag](frag())(text =>
+              p(cls := "mt-0 text-[10px] text-gray-500 truncate")(text)
+            ),
           ),
-          a(
-            href := issuesHref,
-            cls  := "rounded bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700",
-          )("Issues"),
+          div(cls := "flex items-center gap-0.5 flex-shrink-0")(
+            tag("ab-icon-button")(
+              attr("icon")    := "M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0 1 18 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3 1.5 1.5 3-3.75",
+              attr("tooltip") := "View issues",
+              attr("href")    := issuesHref,
+            )(),
+          ),
         ),
-        div(cls := "mb-2 flex flex-wrap items-center gap-2 text-[11px]")(
-          span(cls := "rounded border border-white/10 bg-white/5 px-2 py-1 text-gray-300")(
-            span(cls := "mr-1 text-gray-400")("Status"),
-            span(cls := "font-semibold capitalize")(conversation.status),
-          ),
-          span(cls := "rounded border border-white/10 bg-white/5 px-2 py-1 text-gray-300")(
-            span(cls := "mr-1 text-gray-400")("Messages"),
-            span(cls := "font-semibold")(conversation.messages.length.toString),
-          ),
-          span(cls := "rounded border border-white/10 bg-white/5 px-2 py-1 text-gray-300")(
-            span(cls := "mr-1 text-gray-400")("Created"),
-            span(cls := "font-semibold")(conversation.createdAt.toString.take(19)),
+        div(cls := "mb-2 flex flex-wrap items-center gap-1.5 text-[11px]")(
+          statusDot(conversation.status),
+          span(cls := "rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-gray-300")(
+            s"${conversation.messages.length} msgs"
           ),
           runSessionMeta.fold[Frag](frag()) { meta =>
             frag(
               span(
                 id  := s"run-mode-badge-$conversationId",
-                cls := s"rounded border px-2 py-1 font-semibold ${runModeBadgeClass(meta.status)}",
+                cls := s"rounded-full border px-2 py-0.5 font-semibold ${runModeBadgeClass(meta.status)}",
               )(runModeLabel(meta.status)),
               span(
                 id  := s"run-attached-count-$conversationId",
-                cls := "rounded border border-white/10 bg-white/5 px-2 py-1 text-gray-300",
+                cls := "rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-gray-300",
               )(
-                span(cls := "mr-1 text-gray-400")("Attached"),
-                span(cls := "font-semibold", attr("data-role") := "count")(meta.attachedUsersCount.toString),
+                span(cls := "mr-1 text-gray-400")(""),
+                span(attr("data-role") := "count")(meta.attachedUsersCount.toString),
+                " attached",
               ),
               span(
                 id  := s"run-active-indicator-$conversationId",
-                cls := s"rounded border border-white/10 bg-white/5 px-2 py-1 text-gray-300 ${
+                cls := s"rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-emerald-300 ${
                     if isRunActive(meta.status) then "" else "hidden"
                   }",
-              )("Live"),
+              )("● Live"),
             )
           },
         ),
@@ -262,11 +266,14 @@ object ChatView:
     )
 
   def messagesFragment(messages: List[ConversationEntry]): String =
-    div(cls := "space-y-4 text-gray-100")(
-      messages.map(messageCard)
+    div(cls := "space-y-2 text-gray-100")(
+      messages.zipWithIndex.map { case (msg, idx) =>
+        val prevSender = if idx > 0 then Some(messages(idx - 1).senderType) else None
+        messageCard(msg, prevSender)
+      }
     ).render
 
-  private def messageCard(message: ConversationEntry): Frag =
+  private def messageCard(message: ConversationEntry, prevSender: Option[SenderType] = None): Frag =
     message.messageType match
       case MessageType.ToolCall   => toolCallCard(message)
       case MessageType.ToolResult => toolResultCard(message)
@@ -275,32 +282,34 @@ object ChatView:
           case SenderType.System =>
             div(cls := "flex justify-center", attr("data-sender") := "system")(
               div(
-                cls := "max-w-[90%] rounded-lg border border-amber-300/25 bg-amber-500/15 px-4 py-2 text-xs text-amber-100"
+                cls := "rounded-full px-3 py-0.5 text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/20"
               )(
                 message.content
               )
             )
           case sender            =>
-            val isUser                                           = sender == SenderType.User
-            val (containerClasses, bubbleClasses, senderClasses) =
+            val isUser             = sender == SenderType.User
+            val showSenderLabel    = prevSender != Some(sender)
+            val (containerClasses, bubbleClasses) =
               if isUser then
                 (
                   "flex justify-end",
-                  "max-w-[85%] lg:max-w-[72%] rounded-2xl rounded-br-md border border-indigo-300/20 bg-indigo-500/90 px-4 py-3 shadow-lg shadow-indigo-900/20",
-                  "text-indigo-100",
+                  "max-w-[85%] lg:max-w-[72%] rounded-2xl rounded-br-md border border-indigo-400/25 bg-indigo-500/15 px-4 py-3 text-gray-100",
                 )
               else
                 (
                   "flex justify-start",
-                  "max-w-[85%] lg:max-w-[72%] rounded-2xl rounded-bl-md border border-white/15 bg-slate-800/80 px-4 py-3 shadow-lg shadow-black/20",
-                  "text-slate-300",
+                  "max-w-[85%] lg:max-w-[72%] border-l-2 border-indigo-400/50 pl-4 py-2",
                 )
 
             div(cls := containerClasses, attr("data-sender") := (if isUser then "user" else "assistant"))(
               div(cls := bubbleClasses)(
-                div(cls := s"text-xs font-semibold mb-2 $senderClasses")(
-                  message.sender
-                ),
+                if showSenderLabel then
+                  div(cls := s"text-xs font-semibold mb-2 ${if isUser then "text-indigo-300" else "text-slate-400"}")(
+                    message.sender
+                  )
+                else
+                  frag(),
                 if !isUser && looksLikeMarkdown(message.content) then
                   div(
                     cls := "text-sm leading-6 text-gray-50 [&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_h1]:mt-2 [&_h2]:mt-2 [&_h3]:mt-2"
@@ -316,40 +325,31 @@ object ChatView:
               )
             )
 
+  private def extractToolSummary(content: String): String =
+    val nameLine = content.linesIterator.find(_.trim.startsWith("name:"))
+    nameLine.map(_.trim.stripPrefix("name:").trim).filter(_.nonEmpty)
+      .getOrElse(content.take(60).replaceAll("\n", " "))
+
   private def toolCallCard(message: ConversationEntry): Frag =
-    div(cls := "flex justify-start")(
-      div(
-        cls := "tool-call-block max-w-[85%] lg:max-w-[72%] border border-indigo-400/20 bg-indigo-950/40 rounded-xl px-4 py-3 my-1"
-      )(
-        tag("details")(
-          tag("summary")(cls := "cursor-pointer select-none font-mono text-xs font-semibold text-indigo-300")(
-            "\u2699 Tool call"
-          ),
-          pre(
-            cls := "mt-2 text-xs text-indigo-100 whitespace-pre-wrap break-words font-mono bg-black/30 rounded p-2 overflow-auto"
-          )(
-            message.content
-          ),
-        )
-      )
+    val summary = extractToolSummary(message.content)
+    div(cls := "flex justify-start my-0.5")(
+      tag("ab-timeline-event")(
+        attr("event-type") := "tool",
+        attr("title")      := summary,
+        attr("expandable") := "true",
+        attr("subtitle")   := message.content.take(500),
+      )()
     )
 
   private def toolResultCard(message: ConversationEntry): Frag =
-    div(cls := "flex justify-start")(
-      div(
-        cls := "tool-result-block max-w-[85%] lg:max-w-[72%] border border-emerald-400/20 bg-emerald-950/40 rounded-xl px-4 py-3 my-1"
-      )(
-        tag("details")(
-          tag("summary")(cls := "cursor-pointer select-none font-mono text-xs font-semibold text-emerald-300")(
-            "\u2713 Tool result"
-          ),
-          pre(
-            cls := "mt-2 text-xs text-emerald-100 whitespace-pre-wrap break-words font-mono bg-black/30 rounded p-2 overflow-auto"
-          )(
-            message.content
-          ),
-        )
-      )
+    val firstLine = message.content.linesIterator.nextOption().getOrElse("").take(120)
+    div(cls := "flex justify-start my-0.5")(
+      tag("ab-timeline-event")(
+        attr("event-type") := "tool",
+        attr("title")      := s"\u2192 $firstLine",
+        attr("expandable") := "true",
+        attr("subtitle")   := message.content.take(500),
+      )()
     )
 
   private def runChainPanel(meta: RunSessionUiMeta): Frag =
@@ -501,7 +501,7 @@ object ChatView:
 
   private def standardChatComposer(conversationId: String): Frag =
     div(
-      cls := "sticky bottom-0 mt-3 rounded-lg bg-gray-900/95 ring-1 ring-white/10 p-3 backdrop-blur"
+      cls := "sticky bottom-0 mt-2 rounded-xl bg-slate-900/98 ring-1 ring-white/10 backdrop-blur"
     )(
       form(
         method                        := "post",
@@ -510,79 +510,95 @@ object ChatView:
         attr("hx-target")             := s"#messages-$conversationId",
         attr("hx-swap")               := "innerHTML",
         attr("hx-disabled-elt")       := "button[type='submit']",
-        attr("hx-on::before-request") := s"""
-          |document.getElementById('messages-$conversationId')?.markPending?.();
-        """.stripMargin.trim,
-        attr("hx-on::after-request")  := """
-          |this.reset();
-        """.stripMargin.trim,
-        cls                           := "space-y-2",
+        attr("hx-on::before-request") := s"""document.getElementById('messages-$conversationId')?.markPending?.();""",
+        attr("hx-on::after-request")  := """this.reset();""",
       )(
         input(`type` := "hidden", name := "fragment", value := "true"),
+        // Textarea
         div(
           id                           := "chat-composer",
-          cls                          := "space-y-2",
+          cls                          := "px-4 pt-3 pb-2",
           attr("data-conversation-id") := conversationId,
           attr("data-agents-endpoint") := "/api/agents",
         )(
-          div(cls := "flex flex-wrap items-center gap-2")(
-            button(
-              `type`            := "button",
-              cls               := "rounded-md bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-semibold text-gray-200",
-              attr("data-role") := "mode-toggle",
-            )("Preview"),
-            select(
-              cls               := "rounded-md bg-white/10 border border-white/20 px-2 py-1.5 text-xs text-gray-100",
-              attr("data-role") := "code-language",
-            )(
-              option(value := "plain")("plain"),
-              option(value := "scala")("scala"),
-              option(value := "python")("python"),
-              option(value := "bash")("bash"),
-              option(value := "json")("json"),
-              option(value := "yaml")("yaml"),
-            ),
-            button(
-              `type`            := "button",
-              cls               := "rounded-md bg-white/10 hover:bg-white/20 px-3 py-1.5 text-xs font-semibold text-gray-200",
-              attr("data-role") := "insert-code",
-            )("</> Code"),
-            span(cls := "text-xs text-gray-400")("Ctrl/Cmd+Enter send, Ctrl+Shift+P preview, Ctrl+K code"),
-          ),
           div(cls := "relative")(
             div(attr("data-role") := "write-pane")(
               textarea(
                 id                   := s"chat-input-$conversationId",
                 name                 := "content",
-                placeholder          := "Type your message... Use @agent-name to route directly.",
-                rows                 := 5,
-                cls                  := "w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm",
+                placeholder          := "Message...",
+                rows                 := 1,
+                cls                  := "w-full resize-none bg-transparent border-none text-white placeholder:text-gray-500 focus:outline-none text-sm leading-6 min-h-[1.5rem] max-h-48 overflow-y-auto",
                 required,
                 attr("autocomplete") := "off",
                 attr("spellcheck")   := "false",
+                attr("data-role")    := "auto-grow",
               )()
             ),
             div(
               attr("data-role") := "preview-pane",
-              cls               := "hidden min-h-[7rem] rounded-lg border border-white/20 bg-black/20 px-4 py-3 text-sm leading-6 text-gray-100 overflow-auto",
+              cls               := "hidden min-h-[1.5rem] max-h-48 text-sm leading-6 text-gray-100 overflow-auto",
             )(),
             div(
               attr("data-role") := "mentions",
-              cls               := "hidden absolute left-0 right-0 mt-1 max-h-48 overflow-auto rounded-md border border-white/15 bg-slate-900/95 shadow-lg z-20",
+              cls               := "hidden absolute left-0 right-0 bottom-full mb-1 max-h-48 overflow-auto rounded-md border border-white/15 bg-slate-900/95 shadow-lg z-20",
             )(),
           ),
         ),
-        div(cls := "flex items-center gap-2")(
-          button(
-            `type` := "submit",
-            cls    := "px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors",
-          )("Send"),
-          button(
-            id              := s"abort-btn-$conversationId",
-            `type`          := "button",
-            cls             := "hidden px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors",
-            attr("onclick") := s"document.getElementById('messages-$conversationId').abort()",
-          )("Stop"),
+        // Bottom toolbar
+        div(cls := "flex items-center justify-between px-3 pb-2 gap-2")(
+          // Left: icon tools
+          div(cls := "flex items-center gap-0.5")(
+            tag("ab-icon-button")(
+              attr("icon")      := "M6 18L18 6",
+              attr("tooltip")   := "Slash commands (/)",
+              attr("size")      := "sm",
+              attr("data-role") := "slash-command",
+            )(),
+            tag("ab-icon-button")(
+              attr("icon")      := "M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5",
+              attr("tooltip")   := "Insert code block (Ctrl+K)",
+              attr("size")      := "sm",
+              attr("data-role") := "insert-code",
+            )(),
+            tag("ab-icon-button")(
+              attr("icon")      := "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7Z",
+              attr("tooltip")   := "Mention agent (@)",
+              attr("size")      := "sm",
+              attr("data-role") := "mention-trigger",
+            )(),
+            tag("ab-icon-button")(
+              attr("icon")      := "M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+              attr("tooltip")   := "Preview markdown (Ctrl+P)",
+              attr("size")      := "sm",
+              attr("data-role") := "mode-toggle",
+            )(),
+          ),
+          // Right: model selector + send + abort
+          div(cls := "flex items-center gap-1.5")(
+            tag("ab-badge-select")(
+              attr("value")   := "claude-opus-4-6",
+              attr("options") := """[{"value":"claude-opus-4-6","label":"Opus 4.6"},{"value":"claude-sonnet-4-6","label":"Sonnet 4.6"},{"value":"claude-haiku-4-5","label":"Haiku 4.5"}]""",
+              attr("label")   := "Model",
+              id              := "model-selector",
+            )(),
+            // Abort button (hidden by default, shown when streaming)
+            button(
+              id              := s"abort-btn-$conversationId",
+              `type`          := "button",
+              cls             := "hidden rounded-md bg-rose-600/20 border border-rose-500/30 hover:bg-rose-600/30 text-rose-300 px-2 py-1 text-[11px] font-semibold transition-colors",
+              attr("onclick") := s"document.getElementById('messages-$conversationId').abort()",
+            )("Stop"),
+            // Send button (icon, turns indigo when text present)
+            button(
+              `type`        := "submit",
+              id            := s"send-btn-$conversationId",
+              cls           := "rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-1.5 transition-colors",
+              attr("title") := "Send message (Ctrl+Enter)",
+            )(
+              raw("""<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>""")
+            ),
+          ),
         ),
       )
     )
@@ -792,6 +808,19 @@ object ChatView:
         100% { background: transparent; }
       }
       """)
+    )
+
+  private def statusDot(status: String): Frag =
+    val (dotColor, label) = status.toLowerCase match
+      case s if s.contains("running") => ("text-blue-400", "Running")
+      case "completed"                => ("text-emerald-400", "Completed")
+      case "failed"                   => ("text-rose-400", "Failed")
+      case "cancelled"                => ("text-orange-400", "Cancelled")
+      case "pending"                  => ("text-amber-400", "Pending")
+      case _                          => ("text-gray-400", status.capitalize)
+    span(cls := "inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-gray-300")(
+      span(cls := s"text-[10px] $dotColor")("●"),
+      label,
     )
 
   private def runModeLabel(status: RunStatus): String = status match
