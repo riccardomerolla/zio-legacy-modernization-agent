@@ -37,7 +37,7 @@ class RunSessionControls {
     this.continueBtn?.addEventListener('click', () => {
       this.isContinuationMode = true;
       this.render();
-      this.feedbackText('Enter continuation instructions, then press Send to Run.');
+      this.feedbackText('Continue mode active.');
       if (this.input) {
         this.input.focus();
         this.input.setSelectionRange(this.input.value.length, this.input.value.length);

@@ -25,29 +25,29 @@ const CHEVRON_DOWN = 'M19.5 8.25l-7.5 7.5-7.5-7.5';
 const EVENT_CONFIG = {
   git: {
     label: 'Git',
-    cardColor: 'border-emerald-400/40 bg-emerald-500/8',
-    accentLine: 'bg-emerald-400',
+    cardColor: 'bg-emerald-500/8',
+    accentLine: 'bg-emerald-400/50',
     accentBorder: 'border-emerald-400',
     iconColor: 'text-emerald-400',
   },
   tool: {
     label: 'Tool',
-    cardColor: 'border-indigo-400/30 bg-indigo-500/8',
-    accentLine: 'bg-indigo-400',
+    cardColor: 'bg-indigo-500/8',
+    accentLine: 'bg-indigo-400/50',
     accentBorder: 'border-indigo-400',
     iconColor: 'text-indigo-400',
   },
   status: {
     label: 'Status',
-    cardColor: 'border-amber-400/30 bg-amber-500/8',
-    accentLine: 'bg-amber-400',
+    cardColor: 'bg-amber-500/8',
+    accentLine: 'bg-amber-400/50',
     accentBorder: 'border-amber-400',
     iconColor: 'text-amber-400',
   },
   report: {
     label: 'Report',
-    cardColor: 'border-cyan-400/30 bg-cyan-500/8',
-    accentLine: 'bg-cyan-400',
+    cardColor: 'bg-cyan-500/8',
+    accentLine: 'bg-cyan-400/50',
     accentBorder: 'border-cyan-400',
     iconColor: 'text-cyan-400',
   },
@@ -55,8 +55,8 @@ const EVENT_CONFIG = {
 
 const DEFAULT_CONFIG = {
   label: 'Event',
-  cardColor: 'border-white/10 bg-white/5',
-  accentLine: 'bg-gray-400',
+  cardColor: 'bg-white/5',
+  accentLine: 'bg-gray-400/50',
   accentBorder: 'border-gray-400',
   iconColor: 'text-gray-400',
 };
@@ -179,14 +179,14 @@ class AbTimelineEvent extends LitElement {
     return html`
       <div>
         <div
-          class="relative flex items-center gap-2 rounded-md border ${config.cardColor} px-3 py-1.5 my-1 text-[11px] cursor-pointer hover:bg-white/5 transition-colors group"
+          class="relative flex items-center gap-2 rounded-xl ${config.cardColor} px-2.5 py-1.5 my-1 text-[11px] cursor-pointer hover:bg-white/10 transition-colors group"
           @click="${this._handleClick}"
           role="button"
           tabindex="0"
           @keydown="${(e) => (e.key === 'Enter' || e.key === ' ') && this._handleClick()}"
         >
           <!-- left accent line -->
-          <div class="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-md ${config.accentLine}"></div>
+          <div class="absolute left-0 top-1 bottom-1 w-px rounded-full ${config.accentLine}"></div>
 
           <!-- icon -->
           ${this._renderIcon(config)}

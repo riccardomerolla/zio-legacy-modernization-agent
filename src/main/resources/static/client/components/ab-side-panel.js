@@ -17,6 +17,7 @@ class AbSidePanel extends LitElement {
 
     this._onEsc       = this._onEsc.bind(this);
     this._onPanelOpen = this._onPanelOpen.bind(this);
+    this._onResize    = this._onResize.bind(this);
   }
 
   createRenderRoot() { return this; }
@@ -27,6 +28,7 @@ class AbSidePanel extends LitElement {
     super.connectedCallback();
     document.addEventListener('keydown',      this._onEsc);
     window.addEventListener('ab-panel-open',  this._onPanelOpen);
+    window.addEventListener('resize',          this._onResize);
     this._applyTransitionStyles();
   }
 
@@ -34,6 +36,8 @@ class AbSidePanel extends LitElement {
     super.disconnectedCallback();
     document.removeEventListener('keydown',     this._onEsc);
     window.removeEventListener('ab-panel-open', this._onPanelOpen);
+    window.removeEventListener('resize',        this._onResize);
+    document.body.classList.remove('context-panel-open');
   }
 
   updated(changedProps) {
@@ -45,21 +49,49 @@ class AbSidePanel extends LitElement {
   // ── Transition styles (applied via JS to avoid needing arbitrary Tailwind values) ──
 
   _applyTransitionStyles() {
-    const resolvedWidth = this.width || '320px';
+    const resolvedWidth = this.width || '25rem';
     const isMobile = window.innerWidth < 1024;
 
-    Object.assign(this.style, {
-      position:      'fixed',
-      right:         '0',
-      top:           '4rem',
-      height:        'calc(100vh - 4rem)',
-      width:         isMobile ? '100%' : resolvedWidth,
-      zIndex:        '40',
-      transition:    'transform 200ms ease-out, opacity 150ms ease-out',
-      transform:     this.open ? 'translateX(0)'   : 'translateX(100%)',
-      opacity:       this.open ? '1'               : '0',
-      pointerEvents: this.open ? 'auto'            : 'none',
-    });
+    if (isMobile) {
+      // Mobile: fixed overlay that slides in from the right
+      Object.assign(this.style, {
+        position:      'fixed',
+        right:         '0',
+        top:           '4rem',
+        height:        'calc(100vh - 4rem)',
+        width:         '100%',
+        overflow:      '',
+        flexShrink:    '',
+        zIndex:        '40',
+        transition:    'transform 200ms ease-out, opacity 150ms ease-out',
+        transform:     this.open ? 'translateX(0)' : 'translateX(100%)',
+        opacity:       this.open ? '1' : '0',
+        pointerEvents: this.open ? 'auto' : 'none',
+      });
+    } else {
+      // Desktop: in-flow docked column, animated via width
+      Object.assign(this.style, {
+        position:      'relative',
+        right:         '',
+        top:           '',
+        height:        '',
+        width:         this.open ? resolvedWidth : '0',
+        overflow:      'hidden',
+        flexShrink:    '0',
+        zIndex:        '10',
+        transition:    'width 220ms ease, opacity 150ms ease-out',
+        transform:     '',
+        opacity:       this.open ? '1' : '0',
+        pointerEvents: this.open ? 'auto' : 'none',
+      });
+    }
+
+    document.body.classList.remove('context-panel-open');
+  }
+
+  _onResize() {
+    this._applyTransitionStyles();
+    this.requestUpdate();
   }
 
   // ── Event handlers ───────────────────────────────────────────────────────────
@@ -159,9 +191,10 @@ class AbSidePanel extends LitElement {
 
   render() {
     const panelId = this.panelId || 'default';
+    const showClose = true;
 
     return html`
-      <div class="panel-wrapper flex flex-col h-full bg-slate-900 border-l border-white/10 shadow-2xl shadow-black/50">
+      <div class="panel-wrapper flex flex-col h-full bg-slate-950/92 border-l border-white/10 shadow-2xl shadow-black/40 backdrop-blur-xl">
 
         <!-- Header -->
         <div class="panel-header flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
@@ -170,15 +203,17 @@ class AbSidePanel extends LitElement {
             <!-- External header-actions slot (populated by consumers targeting this id) -->
             <div id="panel-${panelId}-actions"></div>
             <!-- Close button -->
-            <button
-              type="button"
-              class="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-              aria-label="Close panel"
-              title="Close panel"
-              @click="${() => this._close()}"
-            >
-              ${this._xIconSvg()}
-            </button>
+            ${showClose ? html`
+              <button
+                type="button"
+                class="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+                aria-label="Close panel"
+                title="Close panel"
+                @click="${() => this._close()}"
+              >
+                ${this._xIconSvg()}
+              </button>
+            ` : html``}
           </div>
         </div>
 
