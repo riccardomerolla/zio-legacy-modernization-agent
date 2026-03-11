@@ -48,16 +48,22 @@ final case class DashboardControllerLive(
                                .mapValues(_.size)
                                .toMap
           completedLast24h = allIssues.count {
-                               case issue if IssueStateTag.fromState(issue.state) == IssueStateTag.Completed =>
+                               case issue if IssueStateTag.fromState(issue.state) == IssueStateTag.Done ||
+                                 IssueStateTag.fromState(issue.state) == IssueStateTag.Completed =>
                                  issue.state match
+                                   case issues.entity.IssueState.Done(doneAt, _) =>
+                                     doneAt.isAfter(now.minus(24.hours))
                                    case issues.entity.IssueState.Completed(_, completedAt, _) =>
                                      completedAt.isAfter(now.minus(24.hours))
                                    case _                                                     => false
                                case _                                                                        => false
                              }
           failedLast24h    = allIssues.count {
-                               case issue if IssueStateTag.fromState(issue.state) == IssueStateTag.Failed =>
+                               case issue if IssueStateTag.fromState(issue.state) == IssueStateTag.Rework ||
+                                 IssueStateTag.fromState(issue.state) == IssueStateTag.Failed =>
                                  issue.state match
+                                   case issues.entity.IssueState.Rework(reworkAt, _) =>
+                                     reworkAt.isAfter(now.minus(24.hours))
                                    case issues.entity.IssueState.Failed(_, failedAt, _) =>
                                      failedAt.isAfter(now.minus(24.hours))
                                    case _                                               => false
@@ -65,11 +71,15 @@ final case class DashboardControllerLive(
                              }
           throughputPerDay = (completedLast24h + failedLast24h).toDouble
           summary          = shared.web.CommandCenterView.PipelineSummary(
-                               open = stateCountByType.getOrElse(IssueStateTag.Open, 0),
-                               claimed = stateCountByType.getOrElse(IssueStateTag.Assigned, 0),
+                               open = stateCountByType.getOrElse(IssueStateTag.Backlog, 0) +
+                                 stateCountByType.getOrElse(IssueStateTag.Open, 0),
+                               claimed = stateCountByType.getOrElse(IssueStateTag.Todo, 0) +
+                                 stateCountByType.getOrElse(IssueStateTag.Assigned, 0),
                                running = stateCountByType.getOrElse(IssueStateTag.InProgress, 0),
-                               completed = stateCountByType.getOrElse(IssueStateTag.Completed, 0),
-                               failed = stateCountByType.getOrElse(IssueStateTag.Failed, 0),
+                               completed = stateCountByType.getOrElse(IssueStateTag.Done, 0) +
+                                 stateCountByType.getOrElse(IssueStateTag.Completed, 0),
+                               failed = stateCountByType.getOrElse(IssueStateTag.Rework, 0) +
+                                 stateCountByType.getOrElse(IssueStateTag.Failed, 0),
                                throughputPerDay = throughputPerDay,
                              )
         yield html(HtmlViews.dashboard(summary, recentEvents))

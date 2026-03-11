@@ -72,7 +72,7 @@ object IssueRepositoryESSpec extends ZIOSpecDefault:
           )).provideLayer(layerFor(path))
         }
       },
-      test("reopened event moves issue back to Open") {
+      test("reopened event moves issue back to Backlog") {
         withTempDir { path =>
           val id  = Ids.IssueId("issue-3")
           val now = Instant.parse("2026-03-02T09:10:00Z")
@@ -89,7 +89,7 @@ object IssueRepositoryESSpec extends ZIOSpecDefault:
             _    <- repo.append(IssueEvent.Reopened(id, now.plusSeconds(8), now.plusSeconds(8)))
             got  <- repo.get(id)
           yield assertTrue(
-            got.state == IssueState.Open(now.plusSeconds(8))
+            got.state == IssueState.Backlog(now.plusSeconds(8))
           )).provideLayer(layerFor(path))
         }
       },

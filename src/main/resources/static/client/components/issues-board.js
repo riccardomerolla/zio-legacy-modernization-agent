@@ -508,8 +508,10 @@ class IssuesBoard {
     const currentAgent = card?.dataset?.assignedAgent || '';
     if (currentAgent.trim()) payload.agentName = currentAgent.trim();
 
-    if (status === 'completed') payload.resultData = 'Status updated from board';
-    if (status === 'failed') payload.reason = 'Marked failed from board';
+    if (status === 'done' || status === 'completed') payload.resultData = 'Status updated from board';
+    if (status === 'rework' || status === 'failed') payload.reason = 'Marked rework from board';
+    if (status === 'canceled') payload.reason = 'Canceled from board';
+    if (status === 'duplicated') payload.reason = 'Marked duplicated from board';
 
     try {
       await fetch(`/api/issues/${encodeURIComponent(issueId)}/status`, {
@@ -536,12 +538,20 @@ class IssuesBoard {
 
   toIssueStatus(statusToken) {
     switch (String(statusToken || '').toLowerCase()) {
+      case 'backlog': return 'Backlog';
+      case 'todo': return 'Todo';
       case 'open': return 'Open';
       case 'assigned': return 'Assigned';
       case 'in_progress': return 'InProgress';
+      case 'human_review': return 'HumanReview';
+      case 'rework': return 'Rework';
+      case 'merging': return 'Merging';
+      case 'done': return 'Done';
+      case 'canceled': return 'Canceled';
+      case 'duplicated': return 'Duplicated';
       case 'completed': return 'Completed';
       case 'failed': return 'Failed';
-      default: return 'Open';
+      default: return 'Backlog';
     }
   }
 

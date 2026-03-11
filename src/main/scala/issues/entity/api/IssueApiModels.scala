@@ -9,7 +9,9 @@ enum IssuePriority derives JsonCodec, Schema:
   case Low, Medium, High, Critical
 
 enum IssueStatus derives JsonCodec, Schema:
-  case Open, Assigned, InProgress, Completed, Failed, Skipped
+  case Backlog, Todo, InProgress, HumanReview, Rework, Merging, Done, Canceled, Duplicated
+  // Legacy values kept for backward compatibility with existing data and clients.
+  case Open, Assigned, Completed, Failed, Skipped
 
 enum PipelineExecutionMode derives JsonCodec, Schema:
   case Sequential, Parallel
@@ -30,7 +32,7 @@ case class AgentIssueView(
   externalRef: Option[String] = None,
   externalUrl: Option[String] = None,
   priority: IssuePriority = IssuePriority.Medium,
-  status: IssueStatus = IssueStatus.Open,
+  status: IssueStatus = IssueStatus.Backlog,
   assignedAgent: Option[String] = None,
   assignedAt: Option[Instant] = None,
   completedAt: Option[Instant] = None,

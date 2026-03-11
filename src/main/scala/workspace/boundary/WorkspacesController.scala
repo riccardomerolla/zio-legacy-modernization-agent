@@ -368,13 +368,13 @@ object WorkspacesController:
           }
         },
 
-      // Issue search — returns open/unassigned issues matching ?q= for the assign-run search dropdown
+      // Issue search — returns backlog/todo issues matching ?q= for the assign-run search dropdown
       Method.GET / "api" / "workspaces" / "issues" / "search" -> handler { (req: Request) =>
         val q = req.queryParam("q").map(_.trim.toLowerCase).filter(_.nonEmpty)
         issueRepo
           .list(
             issues.entity.IssueFilter(
-              states = Set(issues.entity.IssueStateTag.Open),
+              states = Set(issues.entity.IssueStateTag.Backlog, issues.entity.IssueStateTag.Todo, issues.entity.IssueStateTag.Open),
               limit = 20,
             )
           )
@@ -396,7 +396,7 @@ object WorkspacesController:
                 priority = issues.entity.api.IssuePriority.values
                   .find(_.toString.equalsIgnoreCase(i.priority))
                   .getOrElse(issues.entity.api.IssuePriority.Medium),
-                status = issues.entity.api.IssueStatus.Open,
+                status = issues.entity.api.IssueStatus.Todo,
                 createdAt = java.time.Instant.EPOCH,
                 updatedAt = java.time.Instant.EPOCH,
               )

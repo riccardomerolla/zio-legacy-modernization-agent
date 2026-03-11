@@ -18,20 +18,28 @@ object IssuesView:
   )
 
   private val boardStatuses: List[(IssueStatus, String)] = List(
-    IssueStatus.Open       -> "Open",
-    IssueStatus.Assigned   -> "Assigned",
+    IssueStatus.Backlog    -> "Backlog",
+    IssueStatus.Todo       -> "Todo",
     IssueStatus.InProgress -> "In Progress",
-    IssueStatus.Completed  -> "Completed",
-    IssueStatus.Failed     -> "Failed",
+    IssueStatus.HumanReview -> "Human Review",
+    IssueStatus.Rework     -> "Rework",
+    IssueStatus.Merging    -> "Merging",
+    IssueStatus.Done       -> "Done",
+    IssueStatus.Canceled   -> "Canceled",
+    IssueStatus.Duplicated -> "Duplicated",
   )
 
   private def columnStatusDotCls(status: IssueStatus): String = status match
-    case IssueStatus.Open       => "bg-indigo-400"
-    case IssueStatus.Assigned   => "bg-amber-400"
-    case IssueStatus.InProgress => "bg-emerald-400"
-    case IssueStatus.Completed  => "bg-teal-400"
-    case IssueStatus.Failed     => "bg-rose-500"
-    case _                      => "bg-slate-500"
+    case IssueStatus.Backlog     => "bg-slate-400"
+    case IssueStatus.Todo        => "bg-blue-400"
+    case IssueStatus.InProgress  => "bg-amber-400"
+    case IssueStatus.HumanReview => "bg-purple-400"
+    case IssueStatus.Rework      => "bg-orange-400"
+    case IssueStatus.Merging     => "bg-teal-400"
+    case IssueStatus.Done        => "bg-emerald-400"
+    case IssueStatus.Canceled    => "bg-rose-500"
+    case IssueStatus.Duplicated  => "bg-slate-500"
+    case _                       => "bg-slate-500"
 
   def list(
     runId: Option[String],
@@ -44,7 +52,7 @@ object IssuesView:
       case Some(id) => s"Issues for Run #$id"
       case None     => "Issues"
 
-    val openCount = issues.count(_.status == IssueStatus.Open)
+    val openCount = issues.count(i => i.status == IssueStatus.Backlog || i.status == IssueStatus.Todo)
 
     Layout.page("Issues", "/issues")(
       div(cls := "space-y-6")(
@@ -136,7 +144,7 @@ object IssuesView:
     val throughputPct               =
       if filteredIssues.isEmpty then 0
       else
-        ((filteredIssues.count(_.status == IssueStatus.Completed).toDouble / filteredIssues.size.toDouble) * 100).toInt
+        ((filteredIssues.count(i => i.status == IssueStatus.Done || i.status == IssueStatus.Completed).toDouble / filteredIssues.size.toDouble) * 100).toInt
     val (activeAgents, totalAgents) = agentUsage.getOrElse(0 -> math.max(availableAgents.size, 1))
     val syncStateCls                =
       if syncStatus.errorCount > 0 then "bg-rose-400"
@@ -300,7 +308,7 @@ object IssuesView:
       case Some(true) => BoardStats.hasProofFilter(issues, workReports)
       case _          => issues
     div(
-      cls := "grid grid-cols-1 gap-3 lg:grid-cols-5"
+      cls := "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5"
     )(
       boardStatuses.map { (status, label) =>
         val columnIssues = filteredIssues
@@ -576,7 +584,7 @@ object IssuesView:
     val convId        = safe(issue.conversationId)
     val workspaceId   = safe(issue.workspaceId)
     val workspaceName = workspaceNameOf(workspaces, workspaceId).getOrElse(workspaceId)
-    val isRunning     = issue.status == IssueStatus.InProgress || issue.status == IssueStatus.Assigned
+    val isRunning     = issue.status == IssueStatus.InProgress
     val statusToken   = issueStatusToken(issue.status)
 
     Layout.page(s"Issue #$issueIdStr", "/issues")(
@@ -732,12 +740,15 @@ object IssuesView:
                     name := "status",
                     cls  := "flex-1 rounded-md border border-white/15 bg-slate-800/80 px-2 py-1.5 text-sm text-slate-100 focus:border-indigo-400/40 focus:outline-none",
                   )(
-                    statusOption("open", "Open", Some(statusToken)),
-                    statusOption("assigned", "Assigned", Some(statusToken)),
+                    statusOption("backlog", "Backlog", Some(statusToken)),
+                    statusOption("todo", "Todo", Some(statusToken)),
                     statusOption("in_progress", "In Progress", Some(statusToken)),
-                    statusOption("completed", "Completed", Some(statusToken)),
-                    statusOption("failed", "Failed", Some(statusToken)),
-                    statusOption("skipped", "Skipped", Some(statusToken)),
+                    statusOption("human_review", "Human Review", Some(statusToken)),
+                    statusOption("rework", "Rework", Some(statusToken)),
+                    statusOption("merging", "Merging", Some(statusToken)),
+                    statusOption("done", "Done", Some(statusToken)),
+                    statusOption("canceled", "Canceled", Some(statusToken)),
+                    statusOption("duplicated", "Duplicated", Some(statusToken)),
                   ),
                   button(
                     `type` := "submit",
@@ -879,12 +890,15 @@ object IssuesView:
           cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
         )(
           statusOption("", "Any status", statusFilter),
-          statusOption("open", "Open", statusFilter),
-          statusOption("assigned", "Assigned", statusFilter),
+          statusOption("backlog", "Backlog", statusFilter),
+          statusOption("todo", "Todo", statusFilter),
           statusOption("in_progress", "In progress", statusFilter),
-          statusOption("completed", "Completed", statusFilter),
-          statusOption("failed", "Failed", statusFilter),
-          statusOption("skipped", "Skipped", statusFilter),
+          statusOption("human_review", "Human review", statusFilter),
+          statusOption("rework", "Rework", statusFilter),
+          statusOption("merging", "Merging", statusFilter),
+          statusOption("done", "Done", statusFilter),
+          statusOption("canceled", "Canceled", statusFilter),
+          statusOption("duplicated", "Duplicated", statusFilter),
         ),
         div(cls := "flex gap-2")(
           button(
@@ -1045,11 +1059,15 @@ object IssuesView:
           cls  := "rounded-md border border-white/15 bg-slate-800/70 px-3 py-2 text-sm text-slate-100",
         )(
           statusOption("", "Any status", statusFilter),
-          statusOption("open", "Open", statusFilter),
-          statusOption("assigned", "Assigned", statusFilter),
+          statusOption("backlog", "Backlog", statusFilter),
+          statusOption("todo", "Todo", statusFilter),
           statusOption("in_progress", "In progress", statusFilter),
-          statusOption("completed", "Completed", statusFilter),
-          statusOption("failed", "Failed", statusFilter),
+          statusOption("human_review", "Human review", statusFilter),
+          statusOption("rework", "Rework", statusFilter),
+          statusOption("merging", "Merging", statusFilter),
+          statusOption("done", "Done", statusFilter),
+          statusOption("canceled", "Canceled", statusFilter),
+          statusOption("duplicated", "Duplicated", statusFilter),
         ),
       ),
       div(cls := "mt-3 flex items-center gap-2")(
@@ -1141,23 +1159,40 @@ object IssuesView:
         case v if v.nonEmpty => v
         case _               => safe(issue.preferredAgent)
     val borderCls     = issue.status match
-      case IssueStatus.Open       => "border-l-4 border-l-indigo-400"
-      case IssueStatus.Assigned   => "border-l-4 border-l-amber-400"
-      case IssueStatus.InProgress => "border-l-4 border-l-emerald-400"
-      case IssueStatus.Completed  => "border-l-4 border-l-teal-400"
-      case IssueStatus.Failed     => "border-l-4 border-l-rose-500"
-      case _                      => "border-l-4 border-l-slate-600"
+      case IssueStatus.Backlog     => "border-l-4 border-l-slate-400"
+      case IssueStatus.Todo        => "border-l-4 border-l-blue-400"
+      case IssueStatus.InProgress  => "border-l-4 border-l-amber-400"
+      case IssueStatus.HumanReview => "border-l-4 border-l-purple-400"
+      case IssueStatus.Rework      => "border-l-4 border-l-orange-400"
+      case IssueStatus.Merging     => "border-l-4 border-l-teal-400"
+      case IssueStatus.Done        => "border-l-4 border-l-emerald-400"
+      case IssueStatus.Canceled    => "border-l-4 border-l-rose-500"
+      case IssueStatus.Duplicated  => "border-l-4 border-l-slate-500"
+      case IssueStatus.Open        => "border-l-4 border-l-slate-400"
+      case IssueStatus.Assigned    => "border-l-4 border-l-blue-400"
+      case IssueStatus.Completed   => "border-l-4 border-l-emerald-400"
+      case IssueStatus.Failed      => "border-l-4 border-l-orange-400"
+      case IssueStatus.Skipped     => "border-l-4 border-l-rose-500"
     val statusDotCls  = issue.status match
-      case IssueStatus.Open       => "rounded-full border-2 border-indigo-400 bg-transparent"
-      case IssueStatus.Assigned   => "rounded-full border-2 border-amber-400 bg-transparent"
-      case IssueStatus.InProgress => "rounded-full bg-emerald-400 animate-pulse"
-      case IssueStatus.Completed  => "rounded-full bg-teal-400"
-      case IssueStatus.Failed     => "rounded-full bg-rose-500"
-      case _                      => "rounded-full bg-slate-500"
+      case IssueStatus.Backlog     => "rounded-full border-2 border-slate-400 bg-transparent"
+      case IssueStatus.Todo        => "rounded-full border-2 border-blue-400 bg-transparent"
+      case IssueStatus.InProgress  => "rounded-full bg-amber-400 animate-pulse"
+      case IssueStatus.HumanReview => "rounded-full bg-purple-400"
+      case IssueStatus.Rework      => "rounded-full bg-orange-400"
+      case IssueStatus.Merging     => "rounded-full bg-teal-400"
+      case IssueStatus.Done        => "rounded-full bg-emerald-400"
+      case IssueStatus.Canceled    => "rounded-full bg-rose-500"
+      case IssueStatus.Duplicated  => "rounded-full bg-slate-500"
+      case IssueStatus.Open        => "rounded-full border-2 border-slate-400 bg-transparent"
+      case IssueStatus.Assigned    => "rounded-full border-2 border-blue-400 bg-transparent"
+      case IssueStatus.Completed   => "rounded-full bg-emerald-400"
+      case IssueStatus.Failed      => "rounded-full bg-orange-400"
+      case IssueStatus.Skipped     => "rounded-full bg-rose-500"
     val shortId       = s"#${issueId.take(8)}"
     val powHtml       = workReport.map(r => ProofOfWorkView.evidenceBar(r)).getOrElse("")
     val requiredCaps  = safeTags(issue.requiredCapabilities)
     val quickAgents   = eligibleAgents(availableAgents, requiredCaps)
+    val showBlocked   = issue.status == IssueStatus.Todo && requiredCaps.nonEmpty && quickAgents.isEmpty
     val externalRef   = safe(issue.externalRef)
     val externalUrl   = safe(issue.externalUrl)
     div(
@@ -1212,6 +1247,13 @@ object IssuesView:
           )("Assign"),
         )
       else (),
+      if showBlocked then
+        div(cls := "mt-2")(
+          span(cls := "rounded-full border border-orange-400/40 bg-orange-500/20 px-2 py-0.5 text-[10px] font-semibold text-orange-200")(
+            "Blocked: no matching agent"
+          )
+        )
+      else (),
       if powHtml.nonEmpty then raw(powHtml) else (),
     )
 
@@ -1252,12 +1294,15 @@ object IssuesView:
           cls                      := "rounded-md border border-white/20 bg-slate-900 px-2 py-1 text-xs text-slate-100",
           attr("data-bulk-status") := scope,
         )(
-          option(value := "Open")("Open"),
-          option(value := "Assigned")("Assigned"),
+          option(value := "Backlog")("Backlog"),
+          option(value := "Todo")("Todo"),
           option(value := "InProgress")("In Progress"),
-          option(value := "Completed")("Completed"),
-          option(value := "Failed")("Failed"),
-          option(value := "Skipped")("Skipped"),
+          option(value := "HumanReview")("Human Review"),
+          option(value := "Rework")("Rework"),
+          option(value := "Merging")("Merging"),
+          option(value := "Done")("Done"),
+          option(value := "Canceled")("Canceled"),
+          option(value := "Duplicated")("Duplicated"),
         ),
         button(
           `type`                   := "button",
@@ -1464,12 +1509,20 @@ object IssuesView:
 
   private def statusBadgeClass(status: String): String =
     status.toLowerCase match
-      case "open"        => "bg-emerald-500/20 text-emerald-200"
-      case "assigned"    => "bg-indigo-500/20 text-indigo-200"
-      case "in_progress" => "bg-violet-500/20 text-violet-200"
-      case "completed"   => "bg-sky-500/20 text-sky-200"
-      case "failed"      => "bg-red-500/20 text-red-200"
-      case _             => "bg-slate-500/20 text-slate-200"
+      case "backlog"      => "bg-slate-500/20 text-slate-200"
+      case "todo"         => "bg-blue-500/20 text-blue-200"
+      case "in_progress"  => "bg-amber-500/20 text-amber-200"
+      case "human_review" => "bg-purple-500/20 text-purple-200"
+      case "rework"       => "bg-orange-500/20 text-orange-200"
+      case "merging"      => "bg-teal-500/20 text-teal-200"
+      case "done"         => "bg-emerald-500/20 text-emerald-200"
+      case "canceled"     => "bg-rose-500/20 text-rose-200"
+      case "duplicated"   => "bg-slate-500/20 text-slate-200"
+      case "open"         => "bg-slate-500/20 text-slate-200"
+      case "assigned"     => "bg-blue-500/20 text-blue-200"
+      case "completed"    => "bg-emerald-500/20 text-emerald-200"
+      case "failed"       => "bg-orange-500/20 text-orange-200"
+      case _              => "bg-slate-500/20 text-slate-200"
 
   private def assignmentStatusBadge(status: String): String =
     status.toLowerCase match
@@ -1481,9 +1534,17 @@ object IssuesView:
 
   private def issueStatusToken(status: IssueStatus): String =
     status match
+      case IssueStatus.Backlog    => "backlog"
+      case IssueStatus.Todo       => "todo"
       case IssueStatus.Open       => "open"
       case IssueStatus.Assigned   => "assigned"
       case IssueStatus.InProgress => "in_progress"
+      case IssueStatus.HumanReview => "human_review"
+      case IssueStatus.Rework     => "rework"
+      case IssueStatus.Merging    => "merging"
+      case IssueStatus.Done       => "done"
+      case IssueStatus.Canceled   => "canceled"
+      case IssueStatus.Duplicated => "duplicated"
       case IssueStatus.Completed  => "completed"
       case IssueStatus.Failed     => "failed"
       case IssueStatus.Skipped    => "skipped"

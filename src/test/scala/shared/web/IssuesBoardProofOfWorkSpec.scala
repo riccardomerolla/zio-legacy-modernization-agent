@@ -64,20 +64,20 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
           html.contains("3"),
         )
       },
-      test("board card for InProgress issue has emerald left border class") {
+      test("board card for InProgress issue has amber left border class") {
         val issue = baseIssue.copy(status = IssueStatus.InProgress)
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
-        assertTrue(html.contains("border-l-emerald-400"))
+        assertTrue(html.contains("border-l-amber-400"))
       },
-      test("board card for Open issue has indigo left border class") {
+      test("board card for Open issue has slate left border class") {
         val issue = baseIssue.copy(status = IssueStatus.Open)
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
-        assertTrue(html.contains("border-l-indigo-400"))
+        assertTrue(html.contains("border-l-slate-400"))
       },
-      test("board card for Failed issue has rose left border class") {
+      test("board card for Failed issue has orange left border class") {
         val issue = baseIssue.copy(status = IssueStatus.Failed)
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
-        assertTrue(html.contains("border-l-rose-500"))
+        assertTrue(html.contains("border-l-orange-400"))
       },
       test("board card for InProgress issue shows animate-pulse dot") {
         val issue = baseIssue.copy(status = IssueStatus.InProgress)
@@ -119,20 +119,20 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
       test("board card renders status dot for Open issue (ring style)") {
         val issue = baseIssue.copy(status = IssueStatus.Open)
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
-        assertTrue(html.contains("border-indigo-400"))
+        assertTrue(html.contains("border-slate-400"))
       },
       test("board card renders status dot for InProgress issue (filled pulse)") {
         val issue = baseIssue.copy(status = IssueStatus.InProgress)
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
         assertTrue(
-          html.contains("bg-emerald-400"),
+          html.contains("bg-amber-400"),
           html.contains("animate-pulse"),
         )
       },
       test("board card renders status dot for Failed issue") {
         val issue = baseIssue.copy(status = IssueStatus.Failed)
         val html  = IssuesView.boardCardFragment(issue, Nil, workReport = None)
-        assertTrue(html.contains("bg-rose-500"))
+        assertTrue(html.contains("bg-orange-400"))
       },
       test("board card does not render description excerpt") {
         val issue = baseIssue.copy(description = "This should not appear on card")
@@ -145,16 +145,16 @@ object IssuesBoardProofOfWorkSpec extends ZIOSpecDefault:
       },
       test("board column header renders colored status dot") {
         val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
-        // InProgress column should have emerald dot, Open should have indigo dot
+        // InProgress column should have amber dot, Backlog should have slate dot
         assertTrue(
-          html.contains("bg-emerald-400"),
-          html.contains("bg-indigo-400"),
+          html.contains("bg-amber-400"),
+          html.contains("bg-slate-400"),
         )
       },
       test("board column header renders quick-add toggle button for each status") {
         val html = IssuesView.boardColumnsFragment(List(baseIssue), Nil, Map.empty)
         assertTrue(
-          html.contains("data-quick-add-toggle=\"open\""),
+          html.contains("data-quick-add-toggle=\"backlog\""),
           html.contains("data-quick-add-toggle=\"in_progress\""),
         )
       },

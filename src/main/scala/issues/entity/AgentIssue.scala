@@ -8,9 +8,17 @@ import zio.schema.{ Schema, derived }
 import shared.ids.Ids.{ AgentId, ConversationId, IssueId, TaskRunId }
 
 enum IssueState derives JsonCodec, Schema:
+  case Backlog(createdAt: Instant)
+  case Todo(readyAt: Instant)
   case Open(createdAt: Instant)
   case Assigned(agent: AgentId, assignedAt: Instant)
   case InProgress(agent: AgentId, startedAt: Instant)
+  case HumanReview(reviewAt: Instant)
+  case Rework(reworkAt: Instant, reason: String)
+  case Merging(mergingAt: Instant)
+  case Done(doneAt: Instant, result: String)
+  case Canceled(canceledAt: Instant, reason: String)
+  case Duplicated(duplicatedAt: Instant, reason: String)
   case Completed(agent: AgentId, completedAt: Instant, result: String)
   case Failed(agent: AgentId, failedAt: Instant, errorMessage: String)
   case Skipped(skippedAt: Instant, reason: String)
@@ -69,7 +77,7 @@ object AgentIssue:
                   priority = created.priority,
                   requiredCapabilities = safeList(created.requiredCapabilities)
                     .flatMap(s => Option(s)).map(_.trim).filter(_.nonEmpty).distinct,
-                  state = IssueState.Open(created.occurredAt),
+                  state = IssueState.Backlog(created.occurredAt),
                   tags = Nil,
                   contextPath = "",
                   sourceFolder = "",
@@ -89,6 +97,46 @@ object AgentIssue:
         current
           .toRight(s"Issue ${started.issueId.value} not initialized before Started event")
           .map(issue => Some(issue.copy(state = IssueState.InProgress(started.agent, started.startedAt))))
+
+      case moved: IssueEvent.MovedToBacklog =>
+        current
+          .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToBacklog event")
+          .map(issue => Some(issue.copy(state = IssueState.Backlog(moved.movedAt))))
+
+      case moved: IssueEvent.MovedToTodo =>
+        current
+          .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToTodo event")
+          .map(issue => Some(issue.copy(state = IssueState.Todo(moved.movedAt))))
+
+      case moved: IssueEvent.MovedToHumanReview =>
+        current
+          .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToHumanReview event")
+          .map(issue => Some(issue.copy(state = IssueState.HumanReview(moved.movedAt))))
+
+      case moved: IssueEvent.MovedToRework =>
+        current
+          .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToRework event")
+          .map(issue => Some(issue.copy(state = IssueState.Rework(moved.movedAt, moved.reason))))
+
+      case moved: IssueEvent.MovedToMerging =>
+        current
+          .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToMerging event")
+          .map(issue => Some(issue.copy(state = IssueState.Merging(moved.movedAt))))
+
+      case done: IssueEvent.MarkedDone =>
+        current
+          .toRight(s"Issue ${done.issueId.value} not initialized before MarkedDone event")
+          .map(issue => Some(issue.copy(state = IssueState.Done(done.doneAt, done.result))))
+
+      case canceled: IssueEvent.Canceled =>
+        current
+          .toRight(s"Issue ${canceled.issueId.value} not initialized before Canceled event")
+          .map(issue => Some(issue.copy(state = IssueState.Canceled(canceled.canceledAt, canceled.reason))))
+
+      case duplicated: IssueEvent.Duplicated =>
+        current
+          .toRight(s"Issue ${duplicated.issueId.value} not initialized before Duplicated event")
+          .map(issue => Some(issue.copy(state = IssueState.Duplicated(duplicated.duplicatedAt, duplicated.reason))))
 
       case completed: IssueEvent.Completed =>
         current
@@ -125,7 +173,7 @@ object AgentIssue:
       case reopened: IssueEvent.Reopened =>
         current
           .toRight(s"Issue ${reopened.issueId.value} not initialized before Reopened event")
-          .map(issue => Some(issue.copy(state = IssueState.Open(reopened.reopenedAt))))
+          .map(issue => Some(issue.copy(state = IssueState.Backlog(reopened.reopenedAt))))
 
       case updated: IssueEvent.MetadataUpdated =>
         current

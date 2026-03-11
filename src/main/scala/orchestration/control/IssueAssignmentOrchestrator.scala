@@ -79,6 +79,16 @@ final private case class IssueAssignmentOrchestratorLive(
                      )
                    )
                    .mapError(mapRepoError)
+      _       <- issueRepository
+                   .append(
+                     IssueEvent.Started(
+                       issueId = IssueId(issueId),
+                       agent = AgentId(agentName),
+                       startedAt = now,
+                       occurredAt = now,
+                     )
+                   )
+                   .mapError(mapRepoError)
       convId  <- ensureIssueConversation(issueId, issue)
       _       <- queue.offer(AssignmentTask(issueId, agentName, convId))
       _       <- activityHub.publish(
@@ -234,14 +244,23 @@ final private case class IssueAssignmentOrchestratorLive(
   private def domainToView(i: issues.entity.AgentIssue): AgentIssueView =
     import issues.entity.IssueState
     val (status, assignedAgent, assignedAt, completedAt, errorMessage) = i.state match
-      case IssueState.Open(_)                 => (IssueStatus.Open, None, None, None, None)
-      case IssueState.Assigned(agent, at)     => (IssueStatus.Assigned, Some(agent.value), Some(at), None, None)
+      case IssueState.Backlog(_)              => (IssueStatus.Backlog, None, None, None, None)
+      case IssueState.Todo(at)                => (IssueStatus.Todo, None, Some(at), None, None)
+      case IssueState.Open(_)                 => (IssueStatus.Backlog, None, None, None, None)
+      case IssueState.Assigned(agent, at)     => (IssueStatus.Todo, Some(agent.value), Some(at), None, None)
       case IssueState.InProgress(agent, at)   => (IssueStatus.InProgress, Some(agent.value), Some(at), None, None)
-      case IssueState.Completed(agent, at, _) => (IssueStatus.Completed, Some(agent.value), None, Some(at), None)
-      case IssueState.Failed(agent, at, msg)  => (IssueStatus.Failed, Some(agent.value), None, Some(at), Some(msg))
-      case IssueState.Skipped(at, _)          => (IssueStatus.Skipped, None, None, Some(at), None)
+      case IssueState.HumanReview(at)         => (IssueStatus.HumanReview, None, None, Some(at), None)
+      case IssueState.Rework(at, msg)         => (IssueStatus.Rework, None, None, Some(at), Some(msg))
+      case IssueState.Merging(at)             => (IssueStatus.Merging, None, None, Some(at), None)
+      case IssueState.Done(at, _)             => (IssueStatus.Done, None, None, Some(at), None)
+      case IssueState.Canceled(at, msg)       => (IssueStatus.Canceled, None, None, Some(at), Some(msg))
+      case IssueState.Duplicated(at, msg)     => (IssueStatus.Duplicated, None, None, Some(at), Some(msg))
+      case IssueState.Completed(_, at, _)     => (IssueStatus.Done, None, None, Some(at), None)
+      case IssueState.Failed(_, at, msg)      => (IssueStatus.Rework, None, None, Some(at), Some(msg))
+      case IssueState.Skipped(at, _)          => (IssueStatus.Canceled, None, None, Some(at), None)
     val priority                                                       = IssuePriority.values.find(_.toString.equalsIgnoreCase(i.priority)).getOrElse(IssuePriority.Medium)
     val createdAt                                                      = i.state match
+      case IssueState.Backlog(at) => at
       case IssueState.Open(at) => at
       case _                   => java.time.Instant.EPOCH
     AgentIssueView(

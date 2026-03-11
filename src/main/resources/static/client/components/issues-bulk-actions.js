@@ -73,7 +73,7 @@ async function runBulkAction(scope, action) {
       }
       result = await callJson('/api/issues/bulk/assign', 'POST', { issueIds: ids, workspaceId, agentId });
     } else if (action === 'status') {
-      const status = document.querySelector(`[data-bulk-status="${scope}"]`)?.value || 'Open';
+      const status = document.querySelector(`[data-bulk-status="${scope}"]`)?.value || 'Backlog';
       result = await callJson('/api/issues/bulk/status', 'POST', { issueIds: ids, status });
     } else if (action === 'tags') {
       const addTags = parseCsv(document.querySelector(`[data-bulk-add-tags="${scope}"]`)?.value || '');

@@ -37,6 +37,58 @@ object IssueEvent:
     occurredAt: Instant,
   ) extends IssueEvent
 
+  final case class MovedToBacklog(
+    issueId: IssueId,
+    movedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MovedToTodo(
+    issueId: IssueId,
+    movedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MovedToHumanReview(
+    issueId: IssueId,
+    movedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MovedToRework(
+    issueId: IssueId,
+    movedAt: Instant,
+    reason: String,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MovedToMerging(
+    issueId: IssueId,
+    movedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MarkedDone(
+    issueId: IssueId,
+    doneAt: Instant,
+    result: String,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class Canceled(
+    issueId: IssueId,
+    canceledAt: Instant,
+    reason: String,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class Duplicated(
+    issueId: IssueId,
+    duplicatedAt: Instant,
+    reason: String,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
   final case class Completed(
     issueId: IssueId,
     agent: AgentId,
