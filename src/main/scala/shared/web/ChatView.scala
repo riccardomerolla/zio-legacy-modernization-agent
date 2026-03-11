@@ -128,7 +128,7 @@ object ChatView:
       s"/chat/$conversationId",
       chatWorkspaceNav = Some(buildWorkspaceNav(workspaceFolders, Some(conversationId), showNewChat = true)),
     )(
-      div(cls := "chat-detail-shell relative flex flex-col min-h-[calc(100vh-8rem)] gap-4 rounded-2xl bg-slate-950/60 p-3 sm:p-4")(
+      div(cls := "chat-detail-shell relative flex flex-col gap-2 overflow-hidden")(
         div(cls := "mb-1 flex items-center gap-2")(
           tag("ab-icon-button")(
             attr("icon")    := "M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18",
@@ -282,6 +282,8 @@ object ChatView:
         )
       ),
       if detailContext.graphReports.nonEmpty then graphPanelScript(conversationId) else frag(),
+      runSessionMeta.fold[Frag](frag())(meta => gitPanelHtml(meta, conversationId)),
+      runSessionMeta.fold[Frag](frag())(_ => gitPanelActivateScript(conversationId)),
     )
 
   private def buildWorkspaceNav(
@@ -755,6 +757,92 @@ object ChatView:
       ),
     )
 
+  private def gitPanelHtml(meta: RunSessionUiMeta, conversationId: String): Frag =
+    val basePath = s"/api/workspaces/${meta.workspaceId}/runs/${meta.runId}/git"
+    div(
+      id                           := s"git-panel-$conversationId",
+      attr("data-role")            := "git-panel",
+      attr("data-workspace-id")    := meta.workspaceId,
+      attr("data-run-id")          := meta.runId,
+      attr("data-conversation-id") := conversationId,
+      attr("data-run-status")      := runModeLabel(meta.status),
+      attr("data-status-endpoint") := s"$basePath/status",
+      attr("data-diff-endpoint")   := s"$basePath/diff",
+      attr("data-log-endpoint")    := s"$basePath/log",
+      attr("data-branch-endpoint") := s"$basePath/branch",
+      attr("data-apply-endpoint")  := s"/api/workspaces/${meta.workspaceId}/runs/${meta.runId}/apply",
+      attr("data-topic")           := s"runs:${meta.runId}:git",
+      style                        := "display:none",
+    )(
+      div(cls := "space-y-3 p-1")(
+        p(cls := "text-xs text-gray-400", attr("data-role") := "summary")("Loading changes..."),
+        div(cls := "space-y-1", attr("data-role") := "files-groups")(),
+        div(
+          cls               := "hidden rounded-lg border border-white/10 bg-black/20 p-3",
+          attr("data-role") := "diff-viewer",
+        )(
+          div(cls := "mb-2 flex items-center justify-between gap-2")(
+            h4(
+              cls               := "text-xs font-semibold text-gray-200 font-mono truncate",
+              attr("data-role") := "diff-title",
+            )("Diff"),
+            button(
+              `type`          := "button",
+              cls             := "flex-shrink-0 rounded bg-white/10 px-2 py-1 text-[11px] text-gray-200 hover:bg-white/20",
+              attr("onclick") := """this.closest('[data-role="diff-viewer"]').classList.add('hidden')""",
+            )("Close"),
+          ),
+          pre(
+            cls               := "git-diff-lines text-xs overflow-auto rounded bg-black/40 p-2 max-h-[20rem]",
+            attr("data-role") := "diff-content",
+          )(),
+        ),
+      ),
+      div(cls := "border-t border-white/10 mx-1 my-2")(),
+      div(cls := "p-1 space-y-2")(
+        div(cls := "text-xs text-gray-300", attr("data-role") := "branch-current")("Loading branch..."),
+        div(cls := "text-xs text-gray-400", attr("data-role") := "ahead-behind")(),
+        div(
+          button(
+            `type`            := "button",
+            cls               := "mt-1 rounded-full bg-emerald-600/90 hover:bg-emerald-500 px-3 py-1 text-[11px] font-semibold text-white",
+            attr("data-role") := "apply-button",
+          )("Apply to repo")
+        ),
+        div(cls := "text-xs text-rose-300", attr("data-role") := "apply-feedback")(),
+      ),
+      div(cls := "border-t border-white/10 mx-1 my-2")(),
+      div(cls := "p-1 space-y-1")(
+        h4(cls := "text-xs font-semibold text-gray-300 mb-1")("Commits"),
+        div(cls := "space-y-1.5", attr("data-role") := "commit-log")(
+          p(cls := "text-xs text-gray-400")("Loading commits..."),
+        ),
+      ),
+    )
+
+  private def gitPanelActivateScript(conversationId: String): Frag =
+    script(
+      raw(
+        s"""(function(){
+           |  var gp = document.getElementById('git-panel-$conversationId');
+           |  if (!gp) return;
+           |  window.__gitPanelEl = gp;
+           |  window.addEventListener('ab-panel-open', function(e) {
+           |    var d = (e && e.detail) || {};
+           |    if (d.title !== 'Git Changes') return;
+           |    requestAnimationFrame(function() {
+           |      var c = document.getElementById('panel-context-panel-content');
+           |      if (c && window.__gitPanelEl) {
+           |        window.__gitPanelEl.style.display = '';
+           |        c.replaceChildren(window.__gitPanelEl);
+           |      }
+           |    });
+           |  });
+           |})();
+           |""".stripMargin
+      )
+    )
+
   private def gitPanelStyles: Frag =
     tag("style")(
       raw("""
@@ -781,6 +869,14 @@ object ChatView:
       }
       .git-diff-line .code {
         color: #e5e7eb;
+      }
+      .git-diff-meta,
+      .git-diff-hunk {
+        grid-template-columns: 1fr;
+      }
+      .git-diff-meta .line-no,
+      .git-diff-hunk .line-no {
+        display: none;
       }
       .git-diff-meta {
         background: rgba(71, 85, 105, 0.25);
@@ -819,7 +915,22 @@ object ChatView:
       """)
     )
 
-  private def chatDetailStyles: Frag = frag()
+  private def chatDetailStyles: Frag =
+    tag("style")(
+      raw("""
+      /* Chat shell fills exactly the available below-header space so the two
+         columns (conversation + side panel) can scroll independently. */
+      .chat-detail-shell {
+        height: calc(100vh - 2rem);   /* desktop: only main.py-4 to offset  */
+        padding-top: 0.125rem;
+      }
+      @media (max-width: 1023px) {
+        .chat-detail-shell {
+          height: calc(100vh - 5.5rem); /* mobile: py-4 main + ~3.5rem topbar */
+        }
+      }
+      """)
+    )
 
   private def statusDot(status: String): Frag =
     val (dotColor, label) = status.toLowerCase match

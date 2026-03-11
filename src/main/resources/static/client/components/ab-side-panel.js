@@ -69,12 +69,13 @@ class AbSidePanel extends LitElement {
         pointerEvents: this.open ? 'auto' : 'none',
       });
     } else {
-      // Desktop: in-flow docked column, animated via width
+      // Desktop: in-flow docked column, animates via width, stretches to row height
       Object.assign(this.style, {
         position:      'relative',
         right:         '',
         top:           '',
         height:        '',
+        alignSelf:     'stretch',
         width:         this.open ? resolvedWidth : '0',
         overflow:      'hidden',
         flexShrink:    '0',
@@ -194,7 +195,7 @@ class AbSidePanel extends LitElement {
     const showClose = true;
 
     return html`
-      <div class="panel-wrapper flex flex-col h-full bg-slate-950/92 border-l border-white/10 shadow-2xl shadow-black/40 backdrop-blur-xl">
+      <div class="panel-wrapper flex flex-col h-full border-l border-white/[0.08]">
 
         <!-- Header -->
         <div class="panel-header flex items-center justify-between px-4 py-3 border-b border-white/10 flex-shrink-0">
