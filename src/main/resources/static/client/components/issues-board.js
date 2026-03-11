@@ -9,12 +9,16 @@ class IssuesBoard {
     this.placeholder = null;    // dashed drop-target shown in hovered column
     this.sourceColumn = null;   // column where drag started
     this.ws = null;
+    this._refreshInFlight = false;
+    this._refreshPending = false;
+    this._pointerDragging = false;
 
     this.bindDragDrop();
     this.bindPointerDrag();
     this.bindCollapse();
     this.bindQuickAdd();
     this.bindQuickDispatch();
+    this.bindRefreshGuards();
     this.connectWs();
   }
 
@@ -51,6 +55,7 @@ class IssuesBoard {
       this.dragIssueId = null;
       this.sourceColumn = null;
       this.clearHighlights();
+      this._flushPendingRefresh();
     });
 
     this._bindColumnListeners();
@@ -178,6 +183,12 @@ class IssuesBoard {
       if (event.key === 'Escape') this._closeQuickAdd(input.dataset.quickAddTitle);
     });
 
+    this.root.addEventListener('focusout', (event) => {
+      const input = event.target.closest('[data-quick-add-title]');
+      if (!input) return;
+      requestAnimationFrame(() => this._flushPendingRefresh());
+    });
+
     // Outside-click dismissal on document
     this._quickAddOutsideHandler = (event) => {
       if (!event.target.closest('[data-quick-add-form]') && !event.target.closest('[data-quick-add-toggle]')) {
@@ -186,6 +197,7 @@ class IssuesBoard {
           const titleInput = form.querySelector('[data-quick-add-title]');
           if (titleInput) titleInput.value = '';
         });
+        this._flushPendingRefresh();
       }
     };
     document.addEventListener('click', this._quickAddOutsideHandler);
@@ -237,6 +249,7 @@ class IssuesBoard {
     form.classList.add('hidden');
     const titleInput = form.querySelector('[data-quick-add-title]');
     if (titleInput) titleInput.value = '';
+    this._flushPendingRefresh();
   }
 
   async _submitQuickAdd(statusToken) {
@@ -272,6 +285,27 @@ class IssuesBoard {
     }
 
     this.refreshBoard();
+  }
+
+  bindRefreshGuards() {
+    if (this._refreshGuardsBound) return;
+    this._refreshGuardsBound = true;
+
+    this.root.addEventListener('htmx:beforeRequest', (event) => {
+      const requestTarget = event?.detail?.target;
+      if (requestTarget !== this.root) return;
+      if (!this._shouldDeferRefresh()) return;
+      event.preventDefault();
+      this._refreshPending = true;
+    });
+
+    this.root.addEventListener('htmx:beforeSwap', (event) => {
+      const requestTarget = event?.detail?.target;
+      if (requestTarget !== this.root) return;
+      if (!this._shouldDeferRefresh()) return;
+      event.preventDefault();
+      this._refreshPending = true;
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -397,6 +431,7 @@ class IssuesBoard {
 
       if (!dragging) {
         dragging = true;
+        this._pointerDragging = true;
         this.dragIssueId = pointerCard.dataset.issueId || null;
         this.dragCard = pointerCard;
         this.sourceColumn = pointerCard.closest('[data-drop-status]');
@@ -443,6 +478,7 @@ class IssuesBoard {
       const issueId = this.dragIssueId || '';
 
       dragging = false;
+      this._pointerDragging = false;
       pointerCard = null;
       this.dragIssueId = null;
       this.dragCard = null;
@@ -451,6 +487,8 @@ class IssuesBoard {
       if (status && issueId) {
         await this.patchIssueStatus(issueId, status);
         this.refreshBoard(issueId);
+      } else {
+        this._flushPendingRefresh();
       }
     };
 
@@ -516,7 +554,51 @@ class IssuesBoard {
     }
   }
 
+  _shouldDeferRefresh() {
+    if (this.dragIssueId || this.dragCard || this.sourceColumn || this.placeholder || this._pointerDragging) {
+      return true;
+    }
+
+    const activeElement = document.activeElement;
+    if (activeElement && activeElement.closest && activeElement.closest('[data-quick-add-form]')) {
+      return true;
+    }
+
+    const openForms = this.root.querySelectorAll('[data-quick-add-form]:not(.hidden)');
+    for (const form of openForms) {
+      const titleInput = form.querySelector('[data-quick-add-title]');
+      if (titleInput?.value?.trim()) return true;
+    }
+
+    return false;
+  }
+
+  _flushPendingRefresh() {
+    if (!this._refreshPending) return;
+    if (this._refreshInFlight) return;
+    if (this._shouldDeferRefresh()) return;
+    this._refreshPending = false;
+    this.refreshBoard();
+  }
+
   refreshBoard(landedIssueId = null) {
+    if (this._refreshInFlight) {
+      this._refreshPending = true;
+      return;
+    }
+
+    if (this._shouldDeferRefresh()) {
+      this._refreshPending = true;
+      return;
+    }
+
+    this._refreshInFlight = true;
+
+    const onSettled = () => {
+      this._refreshInFlight = false;
+      this._flushPendingRefresh();
+    };
+
     if (window.htmx?.ajax) {
       window.htmx.ajax('GET', this.fragmentUrl, {
         target: this.root,
@@ -527,7 +609,7 @@ class IssuesBoard {
         this.bindQuickAdd();
         this.bindQuickDispatch();
         this._flashLandedCard(landedIssueId);
-      });
+      }).catch(() => {}).finally(onSettled);
       return;
     }
 
@@ -542,7 +624,8 @@ class IssuesBoard {
         this.bindQuickDispatch();
         this._flashLandedCard(landedIssueId);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(onSettled);
   }
 
   // ---------------------------------------------------------------------------
