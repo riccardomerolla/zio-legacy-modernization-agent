@@ -30,14 +30,22 @@ class IssuesBoard {
   // ---------------------------------------------------------------------------
 
   bindDragDrop() {
+    if (this._dragDropBound) {
+      this._bindColumnListeners();
+      return;
+    }
+    this._dragDropBound = true;
+
     this.root.addEventListener('dragstart', (event) => {
       const card = event.target.closest('[data-issue-id]');
       if (!card) return;
 
+      this._cleanupGhostArtifacts();
       this.dragCard = card;
       this.dragIssueId = card.dataset.issueId || null;
       this.sourceColumn = card.closest('[data-drop-status]');
       this.dragFromStatus = this._issueCardStatus(card) || this._normalizeStatusToken(this.sourceColumn?.dataset?.dropStatus);
+      card.dataset.dragging = 'true';
 
       event.dataTransfer?.setData('text/plain', this.dragIssueId || '');
       event.dataTransfer.effectAllowed = 'move';
@@ -53,8 +61,11 @@ class IssuesBoard {
     this.root.addEventListener('dragend', (event) => {
       const card = event.target.closest('[data-issue-id]');
       card?.classList.remove('opacity-40', '-translate-y-0.5', 'shadow-xl');
-      this._removePlaceholder();
-      this._removeSourceGhost();
+      if (card) delete card.dataset.dragging;
+      this.root.querySelectorAll('[data-issue-id][data-dragging="true"]').forEach((el) => {
+        delete el.dataset.dragging;
+      });
+      this._cleanupGhostArtifacts();
       this.dragCard = null;
       this.dragIssueId = null;
       this.sourceColumn = null;
@@ -67,51 +78,65 @@ class IssuesBoard {
   }
 
   _bindColumnListeners() {
-    this.root.querySelectorAll('[data-drop-status]').forEach((column) => {
-      column.addEventListener('dragover', (event) => {
-        if (!this.dragIssueId) return;
-        const targetStatus = this._normalizeStatusToken(column.dataset.dropStatus);
-        const allowed = this._canDropTo(targetStatus);
-        if (allowed) {
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'move';
-          this._highlightColumn(column, true);
-          this._movePlaceholderTo(column);
-        } else {
-          event.dataTransfer.dropEffect = 'none';
-          this._highlightColumn(column, false);
-          if (this._placeholderColumn() === column) this._removePlaceholder();
-        }
-      });
+    this._bindDelegatedDragListeners();
+  }
 
-      column.addEventListener('dragleave', (event) => {
-        // Only clear if leaving the column entirely (not entering a child)
-        if (!column.contains(event.relatedTarget)) {
-          this._unhighlightColumn(column);
-          if (this._placeholderColumn() === column) {
-            this._removePlaceholder();
-          }
-        }
-      });
+  _bindDelegatedDragListeners() {
+    if (this._delegatedDragDropBound) return;
+    this._delegatedDragDropBound = true;
 
-      column.addEventListener('drop', async (event) => {
+    this.root.addEventListener('dragover', (event) => {
+      const column = this._eventColumn(event);
+      if (!column) return;
+
+      this._ensureDragContext(event);
+      if (!this.dragIssueId) return;
+
+      const targetStatus = this._normalizeStatusToken(column.dataset.dropStatus);
+      const allowed = this._canDropTo(targetStatus);
+      if (allowed) {
         event.preventDefault();
-        this._unhighlightColumn(column);
-        this._removePlaceholder();
+        event.dataTransfer.dropEffect = 'move';
+        this._highlightColumn(column, true);
+        this._movePlaceholderTo(column);
+      } else {
+        event.dataTransfer.dropEffect = 'none';
+        this._highlightColumn(column, false);
+        if (this._placeholderColumn() === column) this._removePlaceholder();
+      }
+    });
 
-        const status = this._normalizeStatusToken(column.dataset.dropStatus || '');
-        const issueId = this.dragIssueId || event.dataTransfer?.getData('text/plain') || '';
-        if (!status || !issueId || !this._canDropTo(status, issueId)) return;
+    this.root.addEventListener('dragleave', (event) => {
+      const column = this._eventColumn(event);
+      if (!column) return;
+      const related = event.relatedTarget;
+      if (related && column.contains(related)) return;
+      this._unhighlightColumn(column);
+      if (this._placeholderColumn() === column) this._removePlaceholder();
+    });
 
-        const moved = await this.patchIssueStatus(issueId, status);
-        if (moved) this.refreshBoard(issueId);
-        else this._flushPendingRefresh();
-      });
+    this.root.addEventListener('drop', async (event) => {
+      const column = this._eventColumn(event);
+      if (!column) return;
+
+      event.preventDefault();
+      this._unhighlightColumn(column);
+      this._removePlaceholder();
+      this._ensureDragContext(event);
+
+      const status = this._normalizeStatusToken(column.dataset.dropStatus || '');
+      const issueId = this.dragIssueId || event.dataTransfer?.getData('text/plain') || '';
+      if (!status || !issueId || !this._canDropTo(status, issueId)) return;
+
+      const moved = await this.patchIssueStatus(issueId, status);
+      if (moved) this.refreshBoard(issueId);
+      else this._flushPendingRefresh();
     });
   }
 
   // Insert a ghost (dashed placeholder) where the card was in the source column
   _insertSourceGhost(card) {
+    this._removeSourceGhost();
     this.ghost = document.createElement('div');
     this.ghost.className = 'rounded-lg border border-dashed border-white/20 bg-white/5 h-[4.5rem] pointer-events-none';
     this.ghost.dataset.boardGhost = 'source';
@@ -142,6 +167,40 @@ class IssuesBoard {
 
   _placeholderColumn() {
     return this.placeholder?.closest('[data-drop-status]') || null;
+  }
+
+  _cleanupGhostArtifacts() {
+    this._removePlaceholder();
+    this._removeSourceGhost();
+    this.root.querySelectorAll('[data-board-ghost]').forEach((el) => el.remove());
+  }
+
+  _eventColumn(event) {
+    const fromTarget = event?.target?.closest?.('[data-drop-status]');
+    if (fromTarget) return fromTarget;
+    const path = event?.composedPath?.() || [];
+    for (const node of path) {
+      if (node?.matches?.('[data-drop-status]')) return node;
+      if (node?.closest) {
+        const parent = node.closest('[data-drop-status]');
+        if (parent) return parent;
+      }
+    }
+    return null;
+  }
+
+  _ensureDragContext(event = null) {
+    if (this.dragIssueId && this.dragFromStatus) return;
+
+    const nativeIssueId = event?.dataTransfer?.getData('text/plain') || '';
+    const draggingCard = this.root.querySelector('[data-issue-id][data-dragging="true"]');
+    const resolvedCard = this.dragCard || draggingCard;
+    const resolvedIssueId = this.dragIssueId || nativeIssueId || resolvedCard?.dataset?.issueId || null;
+    const resolvedFromStatus = this.dragFromStatus || this._issueCardStatus(resolvedCard);
+
+    if (resolvedCard) this.dragCard = resolvedCard;
+    if (resolvedIssueId) this.dragIssueId = resolvedIssueId;
+    if (resolvedFromStatus) this.dragFromStatus = resolvedFromStatus;
   }
 
   _highlightColumn(column, allowed = true) {
@@ -528,6 +587,9 @@ class IssuesBoard {
   // ---------------------------------------------------------------------------
 
   bindPointerDrag() {
+    if (this._pointerDragBound) return;
+    this._pointerDragBound = true;
+
     let dragging = false;
     let pointerCard = null;
     let clone = null;
@@ -558,10 +620,12 @@ class IssuesBoard {
       if (!dragging) {
         dragging = true;
         this._pointerDragging = true;
+        this._cleanupGhostArtifacts();
         this.dragIssueId = pointerCard.dataset.issueId || null;
         this.dragCard = pointerCard;
         this.sourceColumn = pointerCard.closest('[data-drop-status]');
         this.dragFromStatus = this._issueCardStatus(pointerCard) || this._normalizeStatusToken(this.sourceColumn?.dataset?.dropStatus);
+        pointerCard.dataset.dragging = 'true';
 
         pointerCard.classList.add('opacity-40');
         this._insertSourceGhost(pointerCard);
@@ -598,8 +662,8 @@ class IssuesBoard {
       clone?.remove();
       clone = null;
       pointerCard.classList.remove('opacity-40');
-      this._removePlaceholder();
-      this._removeSourceGhost();
+      delete pointerCard.dataset.dragging;
+      this._cleanupGhostArtifacts();
       this.clearHighlights();
 
       const el = document.elementFromPoint(event.clientX, event.clientY);
