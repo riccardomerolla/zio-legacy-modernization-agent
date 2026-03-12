@@ -15,6 +15,7 @@ class IssuesBoard {
     this._visibleColumns = new Set();
     this._customVisibleColumns = null;
     this.dragFromStatus = null;
+    this._toastHost = null;
 
     this.bindDragDrop();
     this.bindPointerDrag();
@@ -37,6 +38,10 @@ class IssuesBoard {
     this._dragDropBound = true;
 
     this.root.addEventListener('dragstart', (event) => {
+      if (this._isInteractiveTarget(event.target)) {
+        event.preventDefault();
+        return;
+      }
       const card = event.target.closest('[data-issue-id]');
       if (!card) return;
 
@@ -130,7 +135,10 @@ class IssuesBoard {
 
       const moved = await this.patchIssueStatus(issueId, status);
       if (moved) this.refreshBoard(issueId);
-      else this._flushPendingRefresh();
+      else {
+        this._showToast('Could not move issue. Please retry.');
+        this._flushPendingRefresh();
+      }
     });
   }
 
@@ -313,14 +321,18 @@ class IssuesBoard {
 
       const select = this.root.querySelector(`[data-quick-assign-agent="${CSS.escape(issueId)}"]`);
       const agentName = select?.value?.trim() || '';
-      if (!agentName) return;
+      if (!agentName) {
+        this._showToast('Select an agent before assigning.', 'warning');
+        return;
+      }
 
       btn.disabled = true;
       const original = btn.textContent;
       btn.textContent = '...';
       try {
-        await this.quickAssign(issueId, agentName);
-        this.refreshBoard(issueId);
+        const assigned = await this.quickAssign(issueId, agentName);
+        if (assigned) this.refreshBoard(issueId);
+        else this._flushPendingRefresh();
       } finally {
         btn.disabled = false;
         btn.textContent = original || 'Assign';
@@ -598,6 +610,7 @@ class IssuesBoard {
 
     const onPointerDown = (event) => {
       if (event.pointerType === 'mouse') return; // handled by native DnD
+      if (this._isInteractiveTarget(event.target)) return;
       const card = event.target.closest('[data-issue-id]');
       if (!card) return;
 
@@ -682,7 +695,10 @@ class IssuesBoard {
       if (status && issueId && this._canDropTo(status, issueId)) {
         const moved = await this.patchIssueStatus(issueId, status);
         if (moved) this.refreshBoard(issueId);
-        else this._flushPendingRefresh();
+        else {
+          this._showToast('Could not move issue. Please retry.');
+          this._flushPendingRefresh();
+        }
       } else {
         this._flushPendingRefresh();
       }
@@ -718,25 +734,140 @@ class IssuesBoard {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) return false;
+      if (!response.ok) {
+        this._showToast(await this._responseErrorMessage(response, 'Could not update issue status'));
+        return false;
+      }
       if (card) card.dataset.issueStatus = targetStatus;
+
+      // Moving to Todo should trigger auto-assignment based on required capabilities.
+      // Keep this best-effort and non-blocking for board state transitions.
+      const hasAssignedAgent = (card?.dataset?.assignedAgent || '').trim().length > 0;
+      if (targetStatus === 'todo' && !hasAssignedAgent) {
+        const workspaceId = (card?.dataset?.workspaceId || '').trim();
+        const autoAssigned = await this.autoAssignIssue(issueId, workspaceId || null);
+        if (!autoAssigned) {
+          this._showToast('Issue moved to Todo, but auto-assign failed.', 'warning');
+        }
+      }
       return true;
-    } catch (_ignored) {
-      // Best effort; board refresh will keep server as source of truth
+    } catch (_error) {
+      this._showToast('Could not update issue status. Check your connection and retry.');
       return false;
     }
   }
 
   async quickAssign(issueId, agentName) {
     try {
-      await fetch(`/api/issues/${encodeURIComponent(issueId)}/assign`, {
+      const card = this.root.querySelector(`[data-issue-id="${CSS.escape(issueId)}"]`);
+      const workspaceId = (card?.dataset?.workspaceId || '').trim();
+      const body = { agentName };
+      if (workspaceId) body.workspaceId = workspaceId;
+      const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}/assign`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ agentName }),
+        body: JSON.stringify(body),
       });
-    } catch (_ignored) {
-      // Best effort; next board refresh remains source of truth
+      if (!response.ok) {
+        this._showToast(await this._responseErrorMessage(response, 'Could not assign issue'));
+        return false;
+      }
+      if (card) card.dataset.assignedAgent = agentName;
+      return true;
+    } catch (_error) {
+      this._showToast('Could not assign issue. Check your connection and retry.');
+      return false;
     }
+  }
+
+  async autoAssignIssue(issueId, workspaceId = null) {
+    try {
+      const payload = {};
+      if (workspaceId && workspaceId.trim()) payload.workspaceId = workspaceId.trim();
+      const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}/auto-assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        this._showToast(await this._responseErrorMessage(response, 'Could not auto-assign issue'));
+        return false;
+      }
+      return response.ok;
+    } catch (_error) {
+      this._showToast('Could not auto-assign issue. Check your connection and retry.');
+      return false;
+    }
+  }
+
+  _ensureToastHost() {
+    if (this._toastHost && this._toastHost.isConnected) return this._toastHost;
+    this.root.classList.add('relative');
+
+    let host = this.root.querySelector('[data-inline-toast-host]');
+    if (!host) {
+      host = document.createElement('div');
+      host.dataset.inlineToastHost = 'true';
+      host.className = 'pointer-events-none absolute right-3 top-3 z-50 flex max-w-xs flex-col gap-2';
+      this.root.appendChild(host);
+    }
+
+    this._toastHost = host;
+    return host;
+  }
+
+  _showToast(message, type = 'error', timeoutMs = 2600) {
+    const text = String(message || '').trim();
+    if (!text) return;
+
+    const host = this._ensureToastHost();
+    const toast = document.createElement('div');
+    const tone = type === 'warning'
+      ? 'border-amber-300/40 bg-amber-500/20 text-amber-100'
+      : type === 'success'
+        ? 'border-emerald-300/40 bg-emerald-500/20 text-emerald-100'
+        : 'border-rose-300/40 bg-rose-500/20 text-rose-100';
+
+    toast.className = `pointer-events-auto rounded-md border px-3 py-2 text-xs shadow-lg backdrop-blur transition-all duration-200 opacity-0 -translate-y-1 ${tone}`;
+    toast.textContent = text;
+    host.appendChild(toast);
+
+    requestAnimationFrame(() => {
+      toast.classList.remove('opacity-0', '-translate-y-1');
+    });
+
+    const removeToast = () => {
+      toast.classList.add('opacity-0', '-translate-y-1');
+      window.setTimeout(() => toast.remove(), 200);
+    };
+    window.setTimeout(removeToast, timeoutMs);
+  }
+
+  async _responseErrorMessage(response, fallback) {
+    try {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const payload = await response.json();
+        const message = payload?.message || payload?.error || payload?.detail || payload?.cause;
+        if (message) return `${fallback}: ${String(message).trim()}`;
+      } else {
+        const text = (await response.text()).trim();
+        if (text) return `${fallback}: ${text.slice(0, 140)}`;
+      }
+    } catch (_ignored) {
+      // fallback below
+    }
+    return fallback;
+  }
+
+  _isInteractiveTarget(target) {
+    const el = target instanceof Element ? target : null;
+    if (!el) return false;
+    return Boolean(
+      el.closest(
+        'button,select,input,textarea,a,label,[data-quick-assign-action],[data-quick-assign-agent],[data-quick-add-toggle],[data-quick-add-submit],[data-quick-add-cancel]',
+      ),
+    );
   }
 
   toIssueStatus(statusToken) {

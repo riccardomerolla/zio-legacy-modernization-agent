@@ -731,6 +731,12 @@ final case class IssueControllerLive(
           _             <- ensureTransitionAllowed(issue.state, updateRequest.status, issueId.value)
           event         <- statusToEvent(issueId, updateRequest, fallbackAgent, now)
           _             <- issueRepository.append(event).mapError(mapIssueRepoError)
+          _             <- maybeStartWorkspaceRunOnInProgress(
+                             issue = issue,
+                             requestedStatus = updateRequest.status,
+                             requestedAgentName = updateRequest.agentName,
+                             fallbackAgent = fallbackAgent,
+                           )
           _             <- activityHub.publish(
                              ActivityEvent(
                                id = EventId.generate,
@@ -1619,6 +1625,38 @@ final case class IssueControllerLive(
       case IssueState.Completed(agent, _, _) => Some(agent.value)
       case IssueState.Failed(agent, _, _)    => Some(agent.value)
       case _                                 => None
+
+  private def maybeStartWorkspaceRunOnInProgress(
+    issue: DomainIssue,
+    requestedStatus: IssueStatus,
+    requestedAgentName: Option[String],
+    fallbackAgent: String,
+  ): IO[PersistenceError, Unit] =
+    if canonicalBoardStatus(requestedStatus) != IssueStatus.InProgress then ZIO.unit
+    else
+      issue.workspaceId.map(_.trim).filter(_.nonEmpty) match
+        case None              => ZIO.unit
+        case Some(workspaceId) =>
+          val resolvedAgent =
+            requestedAgentName
+              .map(_.trim)
+              .filter(_.nonEmpty)
+              .orElse(assignedAgentFromState(issue.state))
+              .orElse(Option(fallbackAgent).map(_.trim).filter(v => v.nonEmpty && !v.equalsIgnoreCase("board")))
+          resolvedAgent match
+            case None            => ZIO.unit
+            case Some(agentName) =>
+              workspaceRunService
+                .assign(
+                  workspaceId,
+                  AssignRunRequest(
+                    issueRef = s"#${issue.id.value}",
+                    prompt = issue.description,
+                    agentName = agentName,
+                  ),
+                )
+                .mapError(err => PersistenceError.QueryFailed("workspace_assign", err.toString))
+                .unit
 
   private def executeParallelPipeline(
     issueId: String,

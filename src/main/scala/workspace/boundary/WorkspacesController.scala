@@ -569,15 +569,9 @@ object WorkspacesController:
                            )
                          )
                        }
-        branch      <- runGit(repoPath, List("rev-parse", "--abbrev-ref", "HEAD"))
-        _           <- ZIO.when(branch._1 != 0) {
-                         val detail = branch._2.trim
-                         val msg    =
-                           if detail.nonEmpty then s"Unable to determine target branch: $detail"
-                           else "Unable to determine target branch."
-                         ZIO.fail(fail(Status.InternalServerError, msg))
-                       }
-        target       = branch._2.trim
+        target      <- resolveTargetBranch(repoPath).mapError(detail =>
+                         fail(Status.InternalServerError, s"Unable to determine target branch: $detail")
+                       )
         _           <- ZIO.when(target.isEmpty) {
                          ZIO.fail(fail(Status.InternalServerError, "Repository HEAD resolved to an empty branch name."))
                        }
@@ -590,18 +584,12 @@ object WorkspacesController:
                          )
                        }
         merge       <- runGit(repoPath, List("merge", "--no-ff", "--no-edit", sourceBranch))
-        _           <-
-          if merge._1 == 0 then ZIO.unit
-          else
-            runGit(repoPath, List("merge", "--abort")).ignore *>
-              ZIO.fail(
-                fail(
-                  Status.Conflict,
-                  s"Merge failed while applying '$sourceBranch' into '$target'. Resolve conflicts manually.",
-                  Some(merge._2),
-                  Some(target),
-                )
-              )
+        merged       = merge._1 == 0
+        _           <- ZIO.when(!merged) {
+                         // If histories diverge or conflicts arise, fall back to direct file sync from the run worktree.
+                         // This keeps "Apply to repo" usable without requiring manual conflict resolution for generated branches.
+                         runGit(repoPath, List("merge", "--abort")).ignore
+                       }
         trackedWt   <- runGit(worktreePath, List("diff", "--name-only"))
         stagedWt    <- runGit(worktreePath, List("diff", "--cached", "--name-only"))
         untrackedWt <- runGit(worktreePath, List("ls-files", "--others", "--exclude-standard"))
@@ -643,16 +631,44 @@ object WorkspacesController:
                            RunApplyResponse(
                              applied = true,
                              message =
-                               s"Applied '$sourceBranch' into '$target' and synced ${syncResult._1} file(s), deleted ${syncResult._2}.",
-                             sourceBranch = sourceBranch,
-                             targetBranch = Some(target),
-                             output = Some(merge._2).filter(_.trim.nonEmpty),
-                           ).toJson
+                               if merged then
+                                 s"Applied '$sourceBranch' into '$target' and synced ${syncResult._1} file(s), deleted ${syncResult._2}."
+                               else
+                                 s"Merge into '$target' was skipped; applied '$sourceBranch' changes via file sync and synced ${syncResult._1} file(s), deleted ${syncResult._2}.",
+                              sourceBranch = sourceBranch,
+                              targetBranch = Some(target),
+                              output = Some(merge._2).filter(_.trim.nonEmpty),
+                            ).toJson
                          )
                        )
       yield response
 
     program.catchAll(ZIO.succeed)
+
+  private def resolveTargetBranch(repoPath: String): IO[String, String] =
+    for
+      revParse <- runGit(repoPath, List("rev-parse", "--abbrev-ref", "HEAD")).mapError(_.toString)
+      branch   <- if revParse._1 == 0 then ZIO.succeed(revParse._2.trim)
+                  else
+                    // Handles repositories with unborn HEAD (no commits yet).
+                    runGit(repoPath, List("symbolic-ref", "--quiet", "--short", "HEAD"))
+                      .mapError(_.toString)
+                      .flatMap {
+                        case (0, out) => ZIO.succeed(out.trim)
+                        case (_, out) =>
+                          val revDetail = revParse._2.trim
+                          val symDetail = out.trim
+                          val detail =
+                            List(
+                              Option.when(revDetail.nonEmpty)(s"rev-parse: $revDetail"),
+                              Option.when(symDetail.nonEmpty)(s"symbolic-ref: $symDetail"),
+                            ).flatten.mkString(" | ")
+                          ZIO.fail(if detail.nonEmpty then detail else "git could not resolve HEAD branch")
+                      }
+      valid    <-
+        if branch.nonEmpty then ZIO.succeed(branch)
+        else ZIO.fail("git returned an empty branch name")
+    yield valid
 
   private def parseGitPaths(raw: String): List[String] =
     raw.linesIterator.map(_.trim).filter(_.nonEmpty).toList
