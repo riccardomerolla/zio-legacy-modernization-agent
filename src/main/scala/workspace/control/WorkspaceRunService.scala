@@ -10,7 +10,7 @@ import activity.entity.{ ActivityEvent, ActivityEventType }
 import agent.entity.AgentRepository
 import conversation.entity.api.{ ChatConversation, ConversationEntry, MessageType, SenderType }
 import db.ChatRepository
-import issues.entity.{ AgentIssue as DomainIssue, IssueRepository }
+import issues.entity.{ AgentIssue as DomainIssue, IssueEvent, IssueRepository }
 import shared.ids.Ids.{ EventId, IssueId, TaskRunId }
 import workspace.entity.*
 
@@ -488,6 +488,9 @@ final case class WorkspaceRunServiceLive(
                .appendRun(WorkspaceRunEvent.StatusChanged(runId, status, now))
                .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
       _   <- publishRunLifecycle(runId, status)
+      _   <- syncIssueLifecycle(runId, status).catchAll(err =>
+               ZIO.logWarning(s"[run:$runId] failed to sync issue lifecycle for status $status: $err")
+             )
     yield ()
 
   private def executeInFiber(
@@ -578,6 +581,57 @@ final case class WorkspaceRunServiceLive(
         )
       )
     }
+
+  private def syncIssueLifecycle(runId: String, status: RunStatus): IO[WorkspaceError, Unit] =
+    status match
+      case RunStatus.Completed | RunStatus.Failed | RunStatus.Cancelled =>
+        for
+          runOpt <- wsRepo
+                      .getRun(runId)
+                      .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+          _      <- runOpt match
+                      case Some(run) =>
+                        issueIdFromIssueRef(run.issueRef) match
+                          case Some(issueId) => appendIssueLifecycleEvent(issueId, runId, status)
+                          case None          => ZIO.unit
+                      case None      => ZIO.unit
+        yield ()
+      case _                                                       =>
+        ZIO.unit
+
+  private def issueIdFromIssueRef(issueRef: String): Option[IssueId] =
+    Option(issueRef)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(_.stripPrefix("#"))
+      .filter(_.nonEmpty)
+      .map(IssueId.apply)
+
+  private def appendIssueLifecycleEvent(
+    issueId: IssueId,
+    runId: String,
+    status: RunStatus,
+  ): IO[WorkspaceError, Unit] =
+    for
+      now <- Clock.instant
+      ev   = status match
+               case RunStatus.Completed =>
+                 IssueEvent.MovedToHumanReview(issueId = issueId, movedAt = now, occurredAt = now)
+               case RunStatus.Failed    =>
+                 IssueEvent.MovedToRework(
+                   issueId = issueId,
+                   movedAt = now,
+                   reason = s"Workspace run $runId failed",
+                   occurredAt = now,
+                 )
+               case RunStatus.Cancelled =>
+                 IssueEvent.MovedToTodo(issueId = issueId, movedAt = now, occurredAt = now)
+               case _                   =>
+                 IssueEvent.MovedToTodo(issueId = issueId, movedAt = now, occurredAt = now)
+      _   <- issueRepo
+               .append(ev)
+               .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+    yield ()
 
   private def maybeCleanupWorktree(run: WorkspaceRun, status: RunStatus): IO[WorkspaceError, Unit] =
     status match

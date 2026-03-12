@@ -8,7 +8,7 @@ import zio.test.*
 import agent.entity.Agent
 import conversation.entity.api.{ ChatConversation, ConversationEntry }
 import db.{ ChatRepository, PersistenceError as DbPersistenceError }
-import issues.entity.{ IssueFilter, IssueRepository }
+import issues.entity.{ IssueEvent, IssueFilter, IssueRepository }
 import shared.errors.PersistenceError
 import shared.ids.Ids.IssueId
 import workspace.entity.*
@@ -35,6 +35,18 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
     def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] = ZIO.succeed(Nil)
     def delete(id: IssueId): IO[PersistenceError, Unit]                                 = ZIO.unit
+
+  private final class RecordingIssueRepo(eventsRef: Ref[List[IssueEvent]]) extends IssueRepository:
+    def append(event: IssueEvent): IO[PersistenceError, Unit] =
+      eventsRef.update(_ :+ event)
+
+    def get(id: IssueId): IO[PersistenceError, issues.entity.AgentIssue] =
+      ZIO.fail(PersistenceError.NotFound("issue", id.value))
+
+    def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] =
+      ZIO.succeed(Nil)
+
+    def delete(id: IssueId): IO[PersistenceError, Unit] = ZIO.unit
 
   // In-memory event-sourced stub WorkspaceRepository
   private class StubWorkspaceRepo(
@@ -219,6 +231,29 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         )
     yield (svc, wsRepo, messages)
 
+  private def makeServiceWithIssueEvents(
+    runCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int]
+  ) =
+    for
+      messages    <- Ref.make(List.empty[String])
+      issueEvents <- Ref.make(List.empty[IssueEvent])
+      wsMap       <- Ref.make(Map(sampleWs.id -> sampleWs))
+      runMap      <- Ref.make(Map.empty[String, WorkspaceRun])
+      registry    <- Ref.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+      chatRepo     = StubChatRepo(messages)
+      wsRepo       = StubWorkspaceRepo(wsMap, runMap)
+      issueRepo    = new RecordingIssueRepo(issueEvents)
+      svc          = WorkspaceRunServiceLive(
+                       wsRepo,
+                       chatRepo,
+                       issueRepo,
+                       worktreeAdd = noopWorktreeAdd,
+                       worktreeRemove = noopWorktreeRemove,
+                       runCliAgent = runCliAgent,
+                       fiberRegistry = registry,
+                     )
+    yield (svc, issueEvents)
+
   def spec: Spec[TestEnvironment & Scope, Any] = suite("WorkspaceRunServiceSpec")(
     test("assign returns a WorkspaceRun with correct workspace and issue ref") {
       for
@@ -340,6 +375,53 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         case Left(WorkspaceError.NotFound("no-such-run")) => true
         case _                                            => false)
     },
+    test("completed workspace run moves issue to HumanReview") {
+      val successCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+        (_, _, _, _) => ZIO.succeed(0)
+      for
+        (svc, issueEvents) <- makeServiceWithIssueEvents(successCliAgent)
+        _                  <- svc.assign("ws-1", AssignRunRequest(issueRef = "#sync-complete", prompt = "ok", agentName = "echo"))
+        _                  <- ZIO.sleep(250.millis)
+        events             <- issueEvents.get
+      yield assertTrue(
+        events.exists {
+          case IssueEvent.MovedToHumanReview(issueId, _, _) => issueId.value == "sync-complete"
+          case _                                            => false
+        }
+      )
+    } @@ TestAspect.withLiveClock,
+    test("failed workspace run moves issue to Rework") {
+      val failingCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+        (_, _, _, _) => ZIO.succeed(2)
+      for
+        (svc, issueEvents) <- makeServiceWithIssueEvents(failingCliAgent)
+        _                  <- svc.assign("ws-1", AssignRunRequest(issueRef = "#sync-fail", prompt = "fail", agentName = "echo"))
+        _                  <- ZIO.sleep(250.millis)
+        events             <- issueEvents.get
+      yield assertTrue(
+        events.exists {
+          case IssueEvent.MovedToRework(issueId, _, _, _) => issueId.value == "sync-fail"
+          case _                                          => false
+        }
+      )
+    } @@ TestAspect.withLiveClock,
+    test("cancelled workspace run moves issue back to Todo") {
+      val neverCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+        (_, _, _, _) => ZIO.never.as(0)
+      for
+        (svc, issueEvents) <- makeServiceWithIssueEvents(neverCliAgent)
+        run                <- svc.assign("ws-1", AssignRunRequest(issueRef = "#sync-cancel", prompt = "hang", agentName = "echo"))
+        _                  <- ZIO.sleep(120.millis)
+        _                  <- svc.cancelRun(run.id)
+        _                  <- ZIO.sleep(120.millis)
+        events             <- issueEvents.get
+      yield assertTrue(
+        events.exists {
+          case IssueEvent.MovedToTodo(issueId, _, _) => issueId.value == "sync-cancel"
+          case _                                     => false
+        }
+      )
+    } @@ TestAspect.withLiveClock,
     test("continueRun creates a child run reusing parent worktree and branch") {
       val instantCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
         (_, _, _, _) => ZIO.succeed(0)
