@@ -32,27 +32,47 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
       assertTrue(argv == List("sh", "-lc", "echo hi"))
     },
     test("buildArgv for gemini returns correct args (includes --yolo and --include-directories)") {
-      val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt")
+      val argv = CliAgentRunner.buildArgvForHost("gemini", "fix the bug", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("gemini", "--yolo", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
     },
+    test("buildArgvForHost wraps gemini with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("gemini", "fix the bug", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "gemini", "--yolo", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
+    },
+    test("buildArgvForHost wraps claude with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("claude", "fix the bug", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "claude", "--print", "fix the bug"))
+    },
+    test("buildArgvForHost wraps opencode with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("opencode", "fix the bug", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "opencode", "run", "--prompt", "fix the bug"))
+    },
+    test("buildArgvForHost wraps codex with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("codex", "fix the bug", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "codex", "fix the bug"))
+    },
+    test("buildArgvForHost wraps copilot (gh) with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildArgvForHost("copilot", "fix the bug", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "gh", "copilot", "suggest", "-t", "shell", "fix the bug"))
+    },
     test("buildArgv for gemini ignores explicit repoPath and uses worktree for --include-directories") {
-      val argv = CliAgentRunner.buildArgv("gemini", "fix the bug", "/tmp/wt", RunMode.Host, "/repo/src")
+      val argv = CliAgentRunner.buildArgvForHost("gemini", "fix the bug", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("gemini", "--yolo", "--include-directories", "/tmp/wt", "-p", "fix the bug"))
     },
     test("buildArgv for opencode returns correct args") {
-      val argv = CliAgentRunner.buildArgv("opencode", "fix the bug", "/tmp/wt")
+      val argv = CliAgentRunner.buildArgvForHost("opencode", "fix the bug", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("opencode", "run", "--prompt", "fix the bug"))
     },
     test("buildArgv for claude returns correct args") {
-      val argv = CliAgentRunner.buildArgv("claude", "fix the bug", "/tmp/wt")
+      val argv = CliAgentRunner.buildArgvForHost("claude", "fix the bug", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("claude", "--print", "fix the bug"))
     },
     test("buildArgv for codex returns correct args") {
-      val argv = CliAgentRunner.buildArgv("codex", "fix the bug", "/tmp/wt")
+      val argv = CliAgentRunner.buildArgvForHost("codex", "fix the bug", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("codex", "fix the bug"))
     },
     test("buildArgv for copilot returns correct args") {
-      val argv = CliAgentRunner.buildArgv("copilot", "fix the bug", "/tmp/wt")
+      val argv = CliAgentRunner.buildArgvForHost("copilot", "fix the bug", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("gh", "copilot", "suggest", "-t", "shell", "fix the bug"))
     },
     test("buildArgv for custom tool falls through to [tool, prompt]") {
@@ -120,8 +140,24 @@ object CliAgentRunnerSpec extends ZIOSpecDefault:
       assertTrue(!argv.contains("-v") && !argv.contains("--workdir"))
     },
     test("buildInteractiveArgv for gemini includes --yolo and --include-directories") {
-      val argv = CliAgentRunner.buildInteractiveArgv("gemini", "/tmp/wt")
+      val argv = CliAgentRunner.buildInteractiveArgvForHost("gemini", "/tmp/wt", isWindowsHost = false)
       assertTrue(argv == List("gemini", "--yolo", "--include-directories", "/tmp/wt"))
+    },
+    test("buildInteractiveArgvForHost wraps gemini with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildInteractiveArgvForHost("gemini", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "gemini", "--yolo", "--include-directories", "/tmp/wt"))
+    },
+    test("buildInteractiveArgvForHost wraps claude with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildInteractiveArgvForHost("claude", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "claude"))
+    },
+    test("buildInteractiveArgvForHost wraps opencode with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildInteractiveArgvForHost("opencode", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "opencode", "run"))
+    },
+    test("buildInteractiveArgvForHost wraps codex with cmd /c on Windows") {
+      val argv = CliAgentRunner.buildInteractiveArgvForHost("codex", "/tmp/wt", isWindowsHost = true)
+      assertTrue(argv == List("cmd", "/c", "codex"))
     },
     test("buildArgv with RunMode.Docker includes env and resource flags") {
       val argv = CliAgentRunner.buildArgv(
