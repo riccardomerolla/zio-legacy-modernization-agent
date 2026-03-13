@@ -38,6 +38,7 @@ case class AgentIssueView(
   completedAt: Option[Instant] = None,
   errorMessage: Option[String] = None,
   resultData: Option[String] = None,
+  mergeConflictFiles: List[String] = Nil,
   createdAt: Instant,
   updatedAt: Instant,
 ) derives JsonCodec
@@ -190,6 +191,20 @@ final case class AnalysisContextDocView(
   content: String,
   filePath: String,
   vscodeUrl: Option[String] = None,
+)
+
+final case class MergeHistoryEntryView(
+  eventType: String,
+  happenedAt: Instant,
+  sourceBranch: Option[String] = None,
+  targetBranch: Option[String] = None,
+  commitSha: Option[String] = None,
+  ciPassed: Option[Boolean] = None,
+  details: Option[String] = None,
+  conflictFiles: List[String] = Nil,
+  filesChanged: Option[Int] = None,
+  insertions: Option[Int] = None,
+  deletions: Option[Int] = None,
 )
 
 case class PipelineStep(

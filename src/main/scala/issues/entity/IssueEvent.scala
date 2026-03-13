@@ -67,6 +67,21 @@ object IssueEvent:
     occurredAt: Instant,
   ) extends IssueEvent
 
+  final case class Approved(
+    issueId: IssueId,
+    approvedBy: String,
+    approvedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MergeAttempted(
+    issueId: IssueId,
+    sourceBranch: String,
+    targetBranch: String,
+    attemptedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
   final case class MovedToRework(
     issueId: IssueId,
     movedAt: Instant,
@@ -77,6 +92,31 @@ object IssueEvent:
   final case class MovedToMerging(
     issueId: IssueId,
     movedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MergeSucceeded(
+    issueId: IssueId,
+    commitSha: String,
+    mergedAt: Instant,
+    @fieldDefaultValue(0) filesChanged: Int = 0,
+    @fieldDefaultValue(0) insertions: Int = 0,
+    @fieldDefaultValue(0) deletions: Int = 0,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MergeFailed(
+    issueId: IssueId,
+    @fieldDefaultValue(Nil) conflictFiles: List[String] = Nil,
+    failedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class CiVerificationResult(
+    issueId: IssueId,
+    passed: Boolean,
+    details: String,
+    checkedAt: Instant,
     occurredAt: Instant,
   ) extends IssueEvent
 
@@ -157,6 +197,13 @@ object IssueEvent:
     issueId: IssueId,
     @fieldDefaultValue(Nil) analysisDocIds: List[AnalysisDocId] = Nil,
     attachedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
+  final case class MergeConflictRecorded(
+    issueId: IssueId,
+    @fieldDefaultValue(Nil) conflictingFiles: List[String] = Nil,
+    detectedAt: Instant,
     occurredAt: Instant,
   ) extends IssueEvent
 

@@ -91,3 +91,11 @@ object WorkspaceRunEvent:
     prompt: String,
     occurredAt: Instant,
   ) extends WorkspaceRunEvent
+
+  final case class CleanupRecorded(
+    runId: String,
+    worktreeRemoved: Boolean,
+    branchDeleted: Boolean,
+    details: String,
+    occurredAt: Instant,
+  ) extends WorkspaceRunEvent

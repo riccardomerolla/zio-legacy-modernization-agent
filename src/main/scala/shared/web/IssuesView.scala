@@ -6,7 +6,7 @@ import zio.json.*
 
 import config.entity.AgentInfo
 import issues.entity.IssueWorkReport
-import issues.entity.api.{ AgentIssueView, AnalysisContextDocView, DispatchStatusResponse, IssueStatus, IssueTemplate }
+import issues.entity.api.*
 import scalatags.Text.all.*
 import shared.ids.Ids.IssueId
 import workspace.entity.{ RunSessionMode, RunStatus, WorkspaceRun }
@@ -455,7 +455,7 @@ object IssuesView:
     workspaces: List[(String, String)],
     workReport: Option[IssueWorkReport],
   ): String =
-    detailPage(issue, issueRuns, availableAgents, Nil, workspaces, workReport)
+    detailPage(issue, issueRuns, availableAgents, Nil, Nil, workspaces, workReport)
 
   def newForm(defaultRunId: Option[String], workspaces: List[(String, String)], templates: List[IssueTemplate])
     : String =
@@ -607,15 +607,17 @@ object IssuesView:
     issueRuns: List[WorkspaceRun],
     availableAgents: List[AgentInfo],
     analysisDocs: List[AnalysisContextDocView],
+    mergeHistory: List[MergeHistoryEntryView],
     workspaces: List[(String, String)],
   ): String =
-    detailPage(issue, issueRuns, availableAgents, analysisDocs, workspaces, workReport = None)
+    detailPage(issue, issueRuns, availableAgents, analysisDocs, mergeHistory, workspaces, workReport = None)
 
   private def detailPage(
     issue: AgentIssueView,
     issueRuns: List[WorkspaceRun],
     availableAgents: List[AgentInfo],
     analysisDocs: List[AnalysisContextDocView],
+    mergeHistory: List[MergeHistoryEntryView],
     workspaces: List[(String, String)],
     workReport: Option[IssueWorkReport],
   ): String =
@@ -631,6 +633,7 @@ object IssuesView:
     val sidebarConvId = if convId.nonEmpty then convId else sortedRuns.headOption.map(_.conversationId).getOrElse("")
     val isRunning     = issue.status == IssueStatus.InProgress
     val statusToken   = issueStatusToken(issue.status)
+    val conflictFiles = issue.mergeConflictFiles.filter(_.trim.nonEmpty).distinct
 
     Layout.page(s"Issue #$issueIdStr", "/issues")(
       div(cls := "mt-2 mx-auto max-w-6xl space-y-4")(
@@ -650,6 +653,10 @@ object IssuesView:
               href := "#issue-analysis-context",
               cls  := "border-b-2 border-transparent py-3 px-1 text-sm font-medium text-gray-400 hover:text-white hover:border-white/30 whitespace-nowrap",
             )("Analysis Context"),
+            a(
+              href := "#issue-merge-history",
+              cls  := "border-b-2 border-transparent py-3 px-1 text-sm font-medium text-gray-400 hover:text-white hover:border-white/30 whitespace-nowrap",
+            )("Merge History"),
           )
         ),
         // ── main two-column layout ───────────────────────────────────────
@@ -672,7 +679,18 @@ object IssuesView:
                   href := s"/issues/$issueIdStr/edit",
                   cls  := "shrink-0 rounded-md border border-white/20 px-3 py-1.5 text-sm font-medium text-slate-300 hover:border-white/30 hover:text-white",
                 )("Edit"),
-              )
+              ),
+              if issue.status == IssueStatus.HumanReview then
+                div(cls := "mt-4")(
+                  form(method := "post", action := s"/issues/$issueIdStr/approve")(
+                    input(`type` := "hidden", name := "approvedBy", value := "detail"),
+                    button(
+                      `type` := "submit",
+                      cls    := "rounded-md border border-purple-300/40 bg-purple-500/20 px-3 py-2 text-sm font-semibold text-purple-100 hover:bg-purple-500/30",
+                    )("Approve"),
+                  )
+                )
+              else (),
             ),
             // task description
             div(cls := "rounded-xl border border-white/10 bg-slate-900/70 p-6")(
@@ -681,6 +699,51 @@ object IssuesView:
                 markdownFragment(safeStr(issue.description))
               ),
             ),
+            if conflictFiles.nonEmpty then
+              div(id := "merge-conflict", cls := "rounded-xl border border-rose-400/30 bg-rose-500/10 p-6")(
+                div(cls := "flex flex-wrap items-start justify-between gap-3")(
+                  div(
+                    h2(cls := "text-base font-semibold text-white")("Merge Conflict"),
+                    p(cls := "mt-1 text-sm text-rose-100")(
+                      "This issue hit a merge conflict and was moved to Rework. Resolve the listed files, then retry the merge."
+                    ),
+                  ),
+                  form(method := "post", action := s"/issues/$issueIdStr/status")(
+                    input(`type` := "hidden", name := "status", value := "merging"),
+                    button(
+                      `type` := "submit",
+                      cls    := "rounded-md border border-rose-300/40 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-500/30",
+                    )("Retry Merge"),
+                  ),
+                ),
+                div(cls := "mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem]")(
+                  div(
+                    p(
+                      cls := "mb-2 text-xs font-semibold uppercase tracking-wide text-rose-100/80"
+                    )("Conflicting files"),
+                    ul(cls := "space-y-2 text-sm text-rose-50")(
+                      conflictFiles.map(file =>
+                        li(cls := "rounded-md border border-white/10 bg-slate-950/30 px-3 py-2 font-mono text-xs")(file)
+                      )
+                    ),
+                  ),
+                  div(
+                    a(
+                      href := "#merge-conflict-manual",
+                      cls  := "inline-flex text-sm font-medium text-rose-100 underline decoration-rose-300/60 underline-offset-4 hover:text-white",
+                    )("Resolve Manually"),
+                    div(
+                      id  := "merge-conflict-manual",
+                      cls := "mt-2 rounded-lg border border-white/10 bg-slate-950/30 p-3 text-xs leading-6 text-rose-50",
+                    )(
+                      p("1. Open the workspace and resolve the listed files."),
+                      p("2. Stage the fixes and verify the workspace builds/tests."),
+                      p("3. Use Retry Merge to move the issue back to Merging."),
+                    ),
+                  ),
+                ),
+              )
+            else (),
             // proof-of-work (when available)
             workReport
               .map(r => ProofOfWorkView.panel(r, collapsed = false))
@@ -746,6 +809,15 @@ object IssuesView:
                       ),
                     )
                   }
+                ),
+            ),
+            div(id := "issue-merge-history", cls := "rounded-xl border border-white/10 bg-slate-900/60 p-6")(
+              h2(cls := "mb-3 text-base font-semibold text-white")("Merge History"),
+              if mergeHistory.isEmpty then
+                p(cls := "text-sm text-slate-400")("No merge attempts recorded.")
+              else
+                div(cls := "space-y-3")(
+                  mergeHistory.map(renderMergeHistoryEntry)
                 ),
             ),
           ),
@@ -948,6 +1020,55 @@ object IssuesView:
         JsResources.inlineModuleScript("/static/client/components/issue-pipeline.js"),
         JsResources.inlineModuleScript("/static/client/components/issue-assignment-suggestions.js"),
       )
+    )
+
+  private def renderMergeHistoryEntry(entry: MergeHistoryEntryView): Frag =
+    val badgeCls = entry.eventType match
+      case "attempted" => "border-slate-400/30 bg-slate-500/15 text-slate-100"
+      case "succeeded" => "border-emerald-400/30 bg-emerald-500/15 text-emerald-100"
+      case "failed"    => "border-rose-400/30 bg-rose-500/15 text-rose-100"
+      case "ci"        =>
+        if entry.ciPassed.contains(true) then
+          "border-blue-400/30 bg-blue-500/15 text-blue-100"
+        else "border-orange-400/30 bg-orange-500/15 text-orange-100"
+      case _           => "border-white/10 bg-white/5 text-slate-100"
+    val label    = entry.eventType match
+      case "attempted" => "Merge Attempted"
+      case "succeeded" => "Merge Succeeded"
+      case "failed"    => "Merge Failed"
+      case "ci"        => if entry.ciPassed.contains(true) then "CI Passed" else "CI Failed"
+      case other       => other
+    div(cls := "rounded-lg border border-white/10 bg-slate-800/70 p-4")(
+      div(cls := "flex flex-wrap items-center justify-between gap-2")(
+        span(cls := s"rounded-full border px-2 py-0.5 text-xs font-semibold $badgeCls")(label),
+        span(cls := "text-xs text-slate-400")(prettyRelativeTime(entry.happenedAt)),
+      ),
+      div(cls := "mt-2 space-y-2 text-sm text-slate-200")(
+        entry.sourceBranch.zip(entry.targetBranch).headOption.map {
+          case (source, target) =>
+            p(span(cls := "text-slate-400")("Branches: "), code(source), " -> ", code(target))
+        }.getOrElse(()),
+        entry.commitSha.map(sha =>
+          p(span(cls := "text-slate-400")("Commit: "), code(sha.take(12)))
+        ).getOrElse(()),
+        entry.filesChanged.map { files =>
+          p(
+            span(cls := "text-slate-400")("Diff: "),
+            s"$files files changed, +${entry.insertions.getOrElse(0)} / -${entry.deletions.getOrElse(0)}",
+          )
+        }.getOrElse(()),
+        entry.details.filter(_.nonEmpty).map(details =>
+          p(span(cls := "text-slate-400")("Details: "), details)
+        ).getOrElse(()),
+        if entry.conflictFiles.nonEmpty then
+          div(
+            p(cls := "text-slate-400")("Conflict files"),
+            ul(cls := "mt-1 space-y-1 text-xs text-rose-100")(
+              entry.conflictFiles.map(file => li(code(file)))
+            ),
+          )
+        else (),
+      ),
     )
 
   private def filterBar(
@@ -1173,6 +1294,7 @@ object IssuesView:
   private def issueRow(issue: AgentIssueView): Frag =
     val issueIdStr = safe(issue.id, "-")
     val workspace  = safe(issue.workspaceId)
+    val conflict   = issue.mergeConflictFiles.filter(_.trim.nonEmpty).distinct
     div(id := s"issue-row-$issueIdStr", cls := "border-b border-white/10 px-4 py-4 last:border-b-0 group")(
       div(cls := "flex items-start gap-3")(
         input(
@@ -1191,6 +1313,7 @@ object IssuesView:
             )(safeStr(issue.title, "Untitled")),
             statusBadge(safeStr(issue.status.toString, "open")),
             priorityBadge(safeStr(issue.priority.toString, "medium")),
+            if conflict.nonEmpty then mergeConflictBadge(conflict.size) else (),
             if safe(issue.externalRef).nonEmpty then externalBadge(safe(issue.externalRef), safe(issue.externalUrl))
             else (),
             if workspace.nonEmpty then workspaceBadge(workspace) else (),
@@ -1285,6 +1408,7 @@ object IssuesView:
     val todoDispatch  = dispatchStatus.filter(_ => issue.status == IssueStatus.Todo)
     val externalRef   = safe(issue.externalRef)
     val externalUrl   = safe(issue.externalUrl)
+    val conflictFiles = issue.mergeConflictFiles.filter(_.trim.nonEmpty).distinct
     div(
       cls                         := s"block rounded-lg border border-white/10 bg-slate-800/80 p-3 hover:border-indigo-400/40 hover:bg-slate-800 $borderCls",
       attr("draggable")           := "true",
@@ -1302,6 +1426,7 @@ object IssuesView:
           span(cls := s"inline-block h-2.5 w-2.5 flex-shrink-0 $statusDotCls"),
           span(cls := "text-[10px] font-mono text-slate-500")(shortId),
           todoDispatch.map(dispatchStatusBadge),
+          if conflictFiles.nonEmpty then mergeConflictBadge(conflictFiles.size) else (),
           if externalRef.nonEmpty then
             externalBadge(externalRef, externalUrl)
           else (),
@@ -1348,6 +1473,17 @@ object IssuesView:
         )
       else (),
       if powHtml.nonEmpty then raw(powHtml) else (),
+      if issue.status == IssueStatus.HumanReview then
+        div(cls := "mt-2")(
+          form(method := "post", action := s"/issues/$issueId/approve")(
+            input(`type` := "hidden", name := "approvedBy", value := "board"),
+            button(
+              `type` := "submit",
+              cls    := "w-full rounded border border-purple-400/30 bg-purple-500/20 px-2 py-1.5 text-[11px] font-semibold text-purple-100 hover:bg-purple-500/30",
+            )("Approve"),
+          )
+        )
+      else (),
     )
 
   private def dispatchStatusBadge(status: DispatchStatusResponse): Frag =
@@ -1614,6 +1750,17 @@ object IssuesView:
       cls := "rounded-full border border-cyan-400/30 bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200"
     )(
       s"workspace:$workspace"
+    )
+
+  private def mergeConflictBadge(conflictCount: Int): Frag =
+    span(
+      cls   := "inline-flex items-center gap-1 rounded-full border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[10px] font-semibold text-rose-100",
+      title := s"Merge conflict affecting $conflictCount file(s)",
+    )(
+      raw(
+        """<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2.5 18 17.5H2L10 2.5Zm0 4.5a.75.75 0 0 0-.75.75v3.5a.75.75 0 0 0 1.5 0v-3.5A.75.75 0 0 0 10 7Zm0 7.25a.875.875 0 1 0 0 1.75.875.875 0 0 0 0-1.75Z"/></svg>"""
+      ),
+      "Conflict",
     )
 
   private def tagBadge(tag: String): Frag =

@@ -17,6 +17,12 @@ trait GitService:
   def branchInfo(repoPath: String): IO[GitError, GitBranchInfo]
   def showFile(repoPath: String, filePath: String, ref: String = "HEAD"): IO[GitError, String]
   def aheadBehind(repoPath: String, baseBranch: String): IO[GitError, AheadBehind]
+  def checkout(repoPath: String, branch: String): IO[GitError, Unit]
+  def mergeNoFastForward(repoPath: String, branch: String, message: String): IO[GitError, Unit]
+  def mergeAbort(repoPath: String): IO[GitError, Unit]
+  def conflictedFiles(repoPath: String): IO[GitError, List[String]]
+  def headSha(repoPath: String): IO[GitError, String]
+  def showDiffStat(repoPath: String, ref: String = "HEAD"): IO[GitError, GitDiffStat]
 
 object GitService:
   val live: ULayer[GitService] = ZLayer.succeed(GitServiceLive())
@@ -44,6 +50,24 @@ object GitService:
 
   def aheadBehind(repoPath: String, baseBranch: String): ZIO[GitService, GitError, AheadBehind] =
     ZIO.serviceWithZIO[GitService](_.aheadBehind(repoPath, baseBranch))
+
+  def checkout(repoPath: String, branch: String): ZIO[GitService, GitError, Unit] =
+    ZIO.serviceWithZIO[GitService](_.checkout(repoPath, branch))
+
+  def mergeNoFastForward(repoPath: String, branch: String, message: String): ZIO[GitService, GitError, Unit] =
+    ZIO.serviceWithZIO[GitService](_.mergeNoFastForward(repoPath, branch, message))
+
+  def mergeAbort(repoPath: String): ZIO[GitService, GitError, Unit] =
+    ZIO.serviceWithZIO[GitService](_.mergeAbort(repoPath))
+
+  def conflictedFiles(repoPath: String): ZIO[GitService, GitError, List[String]] =
+    ZIO.serviceWithZIO[GitService](_.conflictedFiles(repoPath))
+
+  def headSha(repoPath: String): ZIO[GitService, GitError, String] =
+    ZIO.serviceWithZIO[GitService](_.headSha(repoPath))
+
+  def showDiffStat(repoPath: String, ref: String = "HEAD"): ZIO[GitService, GitError, GitDiffStat] =
+    ZIO.serviceWithZIO[GitService](_.showDiffStat(repoPath, ref))
 
 object GitParsers:
   private val LogSeparator = "\\u001f"
@@ -246,6 +270,39 @@ final case class GitServiceLive() extends GitService:
           runGit(repoPath, "rev-list", "--left-right", "--count", s"$ref...HEAD")
             .flatMap(raw => ZIO.fromEither(GitParsers.parseAheadBehind(raw)))
       }
+
+  override def checkout(repoPath: String, branch: String): IO[GitError, Unit] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "checkout", branch.trim).unit
+
+  override def mergeNoFastForward(repoPath: String, branch: String, message: String): IO[GitError, Unit] =
+    ensureRepo(repoPath) *>
+      runGit(
+        repoPath,
+        "merge",
+        "--no-ff",
+        "-m",
+        message.trim,
+        branch.trim,
+      ).unit
+
+  override def mergeAbort(repoPath: String): IO[GitError, Unit] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "merge", "--abort").unit
+
+  override def conflictedFiles(repoPath: String): IO[GitError, List[String]] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "diff", "--name-only", "--diff-filter=U")
+        .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList.distinct)
+
+  override def headSha(repoPath: String): IO[GitError, String] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "rev-parse", "HEAD").map(_.trim)
+
+  override def showDiffStat(repoPath: String, ref: String = "HEAD"): IO[GitError, GitDiffStat] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "show", "--numstat", "--format=", ref)
+        .flatMap(raw => ZIO.fromEither(GitParsers.parseDiffNumStat(raw)))
 
   /** Returns the first resolvable ref from the candidates, or None if none exist in this repo/worktree. */
   private def resolveRef(repoPath: String, branch: String): IO[GitError, Option[String]] =

@@ -154,6 +154,7 @@ final case class IssueControllerLive(
           issueRuns      <- workspaceRepository.listRunsByIssueRef(s"#$id").mapError(mapIssueRepoError)
           allAgents      <- agentRepository.list().mapError(mapIssueRepoError)
           analysisDocs   <- loadIssueAnalysisContext(issue).mapError(mapIssueRepoError)
+          mergeHistory   <- loadMergeHistory(issue.id)
           availableAgents = allAgents.filter(_.enabled).map(registryAgentToAgentInfo)
         yield html(
           HtmlViews.issueDetail(
@@ -161,6 +162,7 @@ final case class IssueControllerLive(
             issueRuns,
             availableAgents,
             analysisDocs,
+            mergeHistory,
             workspaces.map(ws => ws.id -> ws.name),
           )
         )
@@ -256,6 +258,28 @@ final case class IssueControllerLive(
           _            <- ensureTransitionAllowed(issue.state, status, issueId.value)
           events       <- statusToEvents(issue, IssueStatusUpdateRequest(status = status), agentFallback, now)
           _            <- ZIO.foreachDiscard(events)(issueRepository.append(_).mapError(mapIssueRepoError))
+          _            <- publishBoardStatusActivity(issue, status, agentFallback, now)
+        yield Response(status = Status.SeeOther, headers = Headers(Header.Custom("Location", s"/issues/$id")))
+      }
+    },
+    Method.POST / "issues" / string("id") / "approve"                -> handler { (id: String, req: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        for
+          form      <- parseForm(req)
+          issueId    = IssueId(id)
+          issue     <- issueRepository.get(issueId).mapError(mapIssueRepoError)
+          now       <- Clock.instant
+          approvedBy = form.get("approvedBy").map(_.trim).filter(_.nonEmpty).getOrElse("human")
+          _         <- ensureHumanReviewApprovalAllowed(issue)
+          autoMerge <- loadAutoMergePolicy
+          events     = approvalEvents(issue, approvedBy, autoMerge, now)
+          _         <- ZIO.foreachDiscard(events)(issueRepository.append(_).mapError(mapIssueRepoError))
+          _         <- publishBoardStatusActivity(
+                         issue,
+                         if autoMerge then IssueStatus.Merging else IssueStatus.Done,
+                         fallbackAgent = "human",
+                         now = now,
+                       )
         yield Response(status = Status.SeeOther, headers = Headers(Header.Custom("Location", s"/issues/$id")))
       }
     },
@@ -753,17 +777,7 @@ final case class IssueControllerLive(
                              requestedAgentName = updateRequest.agentName,
                              fallbackAgent = fallbackAgent,
                            )
-          _             <- activityHub.publish(
-                             ActivityEvent(
-                               id = EventId.generate,
-                               eventType = ActivityEventType.RunStateChanged,
-                               source = "issues-board",
-                               runId = issue.runId.map(r => TaskRunId(r.value)),
-                               agentName = Some(fallbackAgent),
-                               summary = s"Issue #$id moved to ${updateRequest.status.toString}",
-                               createdAt = now,
-                             )
-                           )
+          _             <- publishBoardStatusActivity(issue, updateRequest.status, fallbackAgent, now)
           updated       <- issueRepository.get(issueId).mapError(mapIssueRepoError)
         yield Response.json(domainToView(updated).toJson)
       }
@@ -923,6 +937,7 @@ final case class IssueControllerLive(
       assignedAt = assignedAt,
       completedAt = completedAt,
       errorMessage = errorMessage,
+      mergeConflictFiles = i.mergeConflictFiles,
       createdAt = createdAt,
       updatedAt = assignedAt.orElse(completedAt).getOrElse(createdAt),
     )
@@ -1053,7 +1068,8 @@ final case class IssueControllerLive(
     ),
     IssueStatus.HumanReview ->
       Set(IssueStatus.Rework, IssueStatus.Merging, IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
-    IssueStatus.Rework      -> Set(IssueStatus.InProgress, IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
+    IssueStatus.Rework      ->
+      Set(IssueStatus.InProgress, IssueStatus.Merging, IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
     IssueStatus.Merging     -> Set(IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
     IssueStatus.Done        -> Set.empty,
     IssueStatus.Canceled    -> Set(IssueStatus.Backlog),
@@ -1102,6 +1118,75 @@ final case class IssueControllerLive(
           s"Invalid transition for issue $issueId: ${from.toString} -> ${to.toString}",
         )
       )
+
+  private def ensureHumanReviewApprovalAllowed(issue: DomainIssue): IO[PersistenceError, Unit] =
+    issue.state match
+      case _: IssueState.HumanReview => ZIO.unit
+      case other                     =>
+        ZIO.fail(
+          PersistenceError.QueryFailed(
+            "approve_issue",
+            s"Only HumanReview issues can be approved: ${issue.id.value} is ${other.toString}",
+          )
+        )
+
+  private def approvalEvents(
+    issue: DomainIssue,
+    approvedBy: String,
+    autoMerge: Boolean,
+    now: Instant,
+  ): List[IssueEvent] =
+    val approved   = IssueEvent.Approved(
+      issueId = issue.id,
+      approvedBy = approvedBy,
+      approvedAt = now,
+      occurredAt = now,
+    )
+    val transition =
+      if autoMerge then IssueEvent.MovedToMerging(issue.id, movedAt = now, occurredAt = now)
+      else
+        IssueEvent.MarkedDone(
+          issueId = issue.id,
+          doneAt = now,
+          result = s"Approved by $approvedBy",
+          occurredAt = now,
+        )
+    List(approved, transition)
+
+  private def loadAutoMergePolicy: IO[PersistenceError, Boolean] =
+    configRepository
+      .getSetting("mergePolicy.autoMerge")
+      .mapError(err => PersistenceError.QueryFailed("config_get:mergePolicy.autoMerge", err.toString))
+      .map(_.flatMap(row => Option(row.value).map(_.trim)).filter(_.nonEmpty))
+      .map {
+        case None        => true
+        case Some(value) => parseBooleanConfig(value)
+      }
+
+  private def publishBoardStatusActivity(
+    issue: DomainIssue,
+    status: IssueStatus,
+    fallbackAgent: String,
+    now: Instant,
+  ): UIO[Unit] =
+    activityHub.publish(
+      ActivityEvent(
+        id = EventId.generate,
+        eventType = ActivityEventType.RunStateChanged,
+        source = "issues-board",
+        runId = issue.runId.map(r => TaskRunId(r.value)),
+        agentName = Some(fallbackAgent),
+        summary = s"Issue #${issue.id.value} moved to ${status.toString}",
+        payload =
+          Some(
+            s"""{"issueId":"${issue.id.value}","status":${status.toString.toJson}}"""
+          ),
+        createdAt = now,
+      )
+    )
+
+  private def parseBooleanConfig(value: String): Boolean =
+    value.trim.equalsIgnoreCase("true") || value.trim == "1" || value.trim.equalsIgnoreCase("yes")
 
   private def statusToEvents(
     issue: DomainIssue,
@@ -1923,6 +2008,53 @@ final case class IssueControllerLive(
         )
       )
     )
+
+  private def loadMergeHistory(issueId: IssueId): IO[PersistenceError, List[MergeHistoryEntryView]] =
+    issueRepository
+      .history(issueId)
+      .mapError(mapIssueRepoError)
+      .map { history =>
+        history.sortBy(_.occurredAt).flatMap {
+          case e: IssueEvent.MergeAttempted       =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "attempted",
+                happenedAt = e.attemptedAt,
+                sourceBranch = Some(e.sourceBranch),
+                targetBranch = Some(e.targetBranch),
+              )
+            )
+          case e: IssueEvent.MergeSucceeded       =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "succeeded",
+                happenedAt = e.mergedAt,
+                commitSha = Some(e.commitSha),
+                filesChanged = Some(e.filesChanged),
+                insertions = Some(e.insertions),
+                deletions = Some(e.deletions),
+              )
+            )
+          case e: IssueEvent.MergeFailed          =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "failed",
+                happenedAt = e.failedAt,
+                conflictFiles = e.conflictFiles,
+              )
+            )
+          case e: IssueEvent.CiVerificationResult =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "ci",
+                happenedAt = e.checkedAt,
+                ciPassed = Some(e.passed),
+                details = Option(e.details).map(_.trim).filter(_.nonEmpty),
+              )
+            )
+          case _                                  => None
+        }
+      }
 
   private def previewIssuesFromFolder(request: FolderImportRequest)
     : IO[PersistenceError, List[FolderImportPreviewItem]] =

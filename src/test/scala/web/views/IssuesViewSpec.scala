@@ -122,6 +122,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
           )
         ),
         analysisDocs = Nil,
+        mergeHistory = Nil,
         workspaces = List("ws-1" -> "Main Workspace"),
       )
       assertTrue(
@@ -188,6 +189,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
         issueRuns = Nil,
         availableAgents = Nil,
         analysisDocs = Nil,
+        mergeHistory = Nil,
         workspaces = Nil,
       )
       assertTrue(
@@ -218,6 +220,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
             vscodeUrl = Some("vscode://file/Users/riccardo/repo/.llm4zio/analysis/architecture.md"),
           )
         ),
+        mergeHistory = Nil,
         workspaces = Nil,
       )
       assertTrue(
@@ -226,6 +229,166 @@ object IssuesViewSpec extends ZIOSpecDefault:
         html.contains("vscode://file/Users/riccardo/repo/.llm4zio/analysis/architecture.md"),
         html.contains(".llm4zio/analysis/architecture.md"),
         html.contains("Tight coupling"),
+      )
+    },
+    test("detail renders approve action for HumanReview issues") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.detail(
+        issue = AgentIssueView(
+          id = Some("review-issue"),
+          title = "Approve this",
+          description = "Task",
+          issueType = "task",
+          status = IssueStatus.HumanReview,
+          createdAt = now,
+          updatedAt = now,
+        ),
+        issueRuns = Nil,
+        availableAgents = Nil,
+        analysisDocs = Nil,
+        mergeHistory = Nil,
+        workspaces = Nil,
+      )
+      assertTrue(
+        html.contains("Approve"),
+        html.contains("action=\"/issues/review-issue/approve\""),
+        html.contains("name=\"approvedBy\" value=\"detail\""),
+      )
+    },
+    test("detail renders merge conflict section with retry merge affordance") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.detail(
+        issue = AgentIssueView(
+          id = Some("merge-issue"),
+          title = "Resolve merge",
+          description = "Task",
+          issueType = "task",
+          status = IssueStatus.Rework,
+          mergeConflictFiles = List("src/Main.scala", "README.md"),
+          createdAt = now,
+          updatedAt = now,
+        ),
+        issueRuns = Nil,
+        availableAgents = Nil,
+        analysisDocs = Nil,
+        mergeHistory = Nil,
+        workspaces = Nil,
+      )
+      assertTrue(
+        html.contains("Merge Conflict"),
+        html.contains("src/Main.scala"),
+        html.contains("README.md"),
+        html.contains("Retry Merge"),
+        html.contains("Resolve Manually"),
+        html.contains("name=\"status\" value=\"merging\""),
+      )
+    },
+    test("board renders merge conflict badge on affected issue card") {
+      val now   = Instant.parse("2026-03-02T10:00:00Z")
+      val issue = AgentIssueView(
+        id = Some("merge-10"),
+        title = "Conflict issue",
+        description = "Task",
+        issueType = "task",
+        status = IssueStatus.Rework,
+        mergeConflictFiles = List("src/Main.scala"),
+        createdAt = now,
+        updatedAt = now,
+      )
+      val html  = IssuesView.board(
+        issues = List(issue),
+        workspaces = Nil,
+        workspaceFilter = None,
+        agentFilter = None,
+        priorityFilter = None,
+        tagFilter = None,
+        query = None,
+      )
+      assertTrue(
+        html.contains("Conflict"),
+        html.contains("Merge conflict affecting 1 file(s)"),
+      )
+    },
+    test("detail renders merge history timeline") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.detail(
+        issue = AgentIssueView(
+          id = Some("merge-history-1"),
+          title = "Merged issue",
+          description = "Task",
+          issueType = "task",
+          status = IssueStatus.Done,
+          createdAt = now,
+          updatedAt = now,
+        ),
+        issueRuns = Nil,
+        availableAgents = Nil,
+        analysisDocs = Nil,
+        mergeHistory = List(
+          MergeHistoryEntryView(
+            eventType = "attempted",
+            happenedAt = now.minusSeconds(120),
+            sourceBranch = Some("agent/merge-history-1"),
+            targetBranch = Some("main"),
+          ),
+          MergeHistoryEntryView(
+            eventType = "ci",
+            happenedAt = now.minusSeconds(90),
+            ciPassed = Some(false),
+            details = Some("tests failed"),
+          ),
+          MergeHistoryEntryView(
+            eventType = "failed",
+            happenedAt = now.minusSeconds(60),
+            conflictFiles = List("src/Main.scala"),
+          ),
+          MergeHistoryEntryView(
+            eventType = "succeeded",
+            happenedAt = now.minusSeconds(30),
+            commitSha = Some("1234567890abcdef"),
+            filesChanged = Some(3),
+            insertions = Some(24),
+            deletions = Some(7),
+          ),
+        ),
+        workspaces = Nil,
+      )
+      assertTrue(
+        html.contains("Merge History"),
+        html.contains("Merge Attempted"),
+        html.contains("CI Failed"),
+        html.contains("Merge Failed"),
+        html.contains("Merge Succeeded"),
+        html.contains("agent/merge-history-1"),
+        html.contains("src/Main.scala"),
+        html.contains("1234567890ab"),
+        html.contains("3 files changed, +24 / -7"),
+      )
+    },
+    test("board renders approve action on HumanReview cards") {
+      val now   = Instant.parse("2026-03-02T10:00:00Z")
+      val issue = AgentIssueView(
+        id = Some("review-10"),
+        title = "Needs approval",
+        description = "Task",
+        issueType = "task",
+        status = IssueStatus.HumanReview,
+        createdAt = now,
+        updatedAt = now,
+      )
+      val html  = IssuesView.board(
+        issues = List(issue),
+        workspaces = Nil,
+        workspaceFilter = None,
+        agentFilter = None,
+        priorityFilter = None,
+        tagFilter = None,
+        query = None,
+      )
+      assertTrue(
+        html.contains("Approve"),
+        html.contains("action=\"/issues/review-10/approve\""),
+        html.contains("name=\"approvedBy\" value=\"board\""),
       )
     },
   )
