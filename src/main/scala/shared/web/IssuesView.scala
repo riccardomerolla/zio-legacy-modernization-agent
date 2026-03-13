@@ -639,7 +639,7 @@ object IssuesView:
       div(cls := "mt-2 mx-auto max-w-6xl space-y-4")(
         // ── breadcrumb ──────────────────────────────────────────────────────
         div(cls := "flex items-center gap-3")(
-          a(href := "/issues", cls := "text-sm font-medium text-indigo-300 hover:text-indigo-200")("← Issues"),
+          a(href := "/board", cls := "text-sm font-medium text-indigo-300 hover:text-indigo-200")("← Board"),
           span(cls := "text-slate-600")("/"),
           span(cls := "text-sm text-slate-400")(s"#$issueIdStr"),
         ),
