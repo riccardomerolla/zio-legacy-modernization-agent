@@ -14,7 +14,7 @@ import issues.entity.{ AgentIssue, IssueEvent, IssueFilter, IssueRepository, Iss
 import orchestration.control.{ AutoDispatcherLive, DependencyResolver, SlotHandle }
 import shared.errors.PersistenceError
 import shared.ids.Ids.{ AgentId, ConversationId, IssueId, TaskRunId }
-import workspace.entity.*
+import workspace.entity.{ RunStatus as WorkspaceRunStatus, * }
 
 object WorkspaceRunServiceSpec extends ZIOSpecDefault:
 
@@ -114,7 +114,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
             conversationId = e.conversationId,
             worktreePath = e.worktreePath,
             branchName = e.branchName,
-            status = RunStatus.Pending,
+            status = WorkspaceRunStatus.Pending,
             attachedUsers = Set.empty,
             controllerUserId = None,
             createdAt = e.occurredAt,
@@ -156,7 +156,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
             m.get(e.runId).fold(m)(r =>
               m + (
                 e.runId -> r.copy(
-                  status = RunStatus.Running(RunSessionMode.Paused),
+                  status = WorkspaceRunStatus.Running(RunSessionMode.Paused),
                   attachedUsers = r.attachedUsers + e.userId,
                   controllerUserId = Some(e.userId),
                   updatedAt = e.occurredAt,
@@ -169,7 +169,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
             m.get(e.runId).fold(m)(r =>
               m + (
                 e.runId -> r.copy(
-                  status = RunStatus.Running(RunSessionMode.Interactive),
+                  status = WorkspaceRunStatus.Running(RunSessionMode.Interactive),
                   attachedUsers = r.attachedUsers + e.userId,
                   controllerUserId = Some(e.userId),
                   updatedAt = e.occurredAt,
@@ -368,7 +368,9 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         _                <- ZIO.sleep(500.millis)
         saved            <- wsRepo.getRun(run.id)
       yield assertTrue(saved.exists(r =>
-        r.status == RunStatus.Completed || r.status == RunStatus.Running(RunSessionMode.Autonomous)
+        r.status == WorkspaceRunStatus.Completed || r.status == WorkspaceRunStatus.Running(
+          RunSessionMode.Autonomous
+        )
       ))
     } @@ TestAspect.withLiveClock,
     test("executeInFiber respects timeout and marks run Failed") {
@@ -395,7 +397,11 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         _        <- ZIO.sleep(300.millis)
         runs     <- wsRepo.listRuns("ws-1")
       // Status is either Failed (timeout fired) or Pending (git worktree add failed before fork)
-      yield assertTrue(runs.isEmpty || runs.forall(r => r.status == RunStatus.Failed || r.status == RunStatus.Pending))
+      yield assertTrue(
+        runs.isEmpty || runs.forall(r =>
+          r.status == WorkspaceRunStatus.Failed || r.status == WorkspaceRunStatus.Pending
+        )
+      )
     } @@ TestAspect.withLiveClock,
     test("assign succeeds when workspace has RunMode.Host even when dockerCheck would fail") {
       for
@@ -438,7 +444,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         _        <- svc.cancelRun(run.id)
         _        <- ZIO.sleep(100.millis) // let onExit finalizer persist Cancelled status
         saved    <- wsRepo.getRun(run.id)
-      yield assertTrue(saved.exists(_.status == RunStatus.Cancelled))
+      yield assertTrue(saved.exists(_.status == WorkspaceRunStatus.Cancelled))
     } @@ TestAspect.withLiveClock,
     test("cancelRun on unknown runId fails with NotFound") {
       for

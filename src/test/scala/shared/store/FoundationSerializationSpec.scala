@@ -6,6 +6,7 @@ import java.time.Instant
 import zio.*
 import zio.test.*
 
+import analysis.entity.*
 import conversation.entity.*
 import io.github.riccardomerolla.zio.eclipsestore.error.EclipseStoreError
 import io.github.riccardomerolla.zio.eclipsestore.gigamap.error.GigaMapError
@@ -156,6 +157,38 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
             _           <- data.store("foundation:conversation:event", event)
             loadedEvent <- data.fetch[String, ConversationEvent]("foundation:conversation:event")
           yield assertTrue(loaded.contains(conversation), loadedEvent.contains(event))).provideLayer(layerFor(dir))
+        }
+      },
+      test("analysis ADTs and events round-trip") {
+        withTempDir { dir =>
+          val createdAt            = Instant.parse("2026-02-23T10:15:00Z")
+          val doc                  = AnalysisDoc(
+            id = Ids.AnalysisDocId("analysis-1"),
+            workspaceId = "ws-1",
+            analysisType = AnalysisType.Custom("release-readiness"),
+            content = "Ready for release pending smoke tests.",
+            filePath = ".llm4zio/analysis/release.md",
+            generatedBy = Ids.AgentId("reviewer"),
+            createdAt = createdAt,
+            updatedAt = createdAt,
+          )
+          val event: AnalysisEvent = AnalysisEvent.AnalysisCreated(
+            docId = doc.id,
+            workspaceId = doc.workspaceId,
+            analysisType = doc.analysisType,
+            content = doc.content,
+            filePath = doc.filePath,
+            generatedBy = doc.generatedBy,
+            occurredAt = createdAt,
+          )
+
+          (for
+            data        <- ZIO.service[DataStoreModule.DataStoreService]
+            _           <- data.store("foundation:analysis", doc)
+            loadedDoc   <- data.fetch[String, AnalysisDoc]("foundation:analysis")
+            _           <- data.store("foundation:analysis:event", event)
+            loadedEvent <- data.fetch[String, AnalysisEvent]("foundation:analysis:event")
+          yield assertTrue(loadedDoc.contains(doc), loadedEvent.contains(event))).provideLayer(layerFor(dir))
         }
       },
     ) @@ TestAspect.sequential
