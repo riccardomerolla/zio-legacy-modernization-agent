@@ -259,6 +259,7 @@ object ApplicationDI:
       IssueEventStoreES.live,
       IssueRepositoryES.live,
       DependencyResolver.live,
+      AgentPoolManager.live,
       WorkspaceRunService.live,
       AutoDispatcher.live,
       ConversationChatController.live,

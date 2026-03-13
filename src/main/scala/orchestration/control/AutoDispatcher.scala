@@ -4,7 +4,7 @@ import zio.*
 
 import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
-import agent.control.AgentMatching
+import agent.control.{ AgentMatchResult, AgentMatching }
 import agent.entity.{ Agent, AgentRepository }
 import db.ConfigRepository
 import issues.entity.{ AgentIssue, IssueEvent, IssueRepository, IssueState }
@@ -28,7 +28,7 @@ object AutoDispatcher:
   val live
     : ZLayer[
       ConfigRepository & IssueRepository & DependencyResolver & AgentRepository & WorkspaceRepository &
-        WorkspaceRunService & ActivityHub,
+        WorkspaceRunService & ActivityHub & AgentPoolManager,
       Nothing,
       AutoDispatcher,
     ] =
@@ -41,6 +41,7 @@ object AutoDispatcher:
         workspaceRepository <- ZIO.service[WorkspaceRepository]
         workspaceRunService <- ZIO.service[WorkspaceRunService]
         activityHub         <- ZIO.service[ActivityHub]
+        agentPoolManager    <- ZIO.service[AgentPoolManager]
         service              =
           AutoDispatcherLive(
             configRepository = configRepository,
@@ -50,6 +51,7 @@ object AutoDispatcher:
             workspaceRepository = workspaceRepository,
             workspaceRunService = workspaceRunService,
             activityHub = activityHub,
+            agentPoolManager = agentPoolManager,
           )
         _                   <- service.run.forever.forkScoped
       yield service
@@ -63,6 +65,7 @@ final case class AutoDispatcherLive(
   workspaceRepository: WorkspaceRepository,
   workspaceRunService: WorkspaceRunService,
   activityHub: ActivityHub,
+  agentPoolManager: AgentPoolManager,
 ) extends AutoDispatcher:
 
   override def dispatchOnce: IO[PersistenceError, Int] =
@@ -119,25 +122,47 @@ final case class AutoDispatcherLive(
       case None              =>
         ZIO.logDebug(s"Skipping auto-dispatch for issue ${issue.id.value}: no workspace linked").as(None)
       case Some(workspaceId) =>
-        AgentMatching.rankAgents(agents, issue.requiredCapabilities, activeRuns).headOption match
+        selectAgent(agents, issue, activeRuns).flatMap {
           case None         =>
             ZIO.logDebug(s"Skipping auto-dispatch for issue ${issue.id.value}: no agent match available").as(None)
           case Some(result) =>
-            val prompt = buildPrompt(issue)
-            for
-              run <- workspaceRunService
-                       .assign(
-                         workspaceId,
-                         AssignRunRequest(
-                           issueRef = s"#${issue.id.value}",
-                           prompt = prompt,
-                           agentName = result.agent.name,
-                         ),
-                       )
-                       .mapError(err => PersistenceError.QueryFailed("auto_dispatch_assign", err.toString))
-              _   <- markIssueStarted(issue, result.agent.name)
-              _   <- publishDispatchActivity(issue, result.agent.name, run.id)
-            yield Some(result.agent.name)
+            acquireAndDispatch(issue, workspaceId, result.agent.name)
+        }
+
+  private def selectAgent(
+    agents: List[Agent],
+    issue: AgentIssue,
+    activeRuns: Map[String, Int],
+  ): IO[PersistenceError, Option[AgentMatchResult]] =
+    ZIO
+      .foreach(AgentMatching.rankAgents(agents, issue.requiredCapabilities, activeRuns)) { candidate =>
+        agentPoolManager.availableSlots(candidate.agent.name).map(available => candidate -> available)
+      }
+      .map(_.collectFirst { case (candidate, available) if available > 0 => candidate })
+
+  private def acquireAndDispatch(
+    issue: AgentIssue,
+    workspaceId: String,
+    agentName: String,
+  ): IO[PersistenceError, Option[String]] =
+    val prompt = buildPrompt(issue)
+    for
+      slot <- agentPoolManager.acquireSlot(agentName).mapError(poolErrorToPersistence)
+      run  <- workspaceRunService
+                .assign(
+                  workspaceId,
+                  AssignRunRequest(
+                    issueRef = s"#${issue.id.value}",
+                    prompt = prompt,
+                    agentName = agentName,
+                  ),
+                )
+                .tapError(_ => agentPoolManager.releaseSlot(slot))
+                .mapError(err => PersistenceError.QueryFailed("auto_dispatch_assign", err.toString))
+      _    <- workspaceRunService.registerSlot(run.id, slot)
+      _    <- markIssueStarted(issue, agentName)
+      _    <- publishDispatchActivity(issue, agentName, run.id)
+    yield Some(agentName)
 
   private def buildPrompt(issue: AgentIssue): String =
     issue.promptTemplate
@@ -246,3 +271,12 @@ final case class AutoDispatcherLive(
           .map(_.seconds)
           .getOrElse(AutoDispatcher.defaultInterval)
       }
+
+  private def poolErrorToPersistence(error: PoolError): PersistenceError =
+    error match
+      case PoolError.AgentNotFound(agentName)         =>
+        PersistenceError.NotFound("agent_pool_agent", agentName)
+      case PoolError.InvalidCapacity(agentName, raw)  =>
+        PersistenceError.QueryFailed("agent_pool_capacity", s"$agentName -> $raw")
+      case PoolError.PersistenceFailure(operation, e) =>
+        PersistenceError.QueryFailed(operation, e.toString)

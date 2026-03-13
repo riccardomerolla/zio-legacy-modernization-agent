@@ -9,6 +9,7 @@ import agent.entity.Agent
 import conversation.entity.api.{ ChatConversation, ConversationEntry }
 import db.{ ChatRepository, PersistenceError as DbPersistenceError }
 import issues.entity.{ IssueEvent, IssueFilter, IssueRepository }
+import orchestration.control.SlotHandle
 import shared.errors.PersistenceError
 import shared.ids.Ids.IssueId
 import workspace.entity.*
@@ -256,6 +257,31 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
                      )
     yield (svc, issueEvents)
 
+  private def makeServiceWithSlotReleases(
+    runCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int]
+  ) =
+    for
+      messages <- Ref.make(List.empty[String])
+      released <- Ref.make(List.empty[SlotHandle])
+      wsMap    <- Ref.make(Map(sampleWs.id -> sampleWs))
+      runMap   <- Ref.make(Map.empty[String, WorkspaceRun])
+      registry <- Ref.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+      slotRef  <- Ref.make(Map.empty[String, SlotHandle])
+      chatRepo  = StubChatRepo(messages)
+      wsRepo    = StubWorkspaceRepo(wsMap, runMap)
+      svc       = WorkspaceRunServiceLive(
+                    wsRepo,
+                    chatRepo,
+                    StubIssueRepo,
+                    worktreeAdd = noopWorktreeAdd,
+                    worktreeRemove = noopWorktreeRemove,
+                    runCliAgent = runCliAgent,
+                    fiberRegistry = registry,
+                    slotRegistry = slotRef,
+                    releaseAgentSlot = handle => released.update(_ :+ handle),
+                  )
+    yield (svc, released)
+
   def spec: Spec[TestEnvironment & Scope, Any] = suite("WorkspaceRunServiceSpec")(
     test("assign returns a WorkspaceRun with correct workspace and issue ref") {
       for
@@ -406,6 +432,18 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
           case _                                          => false
         }
       )
+    } @@ TestAspect.withLiveClock,
+    test("registered slots are released when a run completes") {
+      val successCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =
+        (_, _, _, _) => ZIO.sleep(100.millis).as(0)
+      val slotHandle                                                                                      = SlotHandle("slot-1", "echo", sampleWs.createdAt)
+      for
+        (svc, released) <- makeServiceWithSlotReleases(successCliAgent)
+        run             <- svc.assign("ws-1", AssignRunRequest(issueRef = "#slot-release", prompt = "ok", agentName = "echo"))
+        _               <- svc.registerSlot(run.id, slotHandle)
+        _               <- ZIO.sleep(250.millis)
+        handles         <- released.get
+      yield assertTrue(handles == List(slotHandle))
     } @@ TestAspect.withLiveClock,
     test("cancelled workspace run moves issue back to Todo") {
       val neverCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =

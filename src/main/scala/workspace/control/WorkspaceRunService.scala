@@ -11,6 +11,7 @@ import agent.entity.AgentRepository
 import conversation.entity.api.{ ChatConversation, ConversationEntry, MessageType, SenderType }
 import db.ChatRepository
 import issues.entity.{ AgentIssue as DomainIssue, IssueEvent, IssueRepository }
+import orchestration.control.{ AgentPoolManager, SlotHandle }
 import shared.ids.Ids.{ EventId, IssueId, TaskRunId }
 import workspace.entity.*
 
@@ -24,11 +25,13 @@ trait WorkspaceRunService:
     agentNameOverride: Option[String] = None,
   ): IO[WorkspaceError, WorkspaceRun]
   def cancelRun(runId: String): IO[WorkspaceError, Unit]
+  def registerSlot(runId: String, handle: SlotHandle): UIO[Unit] = ZIO.unit
 
 object WorkspaceRunService:
   val live
     : ZLayer[
-      WorkspaceRepository & ChatRepository & IssueRepository & ActivityHub & GitWatcher & AgentRepository,
+      WorkspaceRepository & ChatRepository & IssueRepository & ActivityHub & GitWatcher & AgentRepository &
+        AgentPoolManager,
       Nothing,
       WorkspaceRunService,
     ] =
@@ -40,7 +43,9 @@ object WorkspaceRunService:
         activity  <- ZIO.service[ActivityHub]
         watcher   <- ZIO.service[GitWatcher]
         agents    <- ZIO.service[AgentRepository]
+        pool      <- ZIO.service[AgentPoolManager]
         registry  <- Ref.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
+        slots     <- Ref.make(Map.empty[String, SlotHandle])
       yield WorkspaceRunServiceLive(
         repo,
         chat,
@@ -48,6 +53,8 @@ object WorkspaceRunService:
         activityPublish = event => activity.publish(event),
         gitWatcher = watcher,
         fiberRegistry = registry,
+        slotRegistry = slots,
+        releaseAgentSlot = pool.releaseSlot,
         resolveAgentProfile = name =>
           agents.findByName(name)
             .mapError(err => WorkspaceError.PersistenceFailure(RuntimeException(err.toString))),
@@ -120,8 +127,16 @@ final case class WorkspaceRunServiceLive(
     zio.Unsafe.unsafe(implicit u =>
       Ref.unsafe.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
     ),
+  slotRegistry: Ref[Map[String, SlotHandle]] =
+    zio.Unsafe.unsafe(implicit u =>
+      Ref.unsafe.make(Map.empty[String, SlotHandle])
+    ),
+  releaseAgentSlot: SlotHandle => UIO[Unit] = _ => ZIO.unit,
   resolveAgentProfile: String => IO[WorkspaceError, Option[_root_.agent.entity.Agent]] = _ => ZIO.succeed(None),
 ) extends WorkspaceRunService:
+
+  override def registerSlot(runId: String, handle: SlotHandle): UIO[Unit] =
+    slotRegistry.update(_ + (runId -> handle))
 
   override def assign(workspaceId: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
     for
@@ -487,11 +502,24 @@ final case class WorkspaceRunServiceLive(
       _   <- wsRepo
                .appendRun(WorkspaceRunEvent.StatusChanged(runId, status, now))
                .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+      _   <- releaseRegisteredSlot(runId, status)
       _   <- publishRunLifecycle(runId, status)
       _   <- syncIssueLifecycle(runId, status).catchAll(err =>
                ZIO.logWarning(s"[run:$runId] failed to sync issue lifecycle for status $status: $err")
              )
     yield ()
+
+  private def releaseRegisteredSlot(runId: String, status: RunStatus): UIO[Unit] =
+    status match
+      case RunStatus.Completed | RunStatus.Failed | RunStatus.Cancelled =>
+        slotRegistry.modify { slots =>
+          (slots.get(runId), slots - runId)
+        }.flatMap {
+          case Some(handle) => releaseAgentSlot(handle)
+          case None         => ZIO.unit
+        }
+      case _                                                            =>
+        ZIO.unit
 
   private def executeInFiber(
     run: WorkspaceRun,
