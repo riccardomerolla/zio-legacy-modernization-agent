@@ -6,7 +6,7 @@ import zio.json.*
 
 import config.entity.AgentInfo
 import issues.entity.IssueWorkReport
-import issues.entity.api.{ AgentIssueView, IssueStatus, IssueTemplate }
+import issues.entity.api.{ AgentIssueView, DispatchStatusResponse, IssueStatus, IssueTemplate }
 import scalatags.Text.all.*
 import shared.ids.Ids.IssueId
 import workspace.entity.{ RunSessionMode, RunStatus, WorkspaceRun }
@@ -122,6 +122,7 @@ object IssuesView:
     query: Option[String],
     statusFilter: Option[String] = None,
     availableAgents: List[AgentInfo] = Nil,
+    dispatchStatuses: Map[IssueId, DispatchStatusResponse] = Map.empty,
     autoDispatchEnabled: Boolean = false,
     syncStatus: SyncStatus = SyncStatus(None, 0, 0),
     agentUsage: Option[(Int, Int)] = None,
@@ -260,7 +261,7 @@ object IssuesView:
           cls                          := "min-h-[32rem]",
           attr("data-bulk-scope")      := "board",
         )(
-          raw(boardColumnsFragment(filteredIssues, workspaces, workReports, availableAgents))
+          raw(boardColumnsFragment(filteredIssues, workspaces, workReports, availableAgents, dispatchStatuses))
         ),
       ),
       JsResources.inlineModuleScript("/static/client/components/issues-board.js"),
@@ -311,6 +312,7 @@ object IssuesView:
     workspaces: List[(String, String)],
     workReports: Map[IssueId, IssueWorkReport],
     availableAgents: List[AgentInfo] = Nil,
+    dispatchStatuses: Map[IssueId, DispatchStatusResponse] = Map.empty,
     hasProofFilter: Option[Boolean] = None,
   ): String =
     val filteredIssues = hasProofFilter match
@@ -408,7 +410,8 @@ object IssuesView:
             else
               columnIssues.map { issue =>
                 val report = issue.id.flatMap(id => workReports.get(IssueId(id)))
-                boardCard(issue, workspaces, report, availableAgents)
+                val status = issue.id.flatMap(id => dispatchStatuses.get(IssueId(id)))
+                boardCard(issue, workspaces, report, availableAgents, status)
               }
           ),
         )
@@ -440,8 +443,9 @@ object IssuesView:
     workspaces: List[(String, String)],
     workReport: Option[IssueWorkReport],
     availableAgents: List[AgentInfo] = Nil,
+    dispatchStatus: Option[DispatchStatusResponse] = None,
   ): String =
-    boardCard(issue, workspaces, workReport, availableAgents).render
+    boardCard(issue, workspaces, workReport, availableAgents, dispatchStatus).render
 
   /** Render the issue detail page with an optional proof-of-work panel. */
   def detailWithProofOfWork(
@@ -1188,6 +1192,7 @@ object IssuesView:
     workspaces: List[(String, String)],
     workReport: Option[IssueWorkReport] = None,
     availableAgents: List[AgentInfo] = Nil,
+    dispatchStatus: Option[DispatchStatusResponse] = None,
   ): Frag =
     val issueId       = safe(issue.id, "-")
     val workspaceId   = safe(issue.workspaceId)
@@ -1233,6 +1238,7 @@ object IssuesView:
     val requiredCaps  = safeTags(issue.requiredCapabilities)
     val quickAgents   = eligibleAgents(availableAgents, requiredCaps)
     val showBlocked   = issue.status == IssueStatus.Todo && requiredCaps.nonEmpty && quickAgents.isEmpty
+    val todoDispatch  = dispatchStatus.filter(_ => issue.status == IssueStatus.Todo)
     val externalRef   = safe(issue.externalRef)
     val externalUrl   = safe(issue.externalUrl)
     div(
@@ -1251,6 +1257,7 @@ object IssuesView:
         div(cls := "mb-1.5 flex items-center gap-1.5")(
           span(cls := s"inline-block h-2.5 w-2.5 flex-shrink-0 $statusDotCls"),
           span(cls := "text-[10px] font-mono text-slate-500")(shortId),
+          todoDispatch.map(dispatchStatusBadge),
           if externalRef.nonEmpty then
             externalBadge(externalRef, externalUrl)
           else (),
@@ -1298,6 +1305,32 @@ object IssuesView:
       else (),
       if powHtml.nonEmpty then raw(powHtml) else (),
     )
+
+  private def dispatchStatusBadge(status: DispatchStatusResponse): Frag =
+    val (symbol, badgeCls, message) =
+      if status.waitingForAgent then
+        ("🕐", "border-sky-400/40 bg-sky-500/15 text-sky-200", "Waiting for an available agent slot")
+      else if status.capabilityMismatch then
+        (
+          "🔴",
+          "border-rose-400/40 bg-rose-500/15 text-rose-200",
+          "No registered agent matches the required capabilities",
+        )
+      else if status.dependencyBlocked then
+        val suffix =
+          if status.blockedByIds.isEmpty then ""
+          else s": ${status.blockedByIds.map(id => s"#$id").mkString(", ")}"
+        ("🟡", "border-amber-400/40 bg-amber-500/15 text-amber-200", s"Blocked by unresolved dependencies$suffix")
+      else if status.readyForDispatch then
+        ("✅", "border-emerald-400/40 bg-emerald-500/15 text-emerald-200", "Ready for dispatch on the next poll")
+      else
+        ("", "", "")
+    if symbol.isEmpty then span()
+    else
+      span(
+        cls   := s"inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] leading-none $badgeCls",
+        title := message,
+      )(symbol)
 
   private def bulkToolbar(scope: String): Frag =
     div(

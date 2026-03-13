@@ -21,7 +21,7 @@ import agent.entity.api.AgentMatchSuggestion
 import db.{ ChatRepository, ConfigRepository, PersistenceError, TaskRepository }
 import issues.entity.api.*
 import issues.entity.{ AgentIssue as DomainIssue, * }
-import orchestration.control.IssueAssignmentOrchestrator
+import orchestration.control.{ IssueAssignmentOrchestrator, IssueDispatchStatusService }
 import shared.ids.Ids.{ AgentId, EventId, IssueId, TaskRunId }
 import shared.web.{ ErrorHandlingMiddleware, HtmlViews }
 import workspace.control.{ AssignRunRequest, WorkspaceRunService }
@@ -37,7 +37,8 @@ object IssueController:
 
   val live
     : ZLayer[
-      ChatRepository & TaskRepository & ConfigRepository & AgentRepository & IssueAssignmentOrchestrator & IssueRepository & WorkspaceRepository & WorkspaceRunService & ActivityHub,
+      ChatRepository & TaskRepository & ConfigRepository & AgentRepository & IssueAssignmentOrchestrator &
+        IssueRepository & WorkspaceRepository & WorkspaceRunService & ActivityHub & IssueDispatchStatusService,
       Nothing,
       IssueController,
     ] =
@@ -53,6 +54,7 @@ final case class IssueControllerLive(
   workspaceRepository: WorkspaceRepository,
   workspaceRunService: WorkspaceRunService,
   activityHub: ActivityHub,
+  issueDispatchStatusService: IssueDispatchStatusService,
 ) extends IssueController:
 
   override val routes: Routes[Any, Response] = Routes(
@@ -156,6 +158,14 @@ final case class IssueControllerLive(
             workspaces.map(ws => ws.id -> ws.name),
           )
         )
+      }
+    },
+    Method.GET / "api" / "issues" / string("id") / "dispatch-status" -> handler { (id: String, _: Request) =>
+      ErrorHandlingMiddleware.fromPersistence {
+        issueDispatchStatusService
+          .statusFor(IssueId(id))
+          .mapError(mapIssueRepoError)
+          .map(status => Response.json(status.toJson))
       }
     },
     Method.GET / "issues" / string("id") / "edit"                    -> handler { (id: String, _: Request) =>
@@ -784,6 +794,7 @@ final case class IssueControllerLive(
         issues              <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter, statusFilter)
         allAgents           <- agentRepository.list().mapError(mapIssueRepoError)
         availableAgents      = allAgents.filter(_.enabled).map(registryAgentToAgentInfo)
+        dispatchStatuses    <- loadDispatchStatuses(issues)
         autoDispatchEnabled <- settingBoolean("issues.autoDispatch.enabled", default = false)
         syncStatus          <- loadTrackerSyncStatus
         activeByAgent       <- activeRunsByAgent.mapError(mapIssueRepoError)
@@ -814,6 +825,7 @@ final case class IssueControllerLive(
                                        query = query,
                                        statusFilter = statusFilter,
                                        availableAgents = availableAgents,
+                                       dispatchStatuses = dispatchStatuses,
                                        autoDispatchEnabled = autoDispatchEnabled,
                                        syncStatus = syncStatus,
                                        agentUsage = Some(activeAgents -> enabledAgentsTotal),
@@ -833,15 +845,17 @@ final case class IssueControllerLive(
     val hasProofFilter  = req.queryParam("hasProof").exists(_.trim.equalsIgnoreCase("true"))
     ErrorHandlingMiddleware.fromPersistence {
       for
-        workspaces     <- workspaceRepository.list.mapError(mapIssueRepoError)
-        issues         <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter, statusFilter)
-        allAgents      <- agentRepository.list().mapError(mapIssueRepoError)
-        availableAgents = allAgents.filter(_.enabled).map(registryAgentToAgentInfo)
+        workspaces       <- workspaceRepository.list.mapError(mapIssueRepoError)
+        issues           <- loadBoardIssues(query, tagFilter, workspaceFilter, agentFilter, priorityFilter, statusFilter)
+        allAgents        <- agentRepository.list().mapError(mapIssueRepoError)
+        availableAgents   = allAgents.filter(_.enabled).map(registryAgentToAgentInfo)
+        dispatchStatuses <- loadDispatchStatuses(issues)
       yield html(
         HtmlViews.issuesBoardColumns(
           issues = issues,
           workspaces = workspaces.map(ws => ws.id -> ws.name),
           availableAgents = availableAgents,
+          dispatchStatuses = dispatchStatuses,
           hasProofFilter = if hasProofFilter then Some(true) else None,
         )
       )
@@ -2093,6 +2107,13 @@ final case class IssueControllerLive(
       workspaces <- workspaceRepository.list
       runs       <- ZIO.foreach(workspaces)(ws => workspaceRepository.listRuns(ws.id)).map(_.flatten)
     yield AgentMatching.activeRunsByAgent(runs)
+
+  private def loadDispatchStatuses(
+    issues: List[AgentIssueView]
+  ): IO[PersistenceError, Map[IssueId, DispatchStatusResponse]] =
+    issueDispatchStatusService
+      .statusesFor(issues.flatMap(_.id).map(IssueId.apply))
+      .mapError(mapIssueRepoError)
 
   private def registryAgentToAgentInfo(registryAgent: _root_.agent.entity.Agent): _root_.config.entity.AgentInfo =
     _root_.config.entity.AgentInfo(
