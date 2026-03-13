@@ -1,5 +1,7 @@
 package shared.web
 
+import java.time.Instant
+
 import activity.entity.ActivityEvent
 import config.control.{ ModelRegistryResponse, ProviderProbeStatus }
 import config.entity.{ AgentInfo, WorkflowDefinition }
@@ -149,19 +151,22 @@ object HtmlViews:
     sessionMetaByConversation: Map[String, ConversationSessionMeta] = Map.empty,
     sessions: List[ChatSession] = Nil,
     workspaceFolders: List[ChatView.ChatWorkspaceFolder] = Nil,
+    renderedAt: Instant = Instant.EPOCH,
   ): String =
-    ChatView.dashboard(conversations, sessionMetaByConversation, sessions, workspaceFolders)
+    ChatView.dashboard(conversations, sessionMetaByConversation, sessions, workspaceFolders, renderedAt)
 
   def chatEmpty(
-    workspaceFolders: List[ChatView.ChatWorkspaceFolder] = Nil
+    workspaceFolders: List[ChatView.ChatWorkspaceFolder] = Nil,
+    renderedAt: Instant = Instant.EPOCH,
   ): String =
-    ChatView.emptyState(workspaceFolders)
+    ChatView.emptyState(workspaceFolders, renderedAt)
 
   def chatNew(
     workspaceFolders: List[ChatView.ChatWorkspaceFolder] = Nil,
     workspaces: List[(String, String)] = Nil,
+    renderedAt: Instant = Instant.EPOCH,
   ): String =
-    ChatView.newConversation(workspaceFolders, workspaces)
+    ChatView.newConversation(workspaceFolders, workspaces, renderedAt)
 
   def chatDetail(
     conversation: ChatConversation,
@@ -169,8 +174,9 @@ object HtmlViews:
     runSessionMeta: Option[RunSessionUiMeta] = None,
     workspaceFolders: List[ChatView.ChatWorkspaceFolder] = Nil,
     detailContext: ChatDetailContext = ChatDetailContext.empty,
+    renderedAt: Instant = Instant.EPOCH,
   ): String =
-    ChatView.detail(conversation, sessionMeta, runSessionMeta, workspaceFolders, detailContext)
+    ChatView.detail(conversation, sessionMeta, runSessionMeta, workspaceFolders, detailContext, renderedAt)
 
   def chatMessagesFragment(messages: List[ConversationEntry]): String =
     ChatView.messagesFragment(messages)

@@ -36,7 +36,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] = ZIO.succeed(Nil)
     def delete(id: IssueId): IO[PersistenceError, Unit]                                 = ZIO.unit
 
-  private final class RecordingIssueRepo(eventsRef: Ref[List[IssueEvent]]) extends IssueRepository:
+  final private class RecordingIssueRepo(eventsRef: Ref[List[IssueEvent]]) extends IssueRepository:
     def append(event: IssueEvent): IO[PersistenceError, Unit] =
       eventsRef.update(_ :+ event)
 
@@ -171,11 +171,11 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
             )
           )
 
-    def listRuns(wid: String): IO[PersistenceError, List[WorkspaceRun]] =
+    def listRuns(wid: String): IO[PersistenceError, List[WorkspaceRun]]                =
       runRef.get.map(_.values.filter(_.workspaceId == wid).toList)
     def listRunsByIssueRef(issueRef: String): IO[PersistenceError, List[WorkspaceRun]] =
       runRef.get.map(_.values.filter(_.issueRef == issueRef).toList)
-    def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]]  = runRef.get.map(_.get(id))
+    def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]]                 = runRef.get.map(_.get(id))
 
   private val sampleWs = Workspace(
     id = "ws-1",
