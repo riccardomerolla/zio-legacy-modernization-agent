@@ -4,7 +4,7 @@ import zio.*
 
 import agent.entity.{ Agent, AgentRepository }
 import issues.entity.api.DispatchStatusResponse
-import issues.entity.{ AgentIssue, IssueFilter, IssueRepository, IssueState }
+import issues.entity.{ AgentIssue, IssueEvent, IssueFilter, IssueRepository, IssueState }
 import shared.errors.PersistenceError
 import shared.ids.Ids.IssueId
 
@@ -37,7 +37,8 @@ final private case class IssueDispatchStatusServiceLive(
                      .fromOption(allIssues.find(_.id == issueId))
                      .orElseFail(PersistenceError.NotFound("issue", issueId.value))
       allAgents <- agentRepository.list()
-      status    <- computeStatus(issue, allIssues, allAgents)
+      history   <- issueRepository.history(issueId)
+      status    <- computeStatus(issue, allIssues, allAgents, history)
     yield status
 
   override def statusesFor(issueIds: List[IssueId]): IO[PersistenceError, Map[IssueId, DispatchStatusResponse]] =
@@ -48,7 +49,10 @@ final private case class IssueDispatchStatusServiceLive(
         allAgents <- agentRepository.list()
         statuses  <- ZIO.foreach(issueIds.distinct) { issueId =>
                        allIssues.find(_.id == issueId) match
-                         case Some(issue) => computeStatus(issue, allIssues, allAgents).map(issueId -> _)
+                         case Some(issue) =>
+                           issueRepository.history(issueId).flatMap(history =>
+                             computeStatus(issue, allIssues, allAgents, history).map(issueId -> _)
+                           )
                          case None        => ZIO.succeed(issueId -> DispatchStatusResponse())
                      }
       yield statuses.toMap
@@ -60,11 +64,13 @@ final private case class IssueDispatchStatusServiceLive(
     issue: AgentIssue,
     allIssues: List[AgentIssue],
     allAgents: List[Agent],
+    history: List[IssueEvent],
   ): IO[PersistenceError, DispatchStatusResponse] =
     issue.state match
       case IssueState.Todo(_) =>
         val blockedByIds = unresolvedDependencies(issue, allIssues).map(_.id.value)
         val matching     = matchingAgents(issue, allAgents)
+        val boost        = ReworkPriority.boostStatus(history)
         for
           availableCounts <- ZIO.foreach(matching)(agent =>
                                agentPoolManager.availableSlots(agent.name).map(available => agent.name -> available)
@@ -78,6 +84,7 @@ final private case class IssueDispatchStatusServiceLive(
           dependencyBlocked = blockedByIds.nonEmpty,
           blockedByIds = blockedByIds,
           readyForDispatch = ready,
+          reworkBoosted = boost.active,
         )
       case _                  =>
         ZIO.succeed(DispatchStatusResponse())

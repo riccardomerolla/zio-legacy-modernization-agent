@@ -100,11 +100,16 @@ object AutoDispatcherSpec extends ZIOSpecDefault:
     override def updateCustomAgent(agent: CustomAgentRow): IO[DbPersistenceError, Unit]             = ZIO.dieMessage("unused")
     override def deleteCustomAgent(id: Long): IO[DbPersistenceError, Unit]                          = ZIO.dieMessage("unused")
 
-  final private case class StubIssueRepository(appended: Ref[List[IssueEvent]]) extends IssueRepository:
+  final private case class StubIssueRepository(
+    appended: Ref[List[IssueEvent]],
+    histories: Map[IssueId, List[IssueEvent]] = Map.empty,
+  ) extends IssueRepository:
     override def append(event: IssueEvent): IO[PersistenceError, Unit]             =
       appended.update(_ :+ event)
     override def get(id: IssueId): IO[PersistenceError, AgentIssue]                =
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
+    override def history(id: IssueId): IO[PersistenceError, List[IssueEvent]]      =
+      ZIO.succeed(histories.getOrElse(id, Nil))
     override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] =
       ZIO.succeed(Nil)
     override def delete(id: IssueId): IO[PersistenceError, Unit]                   =
@@ -269,8 +274,32 @@ object AutoDispatcherSpec extends ZIOSpecDefault:
       test(
         "dispatchOnce acquires and registers a slot, applies rework boost, updates issue state, and emits activity"
       ) {
-        val boosted = issue("1", "low", tags = List("rework"))
-        val normal  = issue("2", "high")
+        val boosted   = issue("1", "low")
+        val normal    = issue("2", "high")
+        val histories = Map(
+          boosted.id -> List(
+            IssueEvent.Created(
+              boosted.id,
+              boosted.title,
+              boosted.description,
+              boosted.issueType,
+              "low",
+              now.minusSeconds(20),
+            ),
+            IssueEvent.MovedToRework(boosted.id, now.minusSeconds(10), "needs changes", now.minusSeconds(10)),
+            IssueEvent.MovedToTodo(boosted.id, now.minusSeconds(5), now.minusSeconds(5)),
+          ),
+          normal.id  -> List(
+            IssueEvent.Created(
+              normal.id,
+              normal.title,
+              normal.description,
+              normal.issueType,
+              "high",
+              now.minusSeconds(20),
+            )
+          ),
+        )
         for
           appended    <- Ref.make(List.empty[IssueEvent])
           assignments <- Ref.make(List.empty[AssignRunRequest])
@@ -279,7 +308,7 @@ object AutoDispatcherSpec extends ZIOSpecDefault:
           registered  <- Ref.make(Map.empty[String, SlotHandle])
           service      = AutoDispatcherLive(
                            configRepository = StubConfigRepository(Map(AutoDispatcher.enabledSettingKey -> "true")),
-                           issueRepository = StubIssueRepository(appended),
+                           issueRepository = StubIssueRepository(appended, histories),
                            dependencyResolver = StubDependencyResolver(List(normal, boosted)),
                            agentRepository = StubAgentRepository(List(agent("coder", maxConcurrentRuns = 1))),
                            workspaceRepository = StubWorkspaceRepository(Nil),
@@ -330,5 +359,63 @@ object AutoDispatcherSpec extends ZIOSpecDefault:
           gotRuns.isEmpty,
           gotAcquired.isEmpty,
         )
+      },
+      test("dispatchOnce respects manual priority override after rework") {
+        val reworked  = issue("4", "low")
+        val urgent    = issue("5", "critical")
+        val histories = Map(
+          reworked.id -> List(
+            IssueEvent.Created(
+              reworked.id,
+              reworked.title,
+              reworked.description,
+              reworked.issueType,
+              "medium",
+              now.minusSeconds(30),
+            ),
+            IssueEvent.MovedToRework(reworked.id, now.minusSeconds(20), "needs revision", now.minusSeconds(20)),
+            IssueEvent.MetadataUpdated(
+              issueId = reworked.id,
+              title = reworked.title,
+              description = reworked.description,
+              issueType = reworked.issueType,
+              priority = "low",
+              requiredCapabilities = Nil,
+              contextPath = "",
+              sourceFolder = "",
+              occurredAt = now.minusSeconds(10),
+            ),
+            IssueEvent.MovedToTodo(reworked.id, now.minusSeconds(5), now.minusSeconds(5)),
+          ),
+          urgent.id   -> List(
+            IssueEvent.Created(
+              urgent.id,
+              urgent.title,
+              urgent.description,
+              urgent.issueType,
+              "critical",
+              now.minusSeconds(25),
+            )
+          ),
+        )
+        for
+          appended    <- Ref.make(List.empty[IssueEvent])
+          assignments <- Ref.make(List.empty[AssignRunRequest])
+          activities  <- Ref.make(List.empty[ActivityEvent])
+          acquired    <- Ref.make(List.empty[String])
+          registered  <- Ref.make(Map.empty[String, SlotHandle])
+          service      = AutoDispatcherLive(
+                           configRepository = StubConfigRepository(Map(AutoDispatcher.enabledSettingKey -> "true")),
+                           issueRepository = StubIssueRepository(appended, histories),
+                           dependencyResolver = StubDependencyResolver(List(reworked, urgent)),
+                           agentRepository = StubAgentRepository(List(agent("coder", maxConcurrentRuns = 2))),
+                           workspaceRepository = StubWorkspaceRepository(Nil),
+                           workspaceRunService = RecordingWorkspaceRunService(assignments, registered),
+                           activityHub = StubActivityHub(activities),
+                           agentPoolManager = StubAgentPoolManager(Map("coder" -> 1), acquired),
+                         )
+          _           <- service.dispatchOnce
+          gotRuns     <- assignments.get
+        yield assertTrue(gotRuns.map(_.issueRef).take(2) == List("#5", "#4"))
       },
     )

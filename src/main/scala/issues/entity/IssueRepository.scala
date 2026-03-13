@@ -38,6 +38,7 @@ object IssueStateTag:
 trait IssueRepository:
   def append(event: IssueEvent): IO[PersistenceError, Unit]
   def get(id: IssueId): IO[PersistenceError, AgentIssue]
+  def history(id: IssueId): IO[PersistenceError, List[IssueEvent]]
   def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]]
   def delete(id: IssueId): IO[PersistenceError, Unit]
 
@@ -47,6 +48,9 @@ object IssueRepository:
 
   def get(id: IssueId): ZIO[IssueRepository, PersistenceError, AgentIssue] =
     ZIO.serviceWithZIO[IssueRepository](_.get(id))
+
+  def history(id: IssueId): ZIO[IssueRepository, PersistenceError, List[IssueEvent]] =
+    ZIO.serviceWithZIO[IssueRepository](_.history(id))
 
   def list(filter: IssueFilter): ZIO[IssueRepository, PersistenceError, List[AgentIssue]] =
     ZIO.serviceWithZIO[IssueRepository](_.list(filter))

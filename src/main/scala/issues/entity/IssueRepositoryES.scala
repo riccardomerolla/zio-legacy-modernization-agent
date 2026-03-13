@@ -83,6 +83,9 @@ final case class IssueRepositoryES(
           }
     }
 
+  override def history(id: IssueId): IO[PersistenceError, List[IssueEvent]] =
+    eventStore.events(id)
+
   override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] =
     dataStore.rawStore
       .streamKeys[String]

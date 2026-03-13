@@ -182,6 +182,7 @@ case class DispatchStatusResponse(
   dependencyBlocked: Boolean = false,
   blockedByIds: List[String] = Nil,
   readyForDispatch: Boolean = false,
+  reworkBoosted: Boolean = false,
 ) derives JsonCodec
 
 case class PipelineStep(

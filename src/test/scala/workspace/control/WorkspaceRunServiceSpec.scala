@@ -34,6 +34,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     def append(event: issues.entity.IssueEvent): IO[PersistenceError, Unit]             = ZIO.unit
     def get(id: IssueId): IO[PersistenceError, issues.entity.AgentIssue]                =
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
+    def history(id: IssueId): IO[PersistenceError, List[issues.entity.IssueEvent]]      = ZIO.succeed(Nil)
     def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] = ZIO.succeed(Nil)
     def delete(id: IssueId): IO[PersistenceError, Unit]                                 = ZIO.unit
 
@@ -43,6 +44,9 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
 
     def get(id: IssueId): IO[PersistenceError, issues.entity.AgentIssue] =
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
+
+    def history(id: IssueId): IO[PersistenceError, List[IssueEvent]] =
+      ZIO.succeed(Nil)
 
     def list(filter: IssueFilter): IO[PersistenceError, List[issues.entity.AgentIssue]] =
       ZIO.succeed(Nil)

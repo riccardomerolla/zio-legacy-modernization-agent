@@ -56,10 +56,15 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
       updatedAt = now,
     )
 
-  final private case class StubIssueRepository(issues: List[AgentIssue]) extends IssueRepository:
+  final private case class StubIssueRepository(
+    issues: List[AgentIssue],
+    histories: Map[IssueId, List[IssueEvent]] = Map.empty,
+  ) extends IssueRepository:
     override def append(event: IssueEvent): IO[PersistenceError, Unit]             = ZIO.dieMessage("unused")
     override def get(id: IssueId): IO[PersistenceError, AgentIssue]                =
       ZIO.fromOption(issues.find(_.id == id)).orElseFail(PersistenceError.NotFound("issue", id.value))
+    override def history(id: IssueId): IO[PersistenceError, List[IssueEvent]]      =
+      ZIO.succeed(histories.getOrElse(id, Nil))
     override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] = ZIO.succeed(issues)
     override def delete(id: IssueId): IO[PersistenceError, Unit]                   = ZIO.dieMessage("unused")
 
@@ -85,9 +90,10 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
     issues: List[AgentIssue],
     agents: List[Agent],
     available: Map[String, Int],
+    histories: Map[IssueId, List[IssueEvent]] = Map.empty,
   ): IssueDispatchStatusService =
     IssueDispatchStatusServiceLive(
-      issueRepository = StubIssueRepository(issues),
+      issueRepository = StubIssueRepository(issues, histories),
       agentRepository = StubAgentRepository(agents),
       agentPoolManager = StubAgentPoolManager(available),
     )
@@ -95,10 +101,23 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
   def spec: Spec[TestEnvironment & Scope, Any] =
     suite("IssueDispatchStatusServiceSpec")(
       test("reports readyForDispatch when a Todo issue has a matching available agent and no blockers") {
-        val service = makeService(
-          issues = List(issue("1", requiredCapabilities = List("scala"))),
+        val readyIssue = issue("1", requiredCapabilities = List("scala"))
+        val service    = makeService(
+          issues = List(readyIssue),
           agents = List(agent("coder", List("scala", "zio"))),
           available = Map("coder" -> 1),
+          histories = Map(
+            readyIssue.id -> List(
+              IssueEvent.Created(
+                readyIssue.id,
+                readyIssue.title,
+                readyIssue.description,
+                readyIssue.issueType,
+                "medium",
+                now.minusSeconds(10),
+              )
+            )
+          ),
         )
         for
           status <- service.statusFor(IssueId("1"))
@@ -107,10 +126,23 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
         )
       },
       test("reports capabilityMismatch when no enabled agent satisfies requiredCapabilities") {
-        val service = makeService(
-          issues = List(issue("1", requiredCapabilities = List("scala"))),
+        val unmatched = issue("1", requiredCapabilities = List("scala"))
+        val service   = makeService(
+          issues = List(unmatched),
           agents = List(agent("writer", List("docs"))),
           available = Map("writer" -> 1),
+          histories = Map(
+            unmatched.id -> List(
+              IssueEvent.Created(
+                unmatched.id,
+                unmatched.title,
+                unmatched.description,
+                unmatched.issueType,
+                "medium",
+                now.minusSeconds(10),
+              )
+            )
+          ),
         )
         for
           status <- service.statusFor(IssueId("1"))
@@ -122,10 +154,24 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
       },
       test("reports dependencyBlocked with unresolved blockedBy issue ids") {
         val blocker = issue("2", state = IssueState.InProgress(AgentId("coder"), now))
+        val blocked = issue("1", blockedBy = List(blocker.id))
         val service = makeService(
-          issues = List(issue("1", blockedBy = List(blocker.id)), blocker),
+          issues = List(blocked, blocker),
           agents = List(agent("coder", List("scala"))),
           available = Map("coder" -> 1),
+          histories = Map(
+            blocked.id -> List(
+              IssueEvent.Created(
+                blocked.id,
+                blocked.title,
+                blocked.description,
+                blocked.issueType,
+                "medium",
+                now.minusSeconds(10),
+              ),
+              IssueEvent.DependencyLinked(blocked.id, blocker.id, now.minusSeconds(5)),
+            )
+          ),
         )
         for
           status <- service.statusFor(IssueId("1"))
@@ -136,10 +182,23 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
         )
       },
       test("reports waitingForAgent when matching agents exist but all slots are exhausted") {
+        val waiting = issue("1", requiredCapabilities = List("scala"))
         val service = makeService(
-          issues = List(issue("1", requiredCapabilities = List("scala"))),
+          issues = List(waiting),
           agents = List(agent("coder", List("scala"))),
           available = Map("coder" -> 0),
+          histories = Map(
+            waiting.id -> List(
+              IssueEvent.Created(
+                waiting.id,
+                waiting.title,
+                waiting.description,
+                waiting.issueType,
+                "medium",
+                now.minusSeconds(10),
+              )
+            )
+          ),
         )
         for
           status <- service.statusFor(IssueId("1"))
@@ -148,5 +207,66 @@ object IssueDispatchStatusServiceSpec extends ZIOSpecDefault:
           !status.capabilityMismatch,
           !status.readyForDispatch,
         )
+      },
+      test("reports reworkBoosted when a reworked issue has returned to Todo") {
+        val reworked = issue("7", requiredCapabilities = List("scala"))
+        val service  = makeService(
+          issues = List(reworked),
+          agents = List(agent("coder", List("scala"))),
+          available = Map("coder" -> 1),
+          histories = Map(
+            reworked.id -> List(
+              IssueEvent.Created(
+                reworked.id,
+                reworked.title,
+                reworked.description,
+                reworked.issueType,
+                "low",
+                now.minusSeconds(20),
+              ),
+              IssueEvent.MovedToRework(reworked.id, now.minusSeconds(10), "rejected", now.minusSeconds(10)),
+              IssueEvent.MovedToTodo(reworked.id, now.minusSeconds(5), now.minusSeconds(5)),
+            )
+          ),
+        )
+        for
+          status <- service.statusFor(reworked.id)
+        yield assertTrue(status.reworkBoosted, status.readyForDispatch)
+      },
+      test("does not report reworkBoosted after a manual priority override") {
+        val reworked = issue("8")
+        val service  = makeService(
+          issues = List(reworked),
+          agents = List(agent("coder", List("scala"))),
+          available = Map("coder" -> 1),
+          histories = Map(
+            reworked.id -> List(
+              IssueEvent.Created(
+                reworked.id,
+                reworked.title,
+                reworked.description,
+                reworked.issueType,
+                "medium",
+                now.minusSeconds(30),
+              ),
+              IssueEvent.MovedToRework(reworked.id, now.minusSeconds(20), "rejected", now.minusSeconds(20)),
+              IssueEvent.MetadataUpdated(
+                issueId = reworked.id,
+                title = reworked.title,
+                description = reworked.description,
+                issueType = reworked.issueType,
+                priority = "low",
+                requiredCapabilities = Nil,
+                contextPath = "",
+                sourceFolder = "",
+                occurredAt = now.minusSeconds(10),
+              ),
+              IssueEvent.MovedToTodo(reworked.id, now.minusSeconds(5), now.minusSeconds(5)),
+            )
+          ),
+        )
+        for
+          status <- service.statusFor(reworked.id)
+        yield assertTrue(!status.reworkBoosted)
       },
     )

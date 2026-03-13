@@ -22,6 +22,7 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
     override def append(event: IssueEvent): IO[PersistenceError, Unit]             = ZIO.unit
     override def get(id: IssueId): IO[PersistenceError, AgentIssue]                =
       ZIO.fail(PersistenceError.NotFound("issue", id.value))
+    override def history(id: IssueId): IO[PersistenceError, List[IssueEvent]]      = ZIO.succeed(Nil)
     override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] = ZIO.succeed(Nil)
     override def delete(id: IssueId): IO[PersistenceError, Unit]                   = ZIO.unit
 
@@ -148,6 +149,8 @@ object GatewayMcpToolsSpec extends ZIOSpecDefault:
                               appendedRef.set(Some(event))
                             override def get(id: IssueId): IO[PersistenceError, AgentIssue]                =
                               ZIO.fail(PersistenceError.NotFound("issue", id.value))
+                            override def history(id: IssueId): IO[PersistenceError, List[IssueEvent]]      =
+                              ZIO.succeed(Nil)
                             override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] =
                               ZIO.succeed(Nil)
                             override def delete(id: IssueId): IO[PersistenceError, Unit]                   = ZIO.unit

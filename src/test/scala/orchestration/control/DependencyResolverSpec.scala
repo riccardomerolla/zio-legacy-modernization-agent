@@ -45,6 +45,9 @@ object DependencyResolverSpec extends ZIOSpecDefault:
         .fromOption(storedIssues.find(_.id == id))
         .orElseFail(PersistenceError.NotFound("issue", id.value))
 
+    override def history(id: IssueId): IO[PersistenceError, List[issues.entity.IssueEvent]] =
+      ZIO.succeed(Nil)
+
     override def list(filter: IssueFilter): IO[PersistenceError, List[AgentIssue]] =
       ZIO.succeed(storedIssues.slice(filter.offset.max(0), filter.offset.max(0) + filter.limit.max(0)))
 

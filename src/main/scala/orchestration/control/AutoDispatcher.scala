@@ -17,10 +17,9 @@ trait AutoDispatcher:
   def dispatchOnce: IO[PersistenceError, Int]
 
 object AutoDispatcher:
-  val enabledSettingKey: String            = "issues.autoDispatch.enabled"
-  val intervalSecondsSettingKey: String    = "issues.autoDispatch.intervalSeconds"
-  val defaultInterval: Duration            = 10.seconds
-  val reworkPriorityBoostTags: Set[String] = Set("rework", "rework-priority-boost")
+  val enabledSettingKey: String         = "issues.autoDispatch.enabled"
+  val intervalSecondsSettingKey: String = "issues.autoDispatch.intervalSeconds"
+  val defaultInterval: Duration         = 10.seconds
 
   def dispatchOnce: ZIO[AutoDispatcher, PersistenceError, Int] =
     ZIO.serviceWithZIO[AutoDispatcher](_.dispatchOnce)
@@ -92,7 +91,8 @@ final case class AutoDispatcherLive(
       readyIssues <- dependencyResolver.currentReadyToDispatch
       agents      <- agentRepository.list()
       activeMap   <- activeRunsByAgent
-      sorted       = sortReadyIssues(readyIssues)
+      histories   <- ZIO.foreach(readyIssues)(issue => issueRepository.history(issue.id).map(issue.id -> _)).map(_.toMap)
+      sorted       = sortReadyIssues(readyIssues, histories)
       count       <- dispatchIssues(sorted, agents, activeMap, dispatched = 0)
     yield count
 
@@ -221,11 +221,14 @@ final case class AutoDispatcherLive(
       runs       <- ZIO.foreach(workspaces)(ws => workspaceRepository.listRuns(ws.id)).map(_.flatten)
     yield AgentMatching.activeRunsByAgent(runs)
 
-  private def sortReadyIssues(issues: List[AgentIssue]): List[AgentIssue] =
-    issues.sortBy(issue => (priorityRank(issue), createdAt(issue)))
+  private def sortReadyIssues(
+    issues: List[AgentIssue],
+    histories: Map[shared.ids.Ids.IssueId, List[IssueEvent]],
+  ): List[AgentIssue] =
+    issues.sortBy(issue => (priorityRank(issue, histories.getOrElse(issue.id, Nil)), createdAt(issue)))
 
-  private def priorityRank(issue: AgentIssue): Int =
-    if hasReworkPriorityBoost(issue) then 0
+  private def priorityRank(issue: AgentIssue, history: List[IssueEvent]): Int =
+    if hasReworkPriorityBoost(history) then -1
     else
       issue.priority.trim.toLowerCase match
         case "critical" => 0
@@ -234,8 +237,8 @@ final case class AutoDispatcherLive(
         case "low"      => 3
         case _          => 4
 
-  private def hasReworkPriorityBoost(issue: AgentIssue): Boolean =
-    issue.tags.exists(tag => AutoDispatcher.reworkPriorityBoostTags.contains(tag.trim.toLowerCase))
+  private def hasReworkPriorityBoost(history: List[IssueEvent]): Boolean =
+    ReworkPriority.boostStatus(history).active
 
   private def createdAt(issue: AgentIssue): java.time.Instant =
     issue.state match

@@ -107,6 +107,7 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
     def append(event: IssueEvent): IO[shared.errors.PersistenceError, Unit]             = ZIO.unit
     def get(id: IssueId): IO[shared.errors.PersistenceError, AgentIssue]                =
       ZIO.fail(shared.errors.PersistenceError.NotFound("issue", id.value))
+    def history(id: IssueId): IO[shared.errors.PersistenceError, List[IssueEvent]]      = ZIO.succeed(Nil)
     def list(filter: IssueFilter): IO[shared.errors.PersistenceError, List[AgentIssue]] = ZIO.succeed(Nil)
     def delete(id: IssueId): IO[shared.errors.PersistenceError, Unit]                   = ZIO.unit
 
