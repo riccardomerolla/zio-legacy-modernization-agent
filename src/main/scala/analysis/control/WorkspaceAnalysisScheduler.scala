@@ -8,8 +8,10 @@ import activity.control.ActivityHub
 import activity.entity.{ ActivityEvent, ActivityEventType }
 import analysis.entity.{ AnalysisDoc, AnalysisRepository, AnalysisType }
 import db.TaskRepository
+import issues.control.IssueAnalysisAttachment
+import issues.entity.{ IssueEvent, IssueFilter, IssueRepository, IssueStateTag }
 import shared.errors.PersistenceError
-import shared.ids.Ids.EventId
+import shared.ids.Ids.{ EventId, IssueId }
 
 final private[analysis] case class WorkspaceAnalysisJob(
   workspaceId: String,
@@ -57,13 +59,18 @@ object WorkspaceAnalysisScheduler:
     ZIO.serviceWithZIO[WorkspaceAnalysisScheduler](_.statusForWorkspace(workspaceId))
 
   val live
-    : ZLayer[AnalysisAgentRunner & AnalysisRepository & ActivityHub & TaskRepository, Nothing, WorkspaceAnalysisScheduler] =
+    : ZLayer[
+      AnalysisAgentRunner & AnalysisRepository & ActivityHub & TaskRepository & IssueRepository,
+      Nothing,
+      WorkspaceAnalysisScheduler,
+    ] =
     ZLayer.scoped {
       for
         runner       <- ZIO.service[AnalysisAgentRunner]
         repository   <- ZIO.service[AnalysisRepository]
         activityHub  <- ZIO.service[ActivityHub]
         taskRepo     <- ZIO.service[TaskRepository]
+        issueRepo    <- ZIO.service[IssueRepository]
         queue        <- Queue.unbounded[WorkspaceAnalysisJob]
         runtimeState <- Ref.Synchronized.make(Map.empty[(String, AnalysisType), WorkspaceAnalysisStatus])
         service       = WorkspaceAnalysisSchedulerLive(
@@ -71,6 +78,7 @@ object WorkspaceAnalysisScheduler:
                           repository = repository,
                           activityHub = activityHub,
                           taskRepository = taskRepo,
+                          issueRepository = issueRepo,
                           queue = queue,
                           runtimeState = runtimeState,
                         )
@@ -83,6 +91,7 @@ final case class WorkspaceAnalysisSchedulerLive(
   repository: AnalysisRepository,
   activityHub: ActivityHub,
   taskRepository: TaskRepository,
+  issueRepository: IssueRepository,
   queue: Queue[WorkspaceAnalysisJob],
   runtimeState: Ref.Synchronized[Map[(String, AnalysisType), WorkspaceAnalysisStatus]],
 ) extends WorkspaceAnalysisScheduler:
@@ -159,6 +168,7 @@ final case class WorkspaceAnalysisSchedulerLive(
       _         <- publishActivity(job.workspaceId, job.analysisType, ActivityEventType.AnalysisStarted, startedAt, None)
       doc       <- runAnalysis(job.workspaceId, job.analysisType)
       completed <- Clock.instant
+      _         <- ensureHumanReviewIssueWithAnalysis(job.workspaceId, completed)
       _         <- updateStatus(job.workspaceId, job.analysisType) { current =>
                      current.copy(
                        state = WorkspaceAnalysisState.Completed,
@@ -190,7 +200,7 @@ final case class WorkspaceAnalysisSchedulerLive(
               None,
             ) *>
             ZIO.logWarning(
-              s"Analysis execution failed for ${job.workspaceId}/${renderAnalysisType(job.analysisType)}: ${err.message}"
+              s"Analysis execution failed for ${job.workspaceId}/${renderAnalysisType(job.analysisType)}: ${renderJobError(err)}"
             )
         }
       }
@@ -225,6 +235,73 @@ final case class WorkspaceAnalysisSchedulerLive(
         createdAt = now,
       )
     )
+
+  private def ensureHumanReviewIssueWithAnalysis(
+    workspaceId: String,
+    now: Instant,
+  ): IO[PersistenceError, Unit] =
+    runtimeState.modifyZIO { current =>
+      upsertHumanReviewIssue(workspaceId, now).as(((), current))
+    }
+
+  private def upsertHumanReviewIssue(
+    workspaceId: String,
+    now: Instant,
+  ): IO[PersistenceError, Unit] =
+    for
+      issues      <- issueRepository.list(IssueFilter(states = Set(IssueStateTag.HumanReview), limit = Int.MaxValue))
+      reviewIssues = issues.filter(_.workspaceId.contains(workspaceId))
+      _           <- reviewIssues match
+                       case Nil      =>
+                         createHumanReviewIssue(workspaceId, now).flatMap(attachLatestAnalysis(_, now))
+                       case existing =>
+                         ZIO.foreachDiscard(existing)(issue => attachLatestAnalysis(issue.id, now))
+    yield ()
+
+  private def createHumanReviewIssue(
+    workspaceId: String,
+    now: Instant,
+  ): IO[PersistenceError, IssueId] =
+    val issueId     = IssueId.generate
+    val title       = s"Human review for workspace $workspaceId"
+    val description =
+      s"Automatically created review issue for workspace $workspaceId. Review the latest code review, architecture, and security analysis docs."
+    for
+      _ <- issueRepository.append(
+             IssueEvent.Created(
+               issueId = issueId,
+               title = title,
+               description = description,
+               issueType = "task",
+               priority = "medium",
+               occurredAt = now,
+             )
+           )
+      _ <- issueRepository.append(IssueEvent.TagsUpdated(issueId, List("analysis-review", "auto-generated"), now))
+      _ <- issueRepository.append(IssueEvent.WorkspaceLinked(issueId, workspaceId, now))
+      _ <- issueRepository.append(IssueEvent.MovedToHumanReview(issueId, movedAt = now, occurredAt = now))
+    yield issueId
+
+  private def attachLatestAnalysis(
+    issueId: IssueId,
+    now: Instant,
+  ): IO[PersistenceError, Unit] =
+    for
+      issue <- issueRepository.get(issueId)
+      _     <- IssueAnalysisAttachment
+                 .latestForHumanReview(issue, repository, now)
+                 .flatMap {
+                   case Some(event) if event.analysisDocIds != issue.analysisDocIds =>
+                     issueRepository.append(event)
+                   case _                                                           =>
+                     ZIO.unit
+                 }
+    yield ()
+
+  private def renderJobError(error: AnalysisAgentRunnerError | PersistenceError): String =
+    error match
+      case err: AnalysisAgentRunnerError => err.message
+      case err: PersistenceError         => err.toString
 
   private def updateStatus(
     workspaceId: String,
