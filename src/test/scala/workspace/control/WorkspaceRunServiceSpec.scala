@@ -141,7 +141,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
 
     def appendRun(event: WorkspaceRunEvent): IO[PersistenceError, Unit] =
       event match
-        case e: WorkspaceRunEvent.Assigned       =>
+        case e: WorkspaceRunEvent.Assigned        =>
           val run = WorkspaceRun(
             id = e.runId,
             workspaceId = e.workspaceId,
@@ -159,11 +159,11 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
             updatedAt = e.occurredAt,
           )
           runRef.update(_ + (run.id -> run))
-        case e: WorkspaceRunEvent.StatusChanged  =>
+        case e: WorkspaceRunEvent.StatusChanged   =>
           runRef.update(m =>
             m.get(e.runId).fold(m)(r => m + (e.runId -> r.copy(status = e.status, updatedAt = e.occurredAt)))
           )
-        case e: WorkspaceRunEvent.UserAttached   =>
+        case e: WorkspaceRunEvent.UserAttached    =>
           runRef.update(m =>
             m.get(e.runId).fold(m)(r =>
               m + (
@@ -175,7 +175,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
               )
             )
           )
-        case e: WorkspaceRunEvent.UserDetached   =>
+        case e: WorkspaceRunEvent.UserDetached    =>
           runRef.update(m =>
             m.get(e.runId).fold(m)(r =>
               m + (
@@ -189,7 +189,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
               )
             )
           )
-        case e: WorkspaceRunEvent.RunInterrupted =>
+        case e: WorkspaceRunEvent.RunInterrupted  =>
           runRef.update(m =>
             m.get(e.runId).fold(m)(r =>
               m + (
@@ -202,7 +202,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
               )
             )
           )
-        case e: WorkspaceRunEvent.RunResumed     =>
+        case e: WorkspaceRunEvent.RunResumed      =>
           runRef.update(m =>
             m.get(e.runId).fold(m)(r =>
               m + (
@@ -214,6 +214,10 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
                 )
               )
             )
+          )
+        case e: WorkspaceRunEvent.CleanupRecorded =>
+          runRef.update(m =>
+            m.get(e.runId).fold(m)(r => m + (e.runId -> r.copy(updatedAt = e.occurredAt)))
           )
 
     def listRuns(wid: String): IO[PersistenceError, List[WorkspaceRun]]                =
@@ -245,6 +249,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
     (_, _, _) => ZIO.unit
   private val noopWorktreeRemove: String => Task[Unit]                              =
     _ => ZIO.unit
+  private val noopBranchDelete: (String, String) => Task[Unit]                      =
+    (_, _) => ZIO.unit
 
   private val dockerAvailable: IO[WorkspaceError, Unit]   = ZIO.unit
   private val dockerUnavailable: IO[WorkspaceError, Unit] =
@@ -260,6 +266,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
       Clock.instant.map(now => SlotHandle(s"slot-${agentName.trim.toLowerCase}", agentName.trim.toLowerCase, now)),
     availableAgentSlots: String => UIO[Int] = _ => ZIO.succeed(Int.MaxValue),
     releaseAgentSlot: SlotHandle => UIO[Unit] = _ => ZIO.unit,
+    worktreeRemove: String => Task[Unit] = noopWorktreeRemove,
+    branchDelete: (String, String) => Task[Unit] = noopBranchDelete,
   ) =
     for
       messages <- Ref.make(List.empty[String])
@@ -275,7 +283,8 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
           StubIssueRepo,
           StubAnalysisRepo,
           worktreeAdd = noopWorktreeAdd,
-          worktreeRemove = noopWorktreeRemove,
+          worktreeRemove = worktreeRemove,
+          branchDelete = branchDelete,
           dockerCheck = dockerCheck,
           runCliAgent = runCliAgent,
           fiberRegistry = registry,
@@ -305,6 +314,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
                        StubAnalysisRepo,
                        worktreeAdd = noopWorktreeAdd,
                        worktreeRemove = noopWorktreeRemove,
+                       branchDelete = noopBranchDelete,
                        runCliAgent = runCliAgent,
                        fiberRegistry = registry,
                      )
@@ -429,6 +439,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
                       timeoutSeconds = 0,
                       worktreeAdd = noopWorktreeAdd,
                       worktreeRemove = noopWorktreeRemove,
+                      branchDelete = noopBranchDelete,
                       fiberRegistry = zio.Unsafe.unsafe(implicit u =>
                         Ref.unsafe.make(Map.empty[String, Fiber[WorkspaceError, Unit]])
                       ),
@@ -477,6 +488,7 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
                       StubAnalysisRepo,
                       worktreeAdd = noopWorktreeAdd,
                       worktreeRemove = noopWorktreeRemove,
+                      branchDelete = noopBranchDelete,
                       runCliAgent = neverCliAgent,
                       fiberRegistry = registry,
                     )
@@ -600,6 +612,59 @@ object WorkspaceRunServiceSpec extends ZIOSpecDefault:
         acquired    <- pool.acquired
         released    <- pool.released
       yield assertTrue(acquired.nonEmpty, released == acquired)
+    } @@ TestAspect.withLiveClock,
+    test("cleanupAfterSuccessfulMerge removes worktree, deletes branch, and records cleanup audit") {
+      for
+        removedRef       <- Ref.make(List.empty[String])
+        deletedRef       <- Ref.make(List.empty[(String, String)])
+        (svc, wsRepo, _) <- makeService(
+                              worktreeRemove = path => removedRef.update(_ :+ path).unit,
+                              branchDelete = (repoPath, branch) => deletedRef.update(_ :+ (repoPath -> branch)).unit,
+                            )
+        run              <- svc.assign("ws-1", AssignRunRequest(issueRef = "#cleanup", prompt = "ok", agentName = "echo"))
+        _                <- ZIO.sleep(200.millis)
+        _                <- svc.cleanupAfterSuccessfulMerge(run.id)
+        removed          <- removedRef.get
+        deleted          <- deletedRef.get
+        saved            <- wsRepo.getRun(run.id)
+      yield assertTrue(
+        removed == List(run.worktreePath),
+        deleted == List(sampleWs.localPath -> run.branchName),
+        saved.exists(_.updatedAt.isAfter(run.updatedAt)),
+      )
+    } @@ TestAspect.withLiveClock,
+    test("cleanupAfterSuccessfulMerge skips when another run references the same worktree") {
+      for
+        removedRef       <- Ref.make(List.empty[String])
+        deletedRef       <- Ref.make(List.empty[(String, String)])
+        (svc, wsRepo, _) <- makeService(
+                              worktreeRemove = path => removedRef.update(_ :+ path).unit,
+                              branchDelete = (repoPath, branch) => deletedRef.update(_ :+ (repoPath -> branch)).unit,
+                            )
+        run1             <- svc.assign("ws-1", AssignRunRequest(issueRef = "#cleanup-a", prompt = "ok", agentName = "echo"))
+        _                <- ZIO.sleep(150.millis)
+        now              <- Clock.instant
+        _                <- wsRepo.appendRun(
+                              WorkspaceRunEvent.Assigned(
+                                runId = "run-sibling",
+                                workspaceId = "ws-1",
+                                parentRunId = Some(run1.id),
+                                issueRef = "#cleanup-b",
+                                agentName = "echo",
+                                prompt = "reuse worktree",
+                                conversationId = "conv-sibling",
+                                worktreePath = run1.worktreePath,
+                                branchName = run1.branchName,
+                                occurredAt = now,
+                              )
+                            )
+        _                <- svc.cleanupAfterSuccessfulMerge(run1.id)
+        removed          <- removedRef.get
+        deleted          <- deletedRef.get
+      yield assertTrue(
+        removed.isEmpty,
+        deleted.isEmpty,
+      )
     } @@ TestAspect.withLiveClock,
     test("manual assignment and auto-dispatch share the same pool ceiling") {
       val neverCliAgent: (List[String], String, String => Task[Unit], Map[String, String]) => Task[Int] =

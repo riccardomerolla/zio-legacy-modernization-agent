@@ -174,6 +174,29 @@ object WorkspaceRepositorySpec extends ZIOSpecDefault:
           yield assertTrue(loaded.exists(_.status == RunStatus.Completed))).provideLayer(layerFor(dir))
         }
       },
+      test("appendRun CleanupRecorded updates run timestamp without changing status") {
+        withTempDir { dir =>
+          (for
+            svc    <- ZIO.service[DataStoreModule.DataStoreService]
+            repo    = WorkspaceRepositoryES(svc)
+            _      <- repo.appendRun(assignedRun)
+            _      <- repo.appendRun(WorkspaceRunEvent.StatusChanged("run-1", RunStatus.Completed, now.plusSeconds(5)))
+            _      <- repo.appendRun(
+                        WorkspaceRunEvent.CleanupRecorded(
+                          "run-1",
+                          worktreeRemoved = true,
+                          branchDeleted = true,
+                          details = "cleanup complete",
+                          occurredAt = now.plusSeconds(6),
+                        )
+                      )
+            loaded <- repo.getRun("run-1")
+          yield assertTrue(
+            loaded.exists(_.status == RunStatus.Completed),
+            loaded.exists(_.updatedAt == now.plusSeconds(6)),
+          )).provideLayer(layerFor(dir))
+        }
+      },
       test("listRuns returns only runs for the given workspace") {
         withTempDir { dir =>
           val run2 = WorkspaceRunEvent.Assigned(

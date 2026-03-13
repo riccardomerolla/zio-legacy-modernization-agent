@@ -52,7 +52,8 @@ object MergeAgentService:
 
   val live
     : ZLayer[
-      IssueRepository & WorkspaceRepository & GitService & ActivityHub & ConfigRepository & WorkReportEventBus,
+      IssueRepository & WorkspaceRepository & GitService & ActivityHub & ConfigRepository & WorkReportEventBus &
+        WorkspaceRunService,
       Nothing,
       MergeAgentService,
     ] =
@@ -64,6 +65,7 @@ object MergeAgentService:
         activityHub         <- ZIO.service[ActivityHub]
         configRepository    <- ZIO.service[ConfigRepository]
         workReportEventBus  <- ZIO.service[WorkReportEventBus]
+        workspaceRunService <- ZIO.service[WorkspaceRunService]
         queue               <- Queue.unbounded[IssueId]
         pending             <- Ref.Synchronized.make(Set.empty[IssueId])
         service              = MergeAgentServiceLive(
@@ -73,6 +75,7 @@ object MergeAgentService:
                                  activityHub = activityHub,
                                  configRepository = configRepository,
                                  workReportEventBus = workReportEventBus,
+                                 cleanupMergedRun = workspaceRunService.cleanupAfterSuccessfulMerge,
                                  queue = queue,
                                  pending = pending,
                                  commandRunner = (argv, cwd) => CliAgentRunner.runProcess(argv, cwd),
@@ -111,6 +114,7 @@ final case class MergeAgentServiceLive(
   activityHub: ActivityHub,
   configRepository: ConfigRepository,
   workReportEventBus: WorkReportEventBus,
+  cleanupMergedRun: String => UIO[Unit] = _ => ZIO.unit,
   queue: Queue[IssueId],
   pending: Ref.Synchronized[Set[IssueId]],
   commandRunner: (List[String], String) => Task[(List[String], Int)],
@@ -251,6 +255,7 @@ final case class MergeAgentServiceLive(
       _           <- recordMergeSuccess(issue, repoPath)
       _           <- verifyCiIfRequired(issue, run, workspaceId, repoPath)
       _           <- markIssueDone(issue, run.branchName, baseBranch)
+      _           <- cleanupMergedRun(run.id)
     yield ()
 
   private def handleMergeConflict(

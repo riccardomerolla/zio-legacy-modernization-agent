@@ -157,6 +157,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
     settings: Ref[Map[String, String]],
     gitCalls: Ref[List[String]],
     issueEvents: Ref[List[IssueEvent]],
+    cleanedRuns: Ref[List[String]],
     mergeFailure: Ref[Option[GitError]],
     ciResult: Ref[(List[String], Int)],
     activityEvents: Ref[List[ActivityEvent]],
@@ -192,6 +193,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                         )
       gitCalls       <- Ref.make(List.empty[String])
       issueEvents    <- Ref.make(List.empty[IssueEvent])
+      cleanedRuns    <- Ref.make(List.empty[String])
       settings       <- Ref.make(Map.empty[String, String])
       mergeFailure   <- Ref.make(Option.empty[GitError])
       ciResult       <- Ref.make((List("All checks passed"), 0))
@@ -247,6 +249,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                           activityHub = activityHub,
                           configRepository = configRepo,
                           workReportEventBus = workReportBus,
+                          cleanupMergedRun = runId => cleanedRuns.update(_ :+ runId),
                           queue = workQueue,
                           pending = pendingRef,
                           commandRunner = (_, _) => ciResult.get,
@@ -265,6 +268,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
       settings,
       gitCalls,
       issueEvents,
+      cleanedRuns,
       mergeFailure,
       ciResult,
       activityEvents,
@@ -306,6 +310,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
         issue   <- harness.issueState.get.map(_(harness.issueId))
         calls   <- harness.gitCalls.get
         events  <- harness.issueEvents.get
+        cleaned <- harness.cleanedRuns.get
       yield assertTrue(
         result == (),
         calls.headOption.contains("checkout:/tmp/repo:main"),
@@ -322,6 +327,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
             success.deletions == 4
           case _                                  => false
         },
+        cleaned == List("run-1"),
       )
     },
     test("activity event for Merging queues automatic merge processing") {

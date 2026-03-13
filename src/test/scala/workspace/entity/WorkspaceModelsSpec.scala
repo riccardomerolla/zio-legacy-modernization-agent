@@ -111,12 +111,20 @@ object WorkspaceModelsSpec extends ZIOSpecDefault:
         WorkspaceRunEvent.RunInterrupted("run-evt", "alice", now.plusSeconds(3)),
         WorkspaceRunEvent.RunResumed("run-evt", "alice", "continue", now.plusSeconds(4)),
         WorkspaceRunEvent.UserDetached("run-evt", "alice", now.plusSeconds(5)),
+        WorkspaceRunEvent.CleanupRecorded(
+          "run-evt",
+          worktreeRemoved = true,
+          branchDeleted = true,
+          "cleanup done",
+          now.plusSeconds(6),
+        ),
       )
       val run    = WorkspaceRun.fromEvents(events)
       assertTrue(
         run.exists(_.status == RunStatus.Running(RunSessionMode.Autonomous)),
         run.exists(_.attachedUsers.isEmpty),
         run.exists(_.controllerUserId.isEmpty),
+        run.exists(_.updatedAt == now.plusSeconds(6)),
       )
     },
   )

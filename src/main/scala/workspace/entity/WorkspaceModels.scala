@@ -277,6 +277,11 @@ object WorkspaceRun:
             )
           }
 
+      case e: WorkspaceRunEvent.CleanupRecorded =>
+        current
+          .toRight(s"WorkspaceRun ${e.runId} not initialised before CleanupRecorded event")
+          .map(run => Some(run.copy(updatedAt = e.occurredAt)))
+
 enum WorkspaceError:
   case NotFound(id: String)
   case Disabled(id: String)

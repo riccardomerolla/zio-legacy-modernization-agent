@@ -27,6 +27,7 @@ trait WorkspaceRunService:
     agentNameOverride: Option[String] = None,
   ): IO[WorkspaceError, WorkspaceRun]
   def cancelRun(runId: String): IO[WorkspaceError, Unit]
+  def cleanupAfterSuccessfulMerge(runId: String): UIO[Unit]      = ZIO.unit
   def registerSlot(runId: String, handle: SlotHandle): UIO[Unit] = ZIO.unit
 
 object WorkspaceRunService:
@@ -127,6 +128,15 @@ object WorkspaceRunServiceLive:
         ()
       }
 
+  val defaultBranchDelete: (String, String) => Task[Unit] =
+    (repoPath, branchName) =>
+      ZIO.attemptBlockingIO {
+        val pb = new ProcessBuilder("git", "branch", "-d", branchName)
+        pb.directory(Paths.get(repoPath).toFile)
+        pb.start().waitFor()
+        ()
+      }
+
 final case class WorkspaceRunServiceLive(
   wsRepo: WorkspaceRepository,
   chatRepo: ChatRepository,
@@ -136,6 +146,7 @@ final case class WorkspaceRunServiceLive(
   // Injectable for testing: (repoPath, worktreePath, branch) => effect
   worktreeAdd: (String, String, String) => IO[WorkspaceError, Unit] = WorkspaceRunServiceLive.defaultWorktreeAdd,
   worktreeRemove: String => Task[Unit] = WorkspaceRunServiceLive.defaultWorktreeRemove,
+  branchDelete: (String, String) => Task[Unit] = WorkspaceRunServiceLive.defaultBranchDelete,
   // Injectable for testing: checks Docker availability
   dockerCheck: IO[WorkspaceError, Unit] = DockerSupport.requireDocker,
   // Injectable for testing: replaces CliAgentRunner.runProcessStreaming; signature (argv, cwd, onLine) => exitCode
@@ -162,6 +173,17 @@ final case class WorkspaceRunServiceLive(
 
   override def registerSlot(runId: String, handle: SlotHandle): UIO[Unit] =
     slotRegistry.update(_ + (runId -> handle))
+
+  override def cleanupAfterSuccessfulMerge(runId: String): UIO[Unit] =
+    wsRepo
+      .getRun(runId)
+      .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+      .flatMap {
+        case Some(run) => maybeCleanupWorktree(run, WorkspaceRunCleanup.AfterMergeSuccess)
+        case None      => ZIO.logWarning(s"[run:$runId] skipping post-merge cleanup: run not found")
+      }
+      .catchAll(error => ZIO.logError(s"[run:$runId] post-merge cleanup failed: $error"))
+      .unit
 
   override def assign(workspaceId: String, req: AssignRunRequest): IO[WorkspaceError, WorkspaceRun] =
     for
@@ -266,7 +288,7 @@ final case class WorkspaceRunServiceLive(
                                .onExit {
                                  case Exit.Failure(c) if c.isInterruptedOnly =>
                                    (updateRunStatus(run.id, RunStatus.Cancelled) *>
-                                     maybeCleanupWorktree(run, RunStatus.Cancelled) *>
+                                     maybeCleanupWorktree(run, WorkspaceRunCleanup.OnCancelled) *>
                                      appendToConversation(run.conversationId, "Run cancelled by user.").ignore).ignore
                                  case _                                      => ZIO.unit
                                }
@@ -373,7 +395,7 @@ final case class WorkspaceRunServiceLive(
                                             .onExit {
                                               case Exit.Failure(c) if c.isInterruptedOnly =>
                                                 (updateRunStatus(continuedRun.id, RunStatus.Cancelled) *>
-                                                  maybeCleanupWorktree(continuedRun, RunStatus.Cancelled) *>
+                                                  maybeCleanupWorktree(continuedRun, WorkspaceRunCleanup.OnCancelled) *>
                                                   appendToConversation(
                                                     continuedRun.conversationId,
                                                     "Run cancelled by user.",
@@ -614,7 +636,6 @@ final case class WorkspaceRunServiceLive(
                     .when(exitOpt.isDefined)
       status    = if exitOpt.isDefined && exitCode == 0 then RunStatus.Completed else RunStatus.Failed
       _        <- updateRunStatus(run.id, status)
-      _        <- maybeCleanupWorktree(run, status)
       _        <- ZIO.logInfo(s"[run:${run.id}] status=$status")
     yield ()).ensuring(gitWatcher.unregisterRun(run.id))
 
@@ -730,9 +751,9 @@ final case class WorkspaceRunServiceLive(
                    .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
     yield ()
 
-  private def maybeCleanupWorktree(run: WorkspaceRun, status: RunStatus): IO[WorkspaceError, Unit] =
-    status match
-      case RunStatus.Cancelled =>
+  private def maybeCleanupWorktree(run: WorkspaceRun, cleanup: WorkspaceRunCleanup): IO[WorkspaceError, Unit] =
+    cleanup match
+      case WorkspaceRunCleanup.OnCancelled       =>
         wsRepo
           .listRuns(run.workspaceId)
           .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
@@ -745,4 +766,89 @@ final case class WorkspaceRunServiceLive(
             if hasActiveSibling then ZIO.unit
             else worktreeRemove(run.worktreePath).ignore
           }
-      case _                   => ZIO.unit
+      case WorkspaceRunCleanup.AfterMergeSuccess =>
+        for
+          runs          <- wsRepo
+                             .listRuns(run.workspaceId)
+                             .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+          otherRunExists = runs.exists(other =>
+                             other.id != run.id &&
+                             other.worktreePath == run.worktreePath
+                           )
+          _             <-
+            if otherRunExists then
+              recordCleanupAudit(
+                run = run,
+                worktreeRemoved = false,
+                branchDeleted = false,
+                details = s"Skipped cleanup because another run still references ${run.worktreePath}",
+              ) *>
+                ZIO.logWarning(
+                  s"[run:${run.id}] skipping post-merge cleanup because another run references ${run.worktreePath}"
+                )
+            else cleanupMergedWorktree(run)
+        yield ()
+
+  private def cleanupMergedWorktree(run: WorkspaceRun): IO[WorkspaceError, Unit] =
+    for
+      workspace <- wsRepo
+                     .get(run.workspaceId)
+                     .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+                     .flatMap {
+                       case Some(value) => ZIO.succeed(value)
+                       case None        => ZIO.fail(WorkspaceError.NotFound(run.workspaceId))
+                     }
+      removed   <-
+        worktreeRemove(run.worktreePath).as(true).catchAll(error =>
+          ZIO.logError(s"[run:${run.id}] failed to remove worktree ${run.worktreePath}: ${error.getMessage}") *>
+            recordCleanupAudit(
+              run = run,
+              worktreeRemoved = false,
+              branchDeleted = false,
+              details = s"Cleanup failed removing worktree: ${error.getMessage}",
+            ).as(false)
+        )
+      _         <- if !removed then ZIO.unit
+                   else
+                     branchDelete(workspace.localPath, run.branchName).either.flatMap {
+                       case Right(_)    =>
+                         recordCleanupAudit(
+                           run = run,
+                           worktreeRemoved = true,
+                           branchDeleted = true,
+                           details = s"Removed worktree ${run.worktreePath} and deleted branch ${run.branchName}",
+                         )
+                       case Left(error) =>
+                         ZIO.logError(s"[run:${run.id}] failed to delete branch ${run.branchName}: ${error.getMessage}") *>
+                           recordCleanupAudit(
+                             run = run,
+                             worktreeRemoved = true,
+                             branchDeleted = false,
+                             details = s"Removed worktree but failed to delete branch: ${error.getMessage}",
+                           )
+                     }
+    yield ()
+
+  private def recordCleanupAudit(
+    run: WorkspaceRun,
+    worktreeRemoved: Boolean,
+    branchDeleted: Boolean,
+    details: String,
+  ): IO[WorkspaceError, Unit] =
+    for
+      now <- Clock.instant
+      _   <- wsRepo
+               .appendRun(
+                 WorkspaceRunEvent.CleanupRecorded(
+                   runId = run.id,
+                   worktreeRemoved = worktreeRemoved,
+                   branchDeleted = branchDeleted,
+                   details = details,
+                   occurredAt = now,
+                 )
+               )
+               .mapError(e => WorkspaceError.PersistenceFailure(RuntimeException(e.toString)))
+    yield ()
+
+private enum WorkspaceRunCleanup:
+  case OnCancelled, AfterMergeSuccess
