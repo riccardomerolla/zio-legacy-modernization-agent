@@ -207,6 +207,21 @@ object IssueRepositoryESSpec extends ZIOSpecDefault:
           )).provideLayer(layerFor(path))
         }
       },
+      test("approved event preserves HumanReview state for later merge transition") {
+        withTempDir { path =>
+          val issueId = Ids.IssueId("issue-9b")
+          val now     = Instant.parse("2026-03-02T10:05:00Z")
+          (for
+            repo <- ZIO.service[IssueRepository]
+            _    <- repo.append(IssueEvent.Created(issueId, "Approve me", "Human review pending", "task", "medium", now))
+            _    <- repo.append(IssueEvent.MovedToHumanReview(issueId, now.plusSeconds(1), now.plusSeconds(1)))
+            _    <- repo.append(IssueEvent.Approved(issueId, "reviewer", now.plusSeconds(2), now.plusSeconds(2)))
+            got  <- repo.get(issueId)
+          yield assertTrue(
+            got.state == IssueState.HumanReview(now.plusSeconds(1))
+          )).provideLayer(layerFor(path))
+        }
+      },
       test("merge conflict event updates projection and clears on retry merge") {
         withTempDir { path =>
           val issueId = Ids.IssueId("issue-10")

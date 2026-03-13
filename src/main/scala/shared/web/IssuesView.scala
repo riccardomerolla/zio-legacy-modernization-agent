@@ -673,7 +673,18 @@ object IssuesView:
                   href := s"/issues/$issueIdStr/edit",
                   cls  := "shrink-0 rounded-md border border-white/20 px-3 py-1.5 text-sm font-medium text-slate-300 hover:border-white/30 hover:text-white",
                 )("Edit"),
-              )
+              ),
+              if issue.status == IssueStatus.HumanReview then
+                div(cls := "mt-4")(
+                  form(method := "post", action := s"/issues/$issueIdStr/approve")(
+                    input(`type` := "hidden", name := "approvedBy", value := "detail"),
+                    button(
+                      `type` := "submit",
+                      cls    := "rounded-md border border-purple-300/40 bg-purple-500/20 px-3 py-2 text-sm font-semibold text-purple-100 hover:bg-purple-500/30",
+                    )("Approve"),
+                  )
+                )
+              else (),
             ),
             // task description
             div(cls := "rounded-xl border border-white/10 bg-slate-900/70 p-6")(
@@ -1398,6 +1409,17 @@ object IssuesView:
         )
       else (),
       if powHtml.nonEmpty then raw(powHtml) else (),
+      if issue.status == IssueStatus.HumanReview then
+        div(cls := "mt-2")(
+          form(method := "post", action := s"/issues/$issueId/approve")(
+            input(`type` := "hidden", name := "approvedBy", value := "board"),
+            button(
+              `type` := "submit",
+              cls    := "w-full rounded border border-purple-400/30 bg-purple-500/20 px-2 py-1.5 text-[11px] font-semibold text-purple-100 hover:bg-purple-500/30",
+            )("Approve"),
+          )
+        )
+      else (),
     )
 
   private def dispatchStatusBadge(status: DispatchStatusResponse): Frag =

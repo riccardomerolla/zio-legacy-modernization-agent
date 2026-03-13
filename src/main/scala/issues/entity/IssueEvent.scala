@@ -67,6 +67,13 @@ object IssueEvent:
     occurredAt: Instant,
   ) extends IssueEvent
 
+  final case class Approved(
+    issueId: IssueId,
+    approvedBy: String,
+    approvedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
   final case class MovedToRework(
     issueId: IssueId,
     movedAt: Instant,

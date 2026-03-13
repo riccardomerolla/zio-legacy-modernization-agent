@@ -109,10 +109,10 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
             analysisDocIds = List(Ids.AnalysisDocId("analysis-1"), Ids.AnalysisDocId("analysis-2")),
             mergeConflictFiles = List("src/main/scala/db/Repo.scala"),
           )
-          val event: IssueEvent = IssueEvent.MergeConflictRecorded(
+          val event: IssueEvent = IssueEvent.Approved(
             issueId = issue.id,
-            conflictingFiles = issue.mergeConflictFiles,
-            detectedAt = createdAt,
+            approvedBy = "reviewer",
+            approvedAt = createdAt,
             occurredAt = createdAt,
           )
 

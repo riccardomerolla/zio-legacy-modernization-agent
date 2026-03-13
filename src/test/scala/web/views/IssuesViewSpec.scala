@@ -228,6 +228,29 @@ object IssuesViewSpec extends ZIOSpecDefault:
         html.contains("Tight coupling"),
       )
     },
+    test("detail renders approve action for HumanReview issues") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.detail(
+        issue = AgentIssueView(
+          id = Some("review-issue"),
+          title = "Approve this",
+          description = "Task",
+          issueType = "task",
+          status = IssueStatus.HumanReview,
+          createdAt = now,
+          updatedAt = now,
+        ),
+        issueRuns = Nil,
+        availableAgents = Nil,
+        analysisDocs = Nil,
+        workspaces = Nil,
+      )
+      assertTrue(
+        html.contains("Approve"),
+        html.contains("action=\"/issues/review-issue/approve\""),
+        html.contains("name=\"approvedBy\" value=\"detail\""),
+      )
+    },
     test("detail renders merge conflict section with retry merge affordance") {
       val now  = Instant.parse("2026-03-02T10:00:00Z")
       val html = IssuesView.detail(
@@ -279,6 +302,32 @@ object IssuesViewSpec extends ZIOSpecDefault:
       assertTrue(
         html.contains("Conflict"),
         html.contains("Merge conflict affecting 1 file(s)"),
+      )
+    },
+    test("board renders approve action on HumanReview cards") {
+      val now   = Instant.parse("2026-03-02T10:00:00Z")
+      val issue = AgentIssueView(
+        id = Some("review-10"),
+        title = "Needs approval",
+        description = "Task",
+        issueType = "task",
+        status = IssueStatus.HumanReview,
+        createdAt = now,
+        updatedAt = now,
+      )
+      val html  = IssuesView.board(
+        issues = List(issue),
+        workspaces = Nil,
+        workspaceFilter = None,
+        agentFilter = None,
+        priorityFilter = None,
+        tagFilter = None,
+        query = None,
+      )
+      assertTrue(
+        html.contains("Approve"),
+        html.contains("action=\"/issues/review-10/approve\""),
+        html.contains("name=\"approvedBy\" value=\"board\""),
       )
     },
   )

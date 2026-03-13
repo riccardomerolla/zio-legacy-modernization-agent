@@ -160,6 +160,11 @@ object AgentIssue:
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToHumanReview event")
           .map(issue => Some(issue.copy(state = IssueState.HumanReview(moved.movedAt))))
 
+      case approved: IssueEvent.Approved =>
+        current
+          .toRight(s"Issue ${approved.issueId.value} not initialized before Approved event")
+          .map(issue => Some(issue))
+
       case moved: IssueEvent.MovedToRework =>
         current
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToRework event")
