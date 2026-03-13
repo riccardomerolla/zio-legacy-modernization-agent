@@ -6,7 +6,7 @@ import zio.json.*
 
 import config.entity.AgentInfo
 import issues.entity.IssueWorkReport
-import issues.entity.api.{ AgentIssueView, AnalysisContextDocView, DispatchStatusResponse, IssueStatus, IssueTemplate }
+import issues.entity.api.*
 import scalatags.Text.all.*
 import shared.ids.Ids.IssueId
 import workspace.entity.{ RunSessionMode, RunStatus, WorkspaceRun }
@@ -455,7 +455,7 @@ object IssuesView:
     workspaces: List[(String, String)],
     workReport: Option[IssueWorkReport],
   ): String =
-    detailPage(issue, issueRuns, availableAgents, Nil, workspaces, workReport)
+    detailPage(issue, issueRuns, availableAgents, Nil, Nil, workspaces, workReport)
 
   def newForm(defaultRunId: Option[String], workspaces: List[(String, String)], templates: List[IssueTemplate])
     : String =
@@ -607,15 +607,17 @@ object IssuesView:
     issueRuns: List[WorkspaceRun],
     availableAgents: List[AgentInfo],
     analysisDocs: List[AnalysisContextDocView],
+    mergeHistory: List[MergeHistoryEntryView],
     workspaces: List[(String, String)],
   ): String =
-    detailPage(issue, issueRuns, availableAgents, analysisDocs, workspaces, workReport = None)
+    detailPage(issue, issueRuns, availableAgents, analysisDocs, mergeHistory, workspaces, workReport = None)
 
   private def detailPage(
     issue: AgentIssueView,
     issueRuns: List[WorkspaceRun],
     availableAgents: List[AgentInfo],
     analysisDocs: List[AnalysisContextDocView],
+    mergeHistory: List[MergeHistoryEntryView],
     workspaces: List[(String, String)],
     workReport: Option[IssueWorkReport],
   ): String =
@@ -651,6 +653,10 @@ object IssuesView:
               href := "#issue-analysis-context",
               cls  := "border-b-2 border-transparent py-3 px-1 text-sm font-medium text-gray-400 hover:text-white hover:border-white/30 whitespace-nowrap",
             )("Analysis Context"),
+            a(
+              href := "#issue-merge-history",
+              cls  := "border-b-2 border-transparent py-3 px-1 text-sm font-medium text-gray-400 hover:text-white hover:border-white/30 whitespace-nowrap",
+            )("Merge History"),
           )
         ),
         // ── main two-column layout ───────────────────────────────────────
@@ -803,6 +809,15 @@ object IssuesView:
                       ),
                     )
                   }
+                ),
+            ),
+            div(id := "issue-merge-history", cls := "rounded-xl border border-white/10 bg-slate-900/60 p-6")(
+              h2(cls := "mb-3 text-base font-semibold text-white")("Merge History"),
+              if mergeHistory.isEmpty then
+                p(cls := "text-sm text-slate-400")("No merge attempts recorded.")
+              else
+                div(cls := "space-y-3")(
+                  mergeHistory.map(renderMergeHistoryEntry)
                 ),
             ),
           ),
@@ -1005,6 +1020,55 @@ object IssuesView:
         JsResources.inlineModuleScript("/static/client/components/issue-pipeline.js"),
         JsResources.inlineModuleScript("/static/client/components/issue-assignment-suggestions.js"),
       )
+    )
+
+  private def renderMergeHistoryEntry(entry: MergeHistoryEntryView): Frag =
+    val badgeCls = entry.eventType match
+      case "attempted" => "border-slate-400/30 bg-slate-500/15 text-slate-100"
+      case "succeeded" => "border-emerald-400/30 bg-emerald-500/15 text-emerald-100"
+      case "failed"    => "border-rose-400/30 bg-rose-500/15 text-rose-100"
+      case "ci"        =>
+        if entry.ciPassed.contains(true) then
+          "border-blue-400/30 bg-blue-500/15 text-blue-100"
+        else "border-orange-400/30 bg-orange-500/15 text-orange-100"
+      case _           => "border-white/10 bg-white/5 text-slate-100"
+    val label    = entry.eventType match
+      case "attempted" => "Merge Attempted"
+      case "succeeded" => "Merge Succeeded"
+      case "failed"    => "Merge Failed"
+      case "ci"        => if entry.ciPassed.contains(true) then "CI Passed" else "CI Failed"
+      case other       => other
+    div(cls := "rounded-lg border border-white/10 bg-slate-800/70 p-4")(
+      div(cls := "flex flex-wrap items-center justify-between gap-2")(
+        span(cls := s"rounded-full border px-2 py-0.5 text-xs font-semibold $badgeCls")(label),
+        span(cls := "text-xs text-slate-400")(prettyRelativeTime(entry.happenedAt)),
+      ),
+      div(cls := "mt-2 space-y-2 text-sm text-slate-200")(
+        entry.sourceBranch.zip(entry.targetBranch).headOption.map {
+          case (source, target) =>
+            p(span(cls := "text-slate-400")("Branches: "), code(source), " -> ", code(target))
+        }.getOrElse(()),
+        entry.commitSha.map(sha =>
+          p(span(cls := "text-slate-400")("Commit: "), code(sha.take(12)))
+        ).getOrElse(()),
+        entry.filesChanged.map { files =>
+          p(
+            span(cls := "text-slate-400")("Diff: "),
+            s"$files files changed, +${entry.insertions.getOrElse(0)} / -${entry.deletions.getOrElse(0)}",
+          )
+        }.getOrElse(()),
+        entry.details.filter(_.nonEmpty).map(details =>
+          p(span(cls := "text-slate-400")("Details: "), details)
+        ).getOrElse(()),
+        if entry.conflictFiles.nonEmpty then
+          div(
+            p(cls := "text-slate-400")("Conflict files"),
+            ul(cls := "mt-1 space-y-1 text-xs text-rose-100")(
+              entry.conflictFiles.map(file => li(code(file)))
+            ),
+          )
+        else (),
+      ),
     )
 
   private def filterBar(

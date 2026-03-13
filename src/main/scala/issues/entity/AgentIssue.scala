@@ -165,6 +165,11 @@ object AgentIssue:
           .toRight(s"Issue ${approved.issueId.value} not initialized before Approved event")
           .map(issue => Some(issue))
 
+      case attempted: IssueEvent.MergeAttempted =>
+        current
+          .toRight(s"Issue ${attempted.issueId.value} not initialized before MergeAttempted event")
+          .map(issue => Some(issue))
+
       case moved: IssueEvent.MovedToRework =>
         current
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToRework event")
@@ -174,6 +179,21 @@ object AgentIssue:
         current
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToMerging event")
           .map(issue => Some(issue.copy(state = IssueState.Merging(moved.movedAt), mergeConflictFiles = Nil)))
+
+      case succeeded: IssueEvent.MergeSucceeded =>
+        current
+          .toRight(s"Issue ${succeeded.issueId.value} not initialized before MergeSucceeded event")
+          .map(issue => Some(issue))
+
+      case failed: IssueEvent.MergeFailed =>
+        current
+          .toRight(s"Issue ${failed.issueId.value} not initialized before MergeFailed event")
+          .map(issue => Some(issue.copy(mergeConflictFiles = sanitizeFilePaths(failed.conflictFiles))))
+
+      case verified: IssueEvent.CiVerificationResult =>
+        current
+          .toRight(s"Issue ${verified.issueId.value} not initialized before CiVerificationResult event")
+          .map(issue => Some(issue))
 
       case done: IssueEvent.MarkedDone =>
         current

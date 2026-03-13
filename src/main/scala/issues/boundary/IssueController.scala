@@ -154,6 +154,7 @@ final case class IssueControllerLive(
           issueRuns      <- workspaceRepository.listRunsByIssueRef(s"#$id").mapError(mapIssueRepoError)
           allAgents      <- agentRepository.list().mapError(mapIssueRepoError)
           analysisDocs   <- loadIssueAnalysisContext(issue).mapError(mapIssueRepoError)
+          mergeHistory   <- loadMergeHistory(issue.id)
           availableAgents = allAgents.filter(_.enabled).map(registryAgentToAgentInfo)
         yield html(
           HtmlViews.issueDetail(
@@ -161,6 +162,7 @@ final case class IssueControllerLive(
             issueRuns,
             availableAgents,
             analysisDocs,
+            mergeHistory,
             workspaces.map(ws => ws.id -> ws.name),
           )
         )
@@ -2006,6 +2008,53 @@ final case class IssueControllerLive(
         )
       )
     )
+
+  private def loadMergeHistory(issueId: IssueId): IO[PersistenceError, List[MergeHistoryEntryView]] =
+    issueRepository
+      .history(issueId)
+      .mapError(mapIssueRepoError)
+      .map { history =>
+        history.sortBy(_.occurredAt).flatMap {
+          case e: IssueEvent.MergeAttempted       =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "attempted",
+                happenedAt = e.attemptedAt,
+                sourceBranch = Some(e.sourceBranch),
+                targetBranch = Some(e.targetBranch),
+              )
+            )
+          case e: IssueEvent.MergeSucceeded       =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "succeeded",
+                happenedAt = e.mergedAt,
+                commitSha = Some(e.commitSha),
+                filesChanged = Some(e.filesChanged),
+                insertions = Some(e.insertions),
+                deletions = Some(e.deletions),
+              )
+            )
+          case e: IssueEvent.MergeFailed          =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "failed",
+                happenedAt = e.failedAt,
+                conflictFiles = e.conflictFiles,
+              )
+            )
+          case e: IssueEvent.CiVerificationResult =>
+            Some(
+              MergeHistoryEntryView(
+                eventType = "ci",
+                happenedAt = e.checkedAt,
+                ciPassed = Some(e.passed),
+                details = Option(e.details).map(_.trim).filter(_.nonEmpty),
+              )
+            )
+          case _                                  => None
+        }
+      }
 
   private def previewIssuesFromFolder(request: FolderImportRequest)
     : IO[PersistenceError, List[FolderImportPreviewItem]] =

@@ -26,6 +26,8 @@ final case class DiffFileStat(path: String, additions: Int, deletions: Int) deri
 
 final case class GitDiffStat(files: List[DiffFileStat]) derives JsonCodec, Schema
 
+final case class GitChangeSummary(filesChanged: Int, insertions: Int, deletions: Int) derives JsonCodec, Schema
+
 final case class GitLogEntry(
   hash: String,
   shortHash: String,

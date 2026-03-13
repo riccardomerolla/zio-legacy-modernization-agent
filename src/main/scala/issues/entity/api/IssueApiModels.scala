@@ -193,6 +193,20 @@ final case class AnalysisContextDocView(
   vscodeUrl: Option[String] = None,
 )
 
+final case class MergeHistoryEntryView(
+  eventType: String,
+  happenedAt: Instant,
+  sourceBranch: Option[String] = None,
+  targetBranch: Option[String] = None,
+  commitSha: Option[String] = None,
+  ciPassed: Option[Boolean] = None,
+  details: Option[String] = None,
+  conflictFiles: List[String] = Nil,
+  filesChanged: Option[Int] = None,
+  insertions: Option[Int] = None,
+  deletions: Option[Int] = None,
+)
+
 case class PipelineStep(
   agentId: String,
   promptOverride: Option[String] = None,

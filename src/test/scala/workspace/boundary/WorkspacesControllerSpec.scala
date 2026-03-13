@@ -155,6 +155,10 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
       ZIO.unit
     def conflictedFiles(repoPath: String): IO[GitError, List[String]]                             =
       ZIO.succeed(Nil)
+    def headSha(repoPath: String): IO[GitError, String]                                           =
+      ZIO.succeed("abc123")
+    def showDiffStat(repoPath: String, ref: String): IO[GitError, GitDiffStat]                    =
+      ZIO.succeed(GitDiffStat(Nil))
 
   final private class StubAnalysisScheduler(triggerRef: Ref[List[(String, Boolean)]])
     extends WorkspaceAnalysisScheduler:

@@ -221,23 +221,36 @@ final case class MergeAgentServiceLive(
     baseBranch: String,
   ): IO[MergeAgentError, Unit] =
     for
-      _ <- gitService
-             .checkout(repoPath, baseBranch)
-             .mapError(MergeAgentError.GitFailure.apply)
-      _ <- gitService
-             .mergeNoFastForward(
-               repoPath,
-               run.branchName,
-               mergeCommitMessage(issue, run.branchName, baseBranch),
-             )
-             .catchAll {
-               case mergeFailure: GitError.CommandFailed =>
-                 handleMergeConflict(issue, repoPath, mergeFailure)
-               case other                                =>
-                 ZIO.fail(MergeAgentError.GitFailure(other))
-             }
-      _ <- verifyCiIfRequired(issue, run, workspaceId, repoPath)
-      _ <- markIssueDone(issue, run.branchName, baseBranch)
+      attemptedAt <- Clock.instant
+      _           <- issueRepository
+                       .append(
+                         IssueEvent.MergeAttempted(
+                           issueId = issue.id,
+                           sourceBranch = run.branchName,
+                           targetBranch = baseBranch,
+                           attemptedAt = attemptedAt,
+                           occurredAt = attemptedAt,
+                         )
+                       )
+                       .mapError(err => MergeAgentError.PersistenceFailure("record_merge_attempt", err.toString))
+      _           <- gitService
+                       .checkout(repoPath, baseBranch)
+                       .mapError(MergeAgentError.GitFailure.apply)
+      _           <- gitService
+                       .mergeNoFastForward(
+                         repoPath,
+                         run.branchName,
+                         mergeCommitMessage(issue, run.branchName, baseBranch),
+                       )
+                       .catchAll {
+                         case mergeFailure: GitError.CommandFailed =>
+                           handleMergeConflict(issue, repoPath, mergeFailure)
+                         case other                                =>
+                           ZIO.fail(MergeAgentError.GitFailure(other))
+                       }
+      _           <- recordMergeSuccess(issue, repoPath)
+      _           <- verifyCiIfRequired(issue, run, workspaceId, repoPath)
+      _           <- markIssueDone(issue, run.branchName, baseBranch)
     yield ()
 
   private def handleMergeConflict(
@@ -249,6 +262,16 @@ final case class MergeAgentServiceLive(
       files <- gitService.conflictedFiles(repoPath).orElseSucceed(Nil)
       _     <- gitService.mergeAbort(repoPath).orElseSucceed(())
       now   <- Clock.instant
+      _     <- issueRepository
+                 .append(
+                   IssueEvent.MergeFailed(
+                     issueId = issue.id,
+                     conflictFiles = files,
+                     failedAt = now,
+                     occurredAt = now,
+                   )
+                 )
+                 .mapError(err => MergeAgentError.PersistenceFailure("record_merge_failed", err.toString))
       _     <- issueRepository
                  .append(
                    IssueEvent.MergeConflictRecorded(
@@ -271,6 +294,27 @@ final case class MergeAgentServiceLive(
                  .mapError(err => MergeAgentError.PersistenceFailure("move_issue_to_rework", err.toString))
       _     <- publishMergeConflict(issue.id, files)
       _     <- ZIO.fail(MergeAgentError.GitFailure(mergeFailure))
+    yield ()
+
+  private def recordMergeSuccess(issue: AgentIssue, repoPath: String): IO[MergeAgentError, Unit] =
+    for
+      commitSha <- gitService.headSha(repoPath).mapError(MergeAgentError.GitFailure.apply)
+      diffStat  <- gitService.showDiffStat(repoPath, commitSha).mapError(MergeAgentError.GitFailure.apply)
+      mergedAt  <- Clock.instant
+      summary    = summarizeDiffStat(diffStat)
+      _         <- issueRepository
+                     .append(
+                       IssueEvent.MergeSucceeded(
+                         issueId = issue.id,
+                         commitSha = commitSha,
+                         mergedAt = mergedAt,
+                         filesChanged = summary.filesChanged,
+                         insertions = summary.insertions,
+                         deletions = summary.deletions,
+                         occurredAt = mergedAt,
+                       )
+                     )
+                     .mapError(err => MergeAgentError.PersistenceFailure("record_merge_succeeded", err.toString))
     yield ()
 
   private def markIssueDone(
@@ -344,6 +388,18 @@ final case class MergeAgentServiceLive(
       parsedStatus  =
         if code == 0 then normalizePassedStatus(ProofOfWorkExtractor.parseCiStatus(lines)) else CiStatus.Failed
       finishedAt   <- Clock.instant
+      details       = lines.map(_.trim).filter(_.nonEmpty).mkString(" | ")
+      _            <- issueRepository
+                        .append(
+                          IssueEvent.CiVerificationResult(
+                            issueId = issue.id,
+                            passed = parsedStatus == CiStatus.Passed,
+                            details = details,
+                            checkedAt = finishedAt,
+                            occurredAt = finishedAt,
+                          )
+                        )
+                        .mapError(err => MergeAgentError.PersistenceFailure("record_ci_verification", err.toString))
       _            <- publishCiStatus(issue, run, parsedStatus, finishedAt)
       _            <- parsedStatus match
                         case CiStatus.Passed =>
@@ -396,6 +452,13 @@ final case class MergeAgentServiceLive(
     lines.map(_.trim).filter(_.nonEmpty).takeRight(8) match
       case Nil => "command exited with errors"
       case xs  => xs.mkString(" | ")
+
+  private def summarizeDiffStat(diffStat: workspace.entity.GitDiffStat): workspace.entity.GitChangeSummary =
+    workspace.entity.GitChangeSummary(
+      filesChanged = diffStat.files.size,
+      insertions = diffStat.files.map(_.additions).sum,
+      deletions = diffStat.files.map(_.deletions).sum,
+    )
 
   private def publishSuccess(issueId: IssueId): UIO[Unit] =
     Clock.instant.flatMap(now =>

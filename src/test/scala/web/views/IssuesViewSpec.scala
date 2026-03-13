@@ -122,6 +122,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
           )
         ),
         analysisDocs = Nil,
+        mergeHistory = Nil,
         workspaces = List("ws-1" -> "Main Workspace"),
       )
       assertTrue(
@@ -188,6 +189,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
         issueRuns = Nil,
         availableAgents = Nil,
         analysisDocs = Nil,
+        mergeHistory = Nil,
         workspaces = Nil,
       )
       assertTrue(
@@ -218,6 +220,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
             vscodeUrl = Some("vscode://file/Users/riccardo/repo/.llm4zio/analysis/architecture.md"),
           )
         ),
+        mergeHistory = Nil,
         workspaces = Nil,
       )
       assertTrue(
@@ -243,6 +246,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
         issueRuns = Nil,
         availableAgents = Nil,
         analysisDocs = Nil,
+        mergeHistory = Nil,
         workspaces = Nil,
       )
       assertTrue(
@@ -267,6 +271,7 @@ object IssuesViewSpec extends ZIOSpecDefault:
         issueRuns = Nil,
         availableAgents = Nil,
         analysisDocs = Nil,
+        mergeHistory = Nil,
         workspaces = Nil,
       )
       assertTrue(
@@ -302,6 +307,62 @@ object IssuesViewSpec extends ZIOSpecDefault:
       assertTrue(
         html.contains("Conflict"),
         html.contains("Merge conflict affecting 1 file(s)"),
+      )
+    },
+    test("detail renders merge history timeline") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.detail(
+        issue = AgentIssueView(
+          id = Some("merge-history-1"),
+          title = "Merged issue",
+          description = "Task",
+          issueType = "task",
+          status = IssueStatus.Done,
+          createdAt = now,
+          updatedAt = now,
+        ),
+        issueRuns = Nil,
+        availableAgents = Nil,
+        analysisDocs = Nil,
+        mergeHistory = List(
+          MergeHistoryEntryView(
+            eventType = "attempted",
+            happenedAt = now.minusSeconds(120),
+            sourceBranch = Some("agent/merge-history-1"),
+            targetBranch = Some("main"),
+          ),
+          MergeHistoryEntryView(
+            eventType = "ci",
+            happenedAt = now.minusSeconds(90),
+            ciPassed = Some(false),
+            details = Some("tests failed"),
+          ),
+          MergeHistoryEntryView(
+            eventType = "failed",
+            happenedAt = now.minusSeconds(60),
+            conflictFiles = List("src/Main.scala"),
+          ),
+          MergeHistoryEntryView(
+            eventType = "succeeded",
+            happenedAt = now.minusSeconds(30),
+            commitSha = Some("1234567890abcdef"),
+            filesChanged = Some(3),
+            insertions = Some(24),
+            deletions = Some(7),
+          ),
+        ),
+        workspaces = Nil,
+      )
+      assertTrue(
+        html.contains("Merge History"),
+        html.contains("Merge Attempted"),
+        html.contains("CI Failed"),
+        html.contains("Merge Failed"),
+        html.contains("Merge Succeeded"),
+        html.contains("agent/merge-history-1"),
+        html.contains("src/Main.scala"),
+        html.contains("1234567890ab"),
+        html.contains("3 files changed, +24 / -7"),
       )
     },
     test("board renders approve action on HumanReview cards") {

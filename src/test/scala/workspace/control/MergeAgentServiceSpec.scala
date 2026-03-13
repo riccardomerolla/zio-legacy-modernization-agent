@@ -20,9 +20,12 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
   private val now           = Instant.parse("2026-03-13T16:00:00Z")
   private val mergeConflict = GitError.CommandFailed("git merge --no-ff", "CONFLICT (content)")
 
-  final private class StubIssueRepository(state: Ref[Map[IssueId, AgentIssue]]) extends IssueRepository:
+  final private class StubIssueRepository(
+    state: Ref[Map[IssueId, AgentIssue]],
+    events: Ref[List[IssueEvent]],
+  ) extends IssueRepository:
     override def append(event: IssueEvent): IO[PersistenceError, Unit] =
-      state.modify { current =>
+      events.update(_ :+ event) *> state.modify { current =>
         val updated = event match
           case done: IssueEvent.MarkedDone                =>
             current.updatedWith(done.issueId)(_.map(_.copy(
@@ -38,6 +41,8 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
             )))
           case conflict: IssueEvent.MergeConflictRecorded =>
             current.updatedWith(conflict.issueId)(_.map(_.copy(mergeConflictFiles = conflict.conflictingFiles)))
+          case failed: IssueEvent.MergeFailed             =>
+            current.updatedWith(failed.issueId)(_.map(_.copy(mergeConflictFiles = failed.conflictFiles)))
           case _                                          => current
         ((), updated)
       }
@@ -99,6 +104,17 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
       calls.update(_ :+ s"merge-abort:$repoPath")
     override def conflictedFiles(repoPath: String): IO[GitError, List[String]]                             =
       calls.update(_ :+ s"conflicted-files:$repoPath").as(List("src/Main.scala", "README.md"))
+    override def headSha(repoPath: String): IO[GitError, String]                                           =
+      calls.update(_ :+ s"head-sha:$repoPath").as("1234567890abcdef1234567890abcdef12345678")
+    override def showDiffStat(repoPath: String, ref: String): IO[GitError, GitDiffStat]                    =
+      calls.update(_ :+ s"show-diff-stat:$repoPath:$ref").as(
+        GitDiffStat(
+          List(
+            DiffFileStat("src/Main.scala", 12, 3),
+            DiffFileStat("README.md", 4, 1),
+          )
+        )
+      )
 
   final private class StubActivityHub(events: Ref[List[ActivityEvent]], subscribers: Ref[Set[Queue[ActivityEvent]]])
     extends ActivityHub:
@@ -140,6 +156,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
     issueState: Ref[Map[IssueId, AgentIssue]],
     settings: Ref[Map[String, String]],
     gitCalls: Ref[List[String]],
+    issueEvents: Ref[List[IssueEvent]],
     mergeFailure: Ref[Option[GitError]],
     ciResult: Ref[(List[String], Int)],
     activityEvents: Ref[List[ActivityEvent]],
@@ -174,6 +191,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                           )
                         )
       gitCalls       <- Ref.make(List.empty[String])
+      issueEvents    <- Ref.make(List.empty[IssueEvent])
       settings       <- Ref.make(Map.empty[String, String])
       mergeFailure   <- Ref.make(Option.empty[GitError])
       ciResult       <- Ref.make((List("All checks passed"), 0))
@@ -219,7 +237,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                           createdAt = now,
                           updatedAt = now,
                         )
-      issueRepo       = StubIssueRepository(issueState)
+      issueRepo       = StubIssueRepository(issueState, issueEvents)
       workspaceRepo   = StubWorkspaceRepository(Map(workspace.id -> workspace), Map(run.id -> run))
       gitService      = StubGitService(gitCalls, mergeFailure)
       service         = MergeAgentServiceLive(
@@ -246,6 +264,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
       issueState,
       settings,
       gitCalls,
+      issueEvents,
       mergeFailure,
       ciResult,
       activityEvents,
@@ -286,11 +305,23 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
         result  <- MergeAgentService.mergeOnce(harness.issueId).provideLayer(harness.serviceLayer)
         issue   <- harness.issueState.get.map(_(harness.issueId))
         calls   <- harness.gitCalls.get
+        events  <- harness.issueEvents.get
       yield assertTrue(
         result == (),
         calls.headOption.contains("checkout:/tmp/repo:main"),
         calls.exists(_.startsWith("merge:/tmp/repo:agent/merge-1:Merge issue #merge-1")),
+        calls.contains("head-sha:/tmp/repo"),
+        calls.contains("show-diff-stat:/tmp/repo:1234567890abcdef1234567890abcdef12345678"),
         issue.state.isInstanceOf[IssueState.Done],
+        events.exists(_.isInstanceOf[IssueEvent.MergeAttempted]),
+        events.exists {
+          case success: IssueEvent.MergeSucceeded =>
+            success.commitSha == "1234567890abcdef1234567890abcdef12345678" &&
+            success.filesChanged == 2 &&
+            success.insertions == 16 &&
+            success.deletions == 4
+          case _                                  => false
+        },
       )
     },
     test("activity event for Merging queues automatic merge processing") {
@@ -325,12 +356,13 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
     },
     test("merge conflict aborts merge, records files, moves issue to Rework, and emits conflict activity") {
       for
-        harness <- makeHarness
-        _       <- harness.mergeFailure.set(Some(mergeConflict))
-        result  <- MergeAgentService.mergeOnce(harness.issueId).provideLayer(harness.serviceLayer).either
-        issue   <- harness.issueState.get.map(_(harness.issueId))
-        calls   <- harness.gitCalls.get
-        events  <- harness.activityEvents.get
+        harness     <- makeHarness
+        _           <- harness.mergeFailure.set(Some(mergeConflict))
+        result      <- MergeAgentService.mergeOnce(harness.issueId).provideLayer(harness.serviceLayer).either
+        issue       <- harness.issueState.get.map(_(harness.issueId))
+        calls       <- harness.gitCalls.get
+        events      <- harness.activityEvents.get
+        issueEvents <- harness.issueEvents.get
       yield assertTrue(
         result == Left(MergeAgentError.GitFailure(mergeConflict)),
         calls.contains("conflicted-files:/tmp/repo"),
@@ -340,6 +372,10 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
           case _                            => false,
         issue.mergeConflictFiles == List("src/Main.scala", "README.md"),
         events.exists(_.eventType == ActivityEventType.MergeConflict),
+        issueEvents.exists {
+          case failed: IssueEvent.MergeFailed => failed.conflictFiles == List("src/Main.scala", "README.md")
+          case _                              => false
+        },
       )
     },
     test("required CI verification publishes running/passed status and only then marks issue done") {
@@ -361,11 +397,17 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                              }
         (result, ciEvents) = tuple
         issue             <- harness.issueState.get.map(_(harness.issueId))
+        events            <- harness.issueEvents.get
       yield assertTrue(
         result == (),
         issue.state.isInstanceOf[IssueState.Done],
         ciEvents.map(_.runId) == List(TaskRunId("run-1"), TaskRunId("run-1")),
         ciEvents.map(_.ciStatus) == List(CiStatus.Running, CiStatus.Passed),
+        events.exists {
+          case ci: IssueEvent.CiVerificationResult =>
+            ci.passed && ci.details == "All checks passed"
+          case _                                   => false
+        },
       )
     },
     test("required CI verification moves issue to Rework when command fails") {
@@ -387,12 +429,18 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                              }
         (result, ciEvents) = tuple
         issue             <- harness.issueState.get.map(_(harness.issueId))
+        events            <- harness.issueEvents.get
       yield assertTrue(
         result == Left(MergeAgentError.CiVerificationFailed("[error] tests failed | 1 failing")),
         issue.state match
           case IssueState.Rework(_, reason) => reason == "CI verification failed: [error] tests failed | 1 failing"
           case _                            => false,
         ciEvents.map(_.ciStatus) == List(CiStatus.Running, CiStatus.Failed),
+        events.exists {
+          case ci: IssueEvent.CiVerificationResult =>
+            !ci.passed && ci.details == "[error] tests failed | 1 failing"
+          case _                                   => false
+        },
       )
     },
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock

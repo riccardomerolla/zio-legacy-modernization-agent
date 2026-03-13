@@ -60,6 +60,9 @@ object GitWatcherSpec extends ZIOSpecDefault:
       ZIO.unit
     override def mergeAbort(repoPath: String): IO[GitError, Unit]                                          = ZIO.unit
     override def conflictedFiles(repoPath: String): IO[GitError, List[String]]                             = ZIO.succeed(Nil)
+    override def headSha(repoPath: String): IO[GitError, String]                                           = ZIO.succeed("hash-b")
+    override def showDiffStat(repoPath: String, ref: String): IO[GitError, GitDiffStat]                    =
+      ZIO.succeed(GitDiffStat(Nil))
 
   def spec: Spec[TestEnvironment, Any] = suite("GitWatcherSpec")(
     test("publishes status and commit updates when values change") {
