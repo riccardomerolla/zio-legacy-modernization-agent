@@ -107,11 +107,12 @@ object FoundationSerializationSpec extends ZIOSpecDefault:
             kaizenSkill = Some("scala-zio-refactor"),
             milestoneRef = Some("m9-foundation"),
             analysisDocIds = List(Ids.AnalysisDocId("analysis-1"), Ids.AnalysisDocId("analysis-2")),
+            mergeConflictFiles = List("src/main/scala/db/Repo.scala"),
           )
-          val event: IssueEvent = IssueEvent.AnalysisAttached(
+          val event: IssueEvent = IssueEvent.MergeConflictRecorded(
             issueId = issue.id,
-            analysisDocIds = issue.analysisDocIds,
-            attachedAt = createdAt,
+            conflictingFiles = issue.mergeConflictFiles,
+            detectedAt = createdAt,
             occurredAt = createdAt,
           )
 

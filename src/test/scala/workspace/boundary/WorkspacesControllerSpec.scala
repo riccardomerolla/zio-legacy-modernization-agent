@@ -151,6 +151,10 @@ object WorkspacesControllerSpec extends ZIOSpecDefault:
       ZIO.unit
     def mergeNoFastForward(repoPath: String, branch: String, message: String): IO[GitError, Unit] =
       ZIO.unit
+    def mergeAbort(repoPath: String): IO[GitError, Unit]                                          =
+      ZIO.unit
+    def conflictedFiles(repoPath: String): IO[GitError, List[String]]                             =
+      ZIO.succeed(Nil)
 
   final private class StubAnalysisScheduler(triggerRef: Ref[List[(String, Boolean)]])
     extends WorkspaceAnalysisScheduler:

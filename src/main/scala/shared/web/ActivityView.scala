@@ -27,6 +27,7 @@ object ActivityView:
           filterButton("agent_assigned", "Agent Assigned"),
           filterButton("analysis_started", "Analysis Started"),
           filterButton("analysis_completed", "Analysis Completed"),
+          filterButton("merge_conflict", "Merge Conflict"),
           filterButton("message_sent", "Message Sent"),
           filterButton("config_changed", "Config Changed"),
         )
@@ -169,6 +170,11 @@ object ActivityView:
         "bg-rose-500/10 text-rose-400",
         "M12 9v3.75m0 3.75h.007v.008H12v-.008ZM21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
       )
+    case "MergeConflict"     =>
+      (
+        "bg-red-500/10 text-red-400",
+        "M12 3.75 21 20.25H3L12 3.75Zm0 5.25v4.5m0 3h.008v.008H12v-.008Z",
+      )
     case _                   =>
       (
         "bg-slate-500/10 text-slate-400",
@@ -186,6 +192,7 @@ object ActivityView:
     case "AnalysisStarted"   => "Analysis Started"
     case "AnalysisCompleted" => "Analysis Completed"
     case "AnalysisFailed"    => "Analysis Failed"
+    case "MergeConflict"     => "Merge Conflict"
     case _                   => "Unknown Event"
 
   private def toDbEventType(eventType: ActivityEventType): String = eventTypeName(eventType) match
@@ -199,6 +206,7 @@ object ActivityView:
     case "AnalysisStarted"   => "analysis_started"
     case "AnalysisCompleted" => "analysis_completed"
     case "AnalysisFailed"    => "analysis_failed"
+    case "MergeConflict"     => "merge_conflict"
     case _                   => "unknown"
 
   private def eventTypeName(eventType: ActivityEventType): String =

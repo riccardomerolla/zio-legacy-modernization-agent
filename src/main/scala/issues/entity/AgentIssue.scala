@@ -44,6 +44,7 @@ final case class AgentIssue(
   @fieldDefaultValue(None) kaizenSkill: Option[String] = None,
   @fieldDefaultValue(None) milestoneRef: Option[String] = None,
   @fieldDefaultValue(Nil) analysisDocIds: List[AnalysisDocId] = Nil,
+  @fieldDefaultValue(Nil) mergeConflictFiles: List[String] = Nil,
   workspaceId: Option[String] = None,
   externalRef: Option[String] = None,
   externalUrl: Option[String] = None,
@@ -68,6 +69,9 @@ object AgentIssue:
     safeList(values)
       .flatMap(id => Option(id).flatMap(v => sanitizeText(v.value).map(AnalysisDocId.apply)))
       .distinct
+
+  private def sanitizeFilePaths(values: List[String]): List[String] =
+    safeList(values).flatMap(sanitizeText).distinct
 
   def fromEvents(events: List[IssueEvent]): Either[String, AgentIssue] =
     events match
@@ -109,6 +113,7 @@ object AgentIssue:
                   kaizenSkill = None,
                   milestoneRef = None,
                   analysisDocIds = Nil,
+                  mergeConflictFiles = Nil,
                   workspaceId = None,
                   externalRef = None,
                   externalUrl = None,
@@ -143,12 +148,12 @@ object AgentIssue:
       case moved: IssueEvent.MovedToBacklog =>
         current
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToBacklog event")
-          .map(issue => Some(issue.copy(state = IssueState.Backlog(moved.movedAt))))
+          .map(issue => Some(issue.copy(state = IssueState.Backlog(moved.movedAt), mergeConflictFiles = Nil)))
 
       case moved: IssueEvent.MovedToTodo =>
         current
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToTodo event")
-          .map(issue => Some(issue.copy(state = IssueState.Todo(moved.movedAt))))
+          .map(issue => Some(issue.copy(state = IssueState.Todo(moved.movedAt), mergeConflictFiles = Nil)))
 
       case moved: IssueEvent.MovedToHumanReview =>
         current
@@ -163,12 +168,12 @@ object AgentIssue:
       case moved: IssueEvent.MovedToMerging =>
         current
           .toRight(s"Issue ${moved.issueId.value} not initialized before MovedToMerging event")
-          .map(issue => Some(issue.copy(state = IssueState.Merging(moved.movedAt))))
+          .map(issue => Some(issue.copy(state = IssueState.Merging(moved.movedAt), mergeConflictFiles = Nil)))
 
       case done: IssueEvent.MarkedDone =>
         current
           .toRight(s"Issue ${done.issueId.value} not initialized before MarkedDone event")
-          .map(issue => Some(issue.copy(state = IssueState.Done(done.doneAt, done.result))))
+          .map(issue => Some(issue.copy(state = IssueState.Done(done.doneAt, done.result), mergeConflictFiles = Nil)))
 
       case canceled: IssueEvent.Canceled =>
         current
@@ -226,6 +231,11 @@ object AgentIssue:
         current
           .toRight(s"Issue ${attached.issueId.value} not initialized before AnalysisAttached event")
           .map(issue => Some(issue.copy(analysisDocIds = sanitizeAnalysisDocIds(attached.analysisDocIds))))
+
+      case conflict: IssueEvent.MergeConflictRecorded =>
+        current
+          .toRight(s"Issue ${conflict.issueId.value} not initialized before MergeConflictRecorded event")
+          .map(issue => Some(issue.copy(mergeConflictFiles = sanitizeFilePaths(conflict.conflictingFiles))))
 
       case reopened: IssueEvent.Reopened =>
         current

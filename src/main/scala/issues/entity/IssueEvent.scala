@@ -160,6 +160,13 @@ object IssueEvent:
     occurredAt: Instant,
   ) extends IssueEvent
 
+  final case class MergeConflictRecorded(
+    issueId: IssueId,
+    @fieldDefaultValue(Nil) conflictingFiles: List[String] = Nil,
+    detectedAt: Instant,
+    occurredAt: Instant,
+  ) extends IssueEvent
+
   final case class Reopened(
     issueId: IssueId,
     reopenedAt: Instant,

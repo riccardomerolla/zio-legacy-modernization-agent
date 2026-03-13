@@ -58,6 +58,8 @@ object GitWatcherSpec extends ZIOSpecDefault:
     override def checkout(repoPath: String, branch: String): IO[GitError, Unit]                            = ZIO.unit
     override def mergeNoFastForward(repoPath: String, branch: String, message: String): IO[GitError, Unit] =
       ZIO.unit
+    override def mergeAbort(repoPath: String): IO[GitError, Unit]                                          = ZIO.unit
+    override def conflictedFiles(repoPath: String): IO[GitError, List[String]]                             = ZIO.succeed(Nil)
 
   def spec: Spec[TestEnvironment, Any] = suite("GitWatcherSpec")(
     test("publishes status and commit updates when values change") {

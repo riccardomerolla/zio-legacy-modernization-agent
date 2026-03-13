@@ -228,4 +228,57 @@ object IssuesViewSpec extends ZIOSpecDefault:
         html.contains("Tight coupling"),
       )
     },
+    test("detail renders merge conflict section with retry merge affordance") {
+      val now  = Instant.parse("2026-03-02T10:00:00Z")
+      val html = IssuesView.detail(
+        issue = AgentIssueView(
+          id = Some("merge-issue"),
+          title = "Resolve merge",
+          description = "Task",
+          issueType = "task",
+          status = IssueStatus.Rework,
+          mergeConflictFiles = List("src/Main.scala", "README.md"),
+          createdAt = now,
+          updatedAt = now,
+        ),
+        issueRuns = Nil,
+        availableAgents = Nil,
+        analysisDocs = Nil,
+        workspaces = Nil,
+      )
+      assertTrue(
+        html.contains("Merge Conflict"),
+        html.contains("src/Main.scala"),
+        html.contains("README.md"),
+        html.contains("Retry Merge"),
+        html.contains("Resolve Manually"),
+        html.contains("name=\"status\" value=\"merging\""),
+      )
+    },
+    test("board renders merge conflict badge on affected issue card") {
+      val now   = Instant.parse("2026-03-02T10:00:00Z")
+      val issue = AgentIssueView(
+        id = Some("merge-10"),
+        title = "Conflict issue",
+        description = "Task",
+        issueType = "task",
+        status = IssueStatus.Rework,
+        mergeConflictFiles = List("src/Main.scala"),
+        createdAt = now,
+        updatedAt = now,
+      )
+      val html  = IssuesView.board(
+        issues = List(issue),
+        workspaces = Nil,
+        workspaceFilter = None,
+        agentFilter = None,
+        priorityFilter = None,
+        tagFilter = None,
+        query = None,
+      )
+      assertTrue(
+        html.contains("Conflict"),
+        html.contains("Merge conflict affecting 1 file(s)"),
+      )
+    },
   )

@@ -631,6 +631,7 @@ object IssuesView:
     val sidebarConvId = if convId.nonEmpty then convId else sortedRuns.headOption.map(_.conversationId).getOrElse("")
     val isRunning     = issue.status == IssueStatus.InProgress
     val statusToken   = issueStatusToken(issue.status)
+    val conflictFiles = issue.mergeConflictFiles.filter(_.trim.nonEmpty).distinct
 
     Layout.page(s"Issue #$issueIdStr", "/issues")(
       div(cls := "mt-2 mx-auto max-w-6xl space-y-4")(
@@ -681,6 +682,51 @@ object IssuesView:
                 markdownFragment(safeStr(issue.description))
               ),
             ),
+            if conflictFiles.nonEmpty then
+              div(id := "merge-conflict", cls := "rounded-xl border border-rose-400/30 bg-rose-500/10 p-6")(
+                div(cls := "flex flex-wrap items-start justify-between gap-3")(
+                  div(
+                    h2(cls := "text-base font-semibold text-white")("Merge Conflict"),
+                    p(cls := "mt-1 text-sm text-rose-100")(
+                      "This issue hit a merge conflict and was moved to Rework. Resolve the listed files, then retry the merge."
+                    ),
+                  ),
+                  form(method := "post", action := s"/issues/$issueIdStr/status")(
+                    input(`type` := "hidden", name := "status", value := "merging"),
+                    button(
+                      `type` := "submit",
+                      cls    := "rounded-md border border-rose-300/40 bg-rose-500/20 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-500/30",
+                    )("Retry Merge"),
+                  ),
+                ),
+                div(cls := "mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem]")(
+                  div(
+                    p(
+                      cls := "mb-2 text-xs font-semibold uppercase tracking-wide text-rose-100/80"
+                    )("Conflicting files"),
+                    ul(cls := "space-y-2 text-sm text-rose-50")(
+                      conflictFiles.map(file =>
+                        li(cls := "rounded-md border border-white/10 bg-slate-950/30 px-3 py-2 font-mono text-xs")(file)
+                      )
+                    ),
+                  ),
+                  div(
+                    a(
+                      href := "#merge-conflict-manual",
+                      cls  := "inline-flex text-sm font-medium text-rose-100 underline decoration-rose-300/60 underline-offset-4 hover:text-white",
+                    )("Resolve Manually"),
+                    div(
+                      id  := "merge-conflict-manual",
+                      cls := "mt-2 rounded-lg border border-white/10 bg-slate-950/30 p-3 text-xs leading-6 text-rose-50",
+                    )(
+                      p("1. Open the workspace and resolve the listed files."),
+                      p("2. Stage the fixes and verify the workspace builds/tests."),
+                      p("3. Use Retry Merge to move the issue back to Merging."),
+                    ),
+                  ),
+                ),
+              )
+            else (),
             // proof-of-work (when available)
             workReport
               .map(r => ProofOfWorkView.panel(r, collapsed = false))
@@ -1173,6 +1219,7 @@ object IssuesView:
   private def issueRow(issue: AgentIssueView): Frag =
     val issueIdStr = safe(issue.id, "-")
     val workspace  = safe(issue.workspaceId)
+    val conflict   = issue.mergeConflictFiles.filter(_.trim.nonEmpty).distinct
     div(id := s"issue-row-$issueIdStr", cls := "border-b border-white/10 px-4 py-4 last:border-b-0 group")(
       div(cls := "flex items-start gap-3")(
         input(
@@ -1191,6 +1238,7 @@ object IssuesView:
             )(safeStr(issue.title, "Untitled")),
             statusBadge(safeStr(issue.status.toString, "open")),
             priorityBadge(safeStr(issue.priority.toString, "medium")),
+            if conflict.nonEmpty then mergeConflictBadge(conflict.size) else (),
             if safe(issue.externalRef).nonEmpty then externalBadge(safe(issue.externalRef), safe(issue.externalUrl))
             else (),
             if workspace.nonEmpty then workspaceBadge(workspace) else (),
@@ -1285,6 +1333,7 @@ object IssuesView:
     val todoDispatch  = dispatchStatus.filter(_ => issue.status == IssueStatus.Todo)
     val externalRef   = safe(issue.externalRef)
     val externalUrl   = safe(issue.externalUrl)
+    val conflictFiles = issue.mergeConflictFiles.filter(_.trim.nonEmpty).distinct
     div(
       cls                         := s"block rounded-lg border border-white/10 bg-slate-800/80 p-3 hover:border-indigo-400/40 hover:bg-slate-800 $borderCls",
       attr("draggable")           := "true",
@@ -1302,6 +1351,7 @@ object IssuesView:
           span(cls := s"inline-block h-2.5 w-2.5 flex-shrink-0 $statusDotCls"),
           span(cls := "text-[10px] font-mono text-slate-500")(shortId),
           todoDispatch.map(dispatchStatusBadge),
+          if conflictFiles.nonEmpty then mergeConflictBadge(conflictFiles.size) else (),
           if externalRef.nonEmpty then
             externalBadge(externalRef, externalUrl)
           else (),
@@ -1614,6 +1664,17 @@ object IssuesView:
       cls := "rounded-full border border-cyan-400/30 bg-cyan-500/20 px-2 py-0.5 text-xs font-semibold text-cyan-200"
     )(
       s"workspace:$workspace"
+    )
+
+  private def mergeConflictBadge(conflictCount: Int): Frag =
+    span(
+      cls   := "inline-flex items-center gap-1 rounded-full border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[10px] font-semibold text-rose-100",
+      title := s"Merge conflict affecting $conflictCount file(s)",
+    )(
+      raw(
+        """<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2.5 18 17.5H2L10 2.5Zm0 4.5a.75.75 0 0 0-.75.75v3.5a.75.75 0 0 0 1.5 0v-3.5A.75.75 0 0 0 10 7Zm0 7.25a.875.875 0 1 0 0 1.75.875.875 0 0 0 0-1.75Z"/></svg>"""
+      ),
+      "Conflict",
     )
 
   private def tagBadge(tag: String): Frag =

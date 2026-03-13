@@ -19,6 +19,8 @@ trait GitService:
   def aheadBehind(repoPath: String, baseBranch: String): IO[GitError, AheadBehind]
   def checkout(repoPath: String, branch: String): IO[GitError, Unit]
   def mergeNoFastForward(repoPath: String, branch: String, message: String): IO[GitError, Unit]
+  def mergeAbort(repoPath: String): IO[GitError, Unit]
+  def conflictedFiles(repoPath: String): IO[GitError, List[String]]
 
 object GitService:
   val live: ULayer[GitService] = ZLayer.succeed(GitServiceLive())
@@ -52,6 +54,12 @@ object GitService:
 
   def mergeNoFastForward(repoPath: String, branch: String, message: String): ZIO[GitService, GitError, Unit] =
     ZIO.serviceWithZIO[GitService](_.mergeNoFastForward(repoPath, branch, message))
+
+  def mergeAbort(repoPath: String): ZIO[GitService, GitError, Unit] =
+    ZIO.serviceWithZIO[GitService](_.mergeAbort(repoPath))
+
+  def conflictedFiles(repoPath: String): ZIO[GitService, GitError, List[String]] =
+    ZIO.serviceWithZIO[GitService](_.conflictedFiles(repoPath))
 
 object GitParsers:
   private val LogSeparator = "\\u001f"
@@ -269,6 +277,15 @@ final case class GitServiceLive() extends GitService:
         message.trim,
         branch.trim,
       ).unit
+
+  override def mergeAbort(repoPath: String): IO[GitError, Unit] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "merge", "--abort").unit
+
+  override def conflictedFiles(repoPath: String): IO[GitError, List[String]] =
+    ensureRepo(repoPath) *>
+      runGit(repoPath, "diff", "--name-only", "--diff-filter=U")
+        .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList.distinct)
 
   /** Returns the first resolvable ref from the candidates, or None if none exist in this repo/worktree. */
   private def resolveRef(repoPath: String, branch: String): IO[GitError, Option[String]] =

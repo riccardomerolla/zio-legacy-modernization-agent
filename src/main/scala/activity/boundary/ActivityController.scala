@@ -66,4 +66,5 @@ final case class ActivityControllerLive(
     case "analysis_started"   => Some(ActivityEventType.AnalysisStarted)
     case "analysis_completed" => Some(ActivityEventType.AnalysisCompleted)
     case "analysis_failed"    => Some(ActivityEventType.AnalysisFailed)
+    case "merge_conflict"     => Some(ActivityEventType.MergeConflict)
     case _                    => None

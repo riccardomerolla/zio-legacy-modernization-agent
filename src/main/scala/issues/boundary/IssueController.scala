@@ -927,6 +927,7 @@ final case class IssueControllerLive(
       assignedAt = assignedAt,
       completedAt = completedAt,
       errorMessage = errorMessage,
+      mergeConflictFiles = i.mergeConflictFiles,
       createdAt = createdAt,
       updatedAt = assignedAt.orElse(completedAt).getOrElse(createdAt),
     )
@@ -1057,7 +1058,8 @@ final case class IssueControllerLive(
     ),
     IssueStatus.HumanReview ->
       Set(IssueStatus.Rework, IssueStatus.Merging, IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
-    IssueStatus.Rework      -> Set(IssueStatus.InProgress, IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
+    IssueStatus.Rework      ->
+      Set(IssueStatus.InProgress, IssueStatus.Merging, IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
     IssueStatus.Merging     -> Set(IssueStatus.Done, IssueStatus.Canceled, IssueStatus.Duplicated),
     IssueStatus.Done        -> Set.empty,
     IssueStatus.Canceled    -> Set(IssueStatus.Backlog),

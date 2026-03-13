@@ -14,15 +14,28 @@ import workspace.entity.*
 
 object MergeAgentServiceSpec extends ZIOSpecDefault:
 
-  private val now = Instant.parse("2026-03-13T16:00:00Z")
+  private val now           = Instant.parse("2026-03-13T16:00:00Z")
+  private val mergeConflict = GitError.CommandFailed("git merge --no-ff", "CONFLICT (content)")
 
   final private class StubIssueRepository(state: Ref[Map[IssueId, AgentIssue]]) extends IssueRepository:
     override def append(event: IssueEvent): IO[PersistenceError, Unit] =
       state.modify { current =>
         val updated = event match
-          case done: IssueEvent.MarkedDone =>
-            current.updatedWith(done.issueId)(_.map(_.copy(state = IssueState.Done(done.doneAt, done.result))))
-          case _                           => current
+          case done: IssueEvent.MarkedDone                =>
+            current.updatedWith(done.issueId)(_.map(_.copy(
+              state = IssueState.Done(done.doneAt, done.result),
+              mergeConflictFiles = Nil,
+            )))
+          case moved: IssueEvent.MovedToRework            =>
+            current.updatedWith(moved.issueId)(_.map(_.copy(state = IssueState.Rework(moved.movedAt, moved.reason))))
+          case moved: IssueEvent.MovedToMerging           =>
+            current.updatedWith(moved.issueId)(_.map(_.copy(
+              state = IssueState.Merging(moved.movedAt),
+              mergeConflictFiles = Nil,
+            )))
+          case conflict: IssueEvent.MergeConflictRecorded =>
+            current.updatedWith(conflict.issueId)(_.map(_.copy(mergeConflictFiles = conflict.conflictingFiles)))
+          case _                                          => current
         ((), updated)
       }
 
@@ -56,7 +69,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
     override def getRun(id: String): IO[PersistenceError, Option[WorkspaceRun]]                 =
       ZIO.succeed(runs.get(id))
 
-  final private class StubGitService(calls: Ref[List[String]]) extends GitService:
+  final private class StubGitService(calls: Ref[List[String]], mergeFailure: Ref[Option[GitError]]) extends GitService:
     override def status(repoPath: String): IO[GitError, GitStatus]                                         = ZIO.succeed(
       GitStatus(branch = "main", staged = Nil, unstaged = Nil, untracked = Nil)
     )
@@ -74,7 +87,15 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
     override def checkout(repoPath: String, branch: String): IO[GitError, Unit]                            =
       calls.update(_ :+ s"checkout:$repoPath:$branch")
     override def mergeNoFastForward(repoPath: String, branch: String, message: String): IO[GitError, Unit] =
-      calls.update(_ :+ s"merge:$repoPath:$branch:$message")
+      calls.update(_ :+ s"merge:$repoPath:$branch:$message") *>
+        mergeFailure.get.flatMap {
+          case Some(error) => ZIO.fail(error)
+          case None        => ZIO.unit
+        }
+    override def mergeAbort(repoPath: String): IO[GitError, Unit]                                          =
+      calls.update(_ :+ s"merge-abort:$repoPath")
+    override def conflictedFiles(repoPath: String): IO[GitError, List[String]]                             =
+      calls.update(_ :+ s"conflicted-files:$repoPath").as(List("src/Main.scala", "README.md"))
 
   final private class StubActivityHub(events: Ref[List[ActivityEvent]], subscribers: Ref[Set[Queue[ActivityEvent]]])
     extends ActivityHub:
@@ -91,6 +112,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
     issueId: IssueId,
     issueState: Ref[Map[IssueId, AgentIssue]],
     gitCalls: Ref[List[String]],
+    mergeFailure: Ref[Option[GitError]],
     activityEvents: Ref[List[ActivityEvent]],
     activityHub: ActivityHub,
     layer: ZLayer[Any, Nothing, MergeAgentService],
@@ -121,6 +143,7 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                           )
                         )
       gitCalls       <- Ref.make(List.empty[String])
+      mergeFailure   <- Ref.make(Option.empty[GitError])
       activityEvents <- Ref.make(List.empty[ActivityEvent])
       subscribers    <- Ref.make(Set.empty[Queue[ActivityEvent]])
       activityHub     = StubActivityHub(activityEvents, subscribers)
@@ -154,13 +177,13 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
                         )
       issueRepo       = StubIssueRepository(issueState)
       workspaceRepo   = StubWorkspaceRepository(Map(workspace.id -> workspace), Map(run.id -> run))
-      gitService      = StubGitService(gitCalls)
+      gitService      = StubGitService(gitCalls, mergeFailure)
       layer           =
         ZLayer.succeed(issueRepo) ++
           ZLayer.succeed(workspaceRepo) ++
           ZLayer.succeed(gitService) ++
           ZLayer.succeed(activityHub) >>> MergeAgentService.live
-    yield Harness(IssueId("merge-1"), issueState, gitCalls, activityEvents, activityHub, layer)
+    yield Harness(IssueId("merge-1"), issueState, gitCalls, mergeFailure, activityEvents, activityHub, layer)
 
   private def waitUntilDone(issueState: Ref[Map[IssueId, AgentIssue]], issueId: IssueId): UIO[Unit] =
     issueState.get.flatMap { state =>
@@ -215,6 +238,28 @@ object MergeAgentServiceSpec extends ZIOSpecDefault:
       yield assertTrue(
         issue.state.isInstanceOf[IssueState.Done],
         events.exists(_.source == "merge-agent"),
+      )
+    },
+    test("merge conflict aborts merge, records files, moves issue to Rework, and emits conflict activity") {
+      for
+        harness <- makeHarness
+        _       <- harness.mergeFailure.set(Some(mergeConflict))
+        result  <- MergeAgentService
+                     .mergeOnce(harness.issueId)
+                     .provideLayer(harness.layer)
+                     .either
+        issue   <- harness.issueState.get.map(_(harness.issueId))
+        calls   <- harness.gitCalls.get
+        events  <- harness.activityEvents.get
+      yield assertTrue(
+        result == Left(MergeAgentError.GitFailure(mergeConflict)),
+        calls.contains("conflicted-files:/tmp/repo"),
+        calls.contains("merge-abort:/tmp/repo"),
+        issue.state match
+          case IssueState.Rework(_, reason) => reason == "merge conflict: src/Main.scala, README.md"
+          case _                            => false,
+        issue.mergeConflictFiles == List("src/Main.scala", "README.md"),
+        events.exists(_.eventType == ActivityEventType.MergeConflict),
       )
     },
   ) @@ TestAspect.sequential @@ TestAspect.withLiveClock

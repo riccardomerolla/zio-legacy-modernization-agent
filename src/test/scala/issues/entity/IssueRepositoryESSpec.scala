@@ -207,4 +207,22 @@ object IssueRepositoryESSpec extends ZIOSpecDefault:
           )).provideLayer(layerFor(path))
         }
       },
+      test("merge conflict event updates projection and clears on retry merge") {
+        withTempDir { path =>
+          val issueId = Ids.IssueId("issue-10")
+          val now     = Instant.parse("2026-03-02T10:10:00Z")
+          val files   = List("src/Main.scala", "README.md")
+          (for
+            repo       <- ZIO.service[IssueRepository]
+            _          <- repo.append(IssueEvent.Created(issueId, "Merge", "Handle conflict", "task", "medium", now))
+            _          <- repo.append(IssueEvent.MergeConflictRecorded(issueId, files, now.plusSeconds(1), now.plusSeconds(1)))
+            conflicted <- repo.get(issueId)
+            _          <- repo.append(IssueEvent.MovedToMerging(issueId, now.plusSeconds(2), now.plusSeconds(2)))
+            retried    <- repo.get(issueId)
+          yield assertTrue(
+            conflicted.mergeConflictFiles == files,
+            retried.mergeConflictFiles.isEmpty,
+          )).provideLayer(layerFor(path))
+        }
+      },
     ) @@ TestAspect.sequential

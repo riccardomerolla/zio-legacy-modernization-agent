@@ -109,21 +109,7 @@ final case class MergeAgentServiceLive(
       workspace  <- resolveWorkspace(run.workspaceId)
       branchInfo <- gitService.branchInfo(workspace.localPath).mapError(MergeAgentError.GitFailure.apply)
       baseBranch <- validateBaseBranch(workspace.localPath, branchInfo.current, branchInfo.isDetached)
-      _          <- gitService
-                      .checkout(workspace.localPath, baseBranch)
-                      .mapError(MergeAgentError.GitFailure.apply)
-      _          <- gitService
-                      .mergeNoFastForward(
-                        workspace.localPath,
-                        run.branchName,
-                        mergeCommitMessage(issue, run.branchName, baseBranch),
-                      )
-                      .mapError(MergeAgentError.GitFailure.apply)
-      now        <- Clock.instant
-      result      = s"Merged ${run.branchName} into $baseBranch"
-      _          <- issueRepository
-                      .append(IssueEvent.MarkedDone(issue.id, now, result, now))
-                      .mapError(err => MergeAgentError.PersistenceFailure("mark_issue_done", err.toString))
+      _          <- mergeIntoBase(issue, run, workspace.localPath, baseBranch)
     yield ()
 
   private[workspace] def bootstrap: IO[PersistenceError, Unit] =
@@ -139,7 +125,7 @@ final case class MergeAgentServiceLive(
   private[workspace] def worker: UIO[Unit] =
     queue.take.flatMap { issueId =>
       mergeOnce(issueId)
-        .tapError(error => publishFailure(issueId, error))
+        .tapError(error => publishFailureUnlessConflict(issueId, error))
         .tap(_ => publishSuccess(issueId))
         .catchAll(error => ZIO.logWarning(s"Merge agent failed for issue ${issueId.value}: ${error.message}"))
         .ensuring(pending.update(_ - issueId))
@@ -206,6 +192,83 @@ final case class MergeAgentServiceLive(
   private def mergeCommitMessage(issue: AgentIssue, sourceBranch: String, baseBranch: String): String =
     s"Merge issue #${issue.id.value} (${issue.title}) from $sourceBranch into $baseBranch"
 
+  private def mergeIntoBase(
+    issue: AgentIssue,
+    run: WorkspaceRun,
+    repoPath: String,
+    baseBranch: String,
+  ): IO[MergeAgentError, Unit] =
+    for
+      _ <- gitService
+             .checkout(repoPath, baseBranch)
+             .mapError(MergeAgentError.GitFailure.apply)
+      _ <- gitService
+             .mergeNoFastForward(
+               repoPath,
+               run.branchName,
+               mergeCommitMessage(issue, run.branchName, baseBranch),
+             )
+             .catchAll {
+               case mergeFailure: GitError.CommandFailed =>
+                 handleMergeConflict(issue, repoPath, mergeFailure)
+               case other                                =>
+                 ZIO.fail(MergeAgentError.GitFailure(other))
+             }
+      _ <- markIssueDone(issue, run.branchName, baseBranch)
+    yield ()
+
+  private def handleMergeConflict(
+    issue: AgentIssue,
+    repoPath: String,
+    mergeFailure: GitError.CommandFailed,
+  ): IO[MergeAgentError, Unit] =
+    for
+      files <- gitService.conflictedFiles(repoPath).orElseSucceed(Nil)
+      _     <- gitService.mergeAbort(repoPath).orElseSucceed(())
+      now   <- Clock.instant
+      _     <- issueRepository
+                 .append(
+                   IssueEvent.MergeConflictRecorded(
+                     issueId = issue.id,
+                     conflictingFiles = files,
+                     detectedAt = now,
+                     occurredAt = now,
+                   )
+                 )
+                 .mapError(err => MergeAgentError.PersistenceFailure("record_merge_conflict", err.toString))
+      _     <- issueRepository
+                 .append(
+                   IssueEvent.MovedToRework(
+                     issueId = issue.id,
+                     movedAt = now,
+                     reason = mergeConflictReason(files),
+                     occurredAt = now,
+                   )
+                 )
+                 .mapError(err => MergeAgentError.PersistenceFailure("move_issue_to_rework", err.toString))
+      _     <- publishMergeConflict(issue.id, files)
+      _     <- ZIO.fail(MergeAgentError.GitFailure(mergeFailure))
+    yield ()
+
+  private def markIssueDone(
+    issue: AgentIssue,
+    sourceBranch: String,
+    baseBranch: String,
+  ): IO[MergeAgentError, Unit] =
+    for
+      now   <- Clock.instant
+      result = s"Merged $sourceBranch into $baseBranch"
+      _     <- issueRepository
+                 .append(IssueEvent.MarkedDone(issue.id, now, result, now))
+                 .mapError(err => MergeAgentError.PersistenceFailure("mark_issue_done", err.toString))
+    yield ()
+
+  private def mergeConflictReason(files: List[String]): String =
+    val summary = files match
+      case Nil => "unknown files"
+      case xs  => xs.mkString(", ")
+    s"merge conflict: $summary"
+
   private def publishSuccess(issueId: IssueId): UIO[Unit] =
     Clock.instant.flatMap(now =>
       activityHub.publish(
@@ -231,6 +294,30 @@ final case class MergeAgentServiceLive(
           payload = Some(
             s"""{"issueId":"${issueId.value}","status":"merging","error":${error.message.toJson}}"""
           ),
+          createdAt = now,
+        )
+      )
+    )
+
+  private def publishFailureUnlessConflict(issueId: IssueId, error: MergeAgentError): UIO[Unit] =
+    error match
+      case MergeAgentError.GitFailure(GitError.CommandFailed(command, _)) if command.startsWith("git merge") =>
+        ZIO.unit
+      case _                                                                                                 =>
+        publishFailure(issueId, error)
+
+  private def publishMergeConflict(issueId: IssueId, files: List[String]): UIO[Unit] =
+    Clock.instant.flatMap(now =>
+      activityHub.publish(
+        ActivityEvent(
+          id = EventId.generate,
+          eventType = ActivityEventType.MergeConflict,
+          source = "merge-agent",
+          summary = s"Issue #${issueId.value} encountered a merge conflict",
+          payload =
+            Some(
+              s"""{"issueId":"${issueId.value}","status":"rework","conflictingFiles":${files.toJson}}"""
+            ),
           createdAt = now,
         )
       )

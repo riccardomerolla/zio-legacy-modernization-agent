@@ -38,6 +38,7 @@ case class AgentIssueView(
   completedAt: Option[Instant] = None,
   errorMessage: Option[String] = None,
   resultData: Option[String] = None,
+  mergeConflictFiles: List[String] = Nil,
   createdAt: Instant,
   updatedAt: Instant,
 ) derives JsonCodec
